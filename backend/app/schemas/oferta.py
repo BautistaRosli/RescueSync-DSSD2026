@@ -1,0 +1,71 @@
+from datetime import datetime
+from typing import Any, List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class OfertaItemBase(BaseModel):
+    lote_necesidad_id: int
+    cantidad_ofrecida: int = Field(gt=0)
+    descripcion: Optional[str] = None
+
+
+class OfertaItemRead(OfertaItemBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+
+
+class OfertaAyudaCreate(BaseModel):
+    emergencia_id: int
+    organizacion_id: int
+    observaciones: Optional[str] = None
+    items: List[OfertaItemBase] = []
+
+
+class OfertaAyudaUpdate(BaseModel):
+    observaciones: Optional[str] = None
+    items: Optional[List[OfertaItemBase]] = None
+
+
+class OfertaAyudaRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    emergencia_id: int
+    organizacion_id: int
+    observaciones: Optional[str] = None
+    fecha_hora_oferta: datetime
+    items: List[OfertaItemRead] = []
+
+
+class OfertaAyudaListRead(BaseModel):
+    id: int
+    emergencia_id: int
+    organizacion_id: int
+    organizacion_nombre: Optional[str] = None
+    observaciones: Optional[str] = None
+    fecha_hora_oferta: datetime
+    items: List[OfertaItemRead] = []
+
+
+class OfertaItemConsolidado(BaseModel):
+    lote_id: int
+    cantidad_ofrecida: int
+    descripcion: Optional[str] = None
+
+
+class OfertaConsolidada(BaseModel):
+    organizacion_id: int
+    organizacion_nombre: str
+    items: List[OfertaItemConsolidado]
+
+
+class OfertasConsolidadas(BaseModel):
+    emergencia_id: int
+    ofertas: List[OfertaConsolidada]
+
+
+class BonitaTestVariablesRequest(BaseModel):
+    case_id: int
+    variables: dict[str, Any]
