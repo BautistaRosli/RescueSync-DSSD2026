@@ -4,8 +4,10 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, selectinload
 
+from ..integrations.bonita_client import BonitaClientError
 from ..models import Emergencia, Municipio
 from ..schemas.emergencia import EmergenciaCreate, EmergenciaUpdate
+from . import bonita_service
 
 
 def _query(db: Session):
@@ -65,7 +67,7 @@ def update_emergencia(
     return emergencia
 
 
-def publicar_emergencia(db: Session, emergencia_id: int) -> Emergencia:
+async def publicar_emergencia(db: Session, emergencia_id: int) -> Emergencia:
     emergencia = get_emergencia(db, emergencia_id)
     if emergencia.publicada:
         raise HTTPException(
@@ -75,4 +77,10 @@ def publicar_emergencia(db: Session, emergencia_id: int) -> Emergencia:
     emergencia.fecha_publicacion = datetime.now(timezone.utc)
     db.commit()
     db.refresh(emergencia)
+
+    try:
+        await bonita_service.iniciar_emergencia(db, emergencia_id)
+    except (BonitaClientError, HTTPException):
+        pass
+
     return emergencia

@@ -9,7 +9,7 @@ from ...schemas.emergencia import (
     EmergenciaRead,
     EmergenciaUpdate,
 )
-from ...services import bonita_service, emergencia_service
+from ...services import emergencia_service
 
 router = APIRouter(prefix="/emergencias", tags=["Emergencias"])
 
@@ -45,14 +45,7 @@ def update_emergencia(
 
 
 @router.post("/{emergencia_id}/publicar", response_model=EmergenciaRead)
-def publicar_emergencia(
+async def publicar_emergencia(
     emergencia_id: int, db: Session = Depends(get_db)
 ):
-    return emergencia_service.publicar_emergencia(db, emergencia_id)
-
-
-@router.post("/{emergencia_id}/bonita/iniciar")
-async def iniciar_en_bonita(
-    emergencia_id: int, db: Session = Depends(get_db)
-):
-    return await bonita_service.iniciar_emergencia(db, emergencia_id)
+    return await emergencia_service.publicar_emergencia(db, emergencia_id)

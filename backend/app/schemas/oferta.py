@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -64,8 +64,3 @@ class OfertaConsolidada(BaseModel):
 class OfertasConsolidadas(BaseModel):
     emergencia_id: int
     ofertas: List[OfertaConsolidada]
-
-
-class BonitaTestVariablesRequest(BaseModel):
-    case_id: int
-    variables: dict[str, Any]

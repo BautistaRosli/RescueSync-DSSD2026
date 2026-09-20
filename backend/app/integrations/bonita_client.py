@@ -8,7 +8,6 @@ services/bonita_service.py y las rutas no dependan de los detalles del REST de B
 import json
 import os
 from typing import Any
-
 import httpx
 
 
@@ -17,6 +16,7 @@ class BonitaClientError(Exception):
 
 
 class BonitaClient:
+    
     def __init__(self) -> None:
         self.url = os.getenv(
             "BONITA_URL", "http://host.docker.internal:8080/bonita"
@@ -42,9 +42,11 @@ class BonitaClient:
             raise BonitaClientError(
                 f"Fallo de autenticación en Bonita (HTTP {response.status_code})"
             )
+        api_token = response.cookies.get("X-Bonita-API-Token", "")
+        client.headers["X-Bonita-API-Token"] = api_token
         return {
             "session_id": response.cookies.get("JSESSIONID", ""),
-            "api_token": response.cookies.get("X-Bonita-API-Token", ""),
+            "api_token": api_token,
         }
 
     async def test_login(self) -> dict:
@@ -75,35 +77,6 @@ class BonitaClient:
             )
         return str(processes[0]["id"])
 
-    async def create_case(
-        self, client: httpx.AsyncClient, process_id: str
-    ) -> int:
-        response = await client.post(
-            "/API/bpm/case", json={"processDefinitionId": process_id}
-        )
-        if response.status_code != 200:
-            raise BonitaClientError(
-                f"Error creando caso (HTTP {response.status_code})"
-            )
-        return int(response.json()["id"])
-
-    async def set_case_variable(
-        self,
-        client: httpx.AsyncClient,
-        case_id: int,
-        name: str,
-        value: Any,
-    ) -> None:
-        response = await client.put(
-            f"/API/bpm/caseVariable/{case_id}/{name}",
-            content=json.dumps(value),
-            headers={"Content-Type": "application/json"},
-        )
-        if response.status_code != 200:
-            raise BonitaClientError(
-                f"Error seteando variable '{name}' (HTTP {response.status_code})"
-            )
-
     async def set_case_variables(
         self, case_id: int, variables: dict[str, Any]
     ) -> list[str]:
@@ -111,7 +84,15 @@ class BonitaClient:
             await self.login(client)
             set_names = []
             for name, value in variables.items():
-                await self.set_case_variable(client, case_id, name, value)
+                response = await client.put(
+                    f"/API/bpm/caseVariable/{case_id}/{name}",
+                    content=json.dumps(value),
+                    headers={"Content-Type": "application/json"},
+                )
+                if response.status_code != 200:
+                    raise BonitaClientError(
+                        f"Error seteando variable '{name}' (HTTP {response.status_code})"
+                    )
                 set_names.append(name)
             return set_names
 
@@ -121,10 +102,14 @@ class BonitaClient:
         async with await self._client() as client:
             await self.login(client)
             process_id = await self.get_process_id(client)
-            case_id = await self.create_case(client, process_id)
-            for name, value in variables.items():
-                await self.set_case_variable(client, case_id, name, value)
-            return case_id
-
+            response = await client.post(
+                f"/API/bpm/process/{process_id}/instantiation",
+                json=variables,
+            )
+            if response.status_code != 200:
+                raise BonitaClientError(
+                    f"Error instanciando caso (HTTP {response.status_code}): {response.text}"
+                )
+            return int(response.json()["caseId"])
 
 bonita_client = BonitaClient()

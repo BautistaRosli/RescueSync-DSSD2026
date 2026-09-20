@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from ...integrations.bonita_client import BonitaClientError, bonita_client
-from ...schemas.oferta import BonitaTestVariablesRequest
+from ...schemas.bonita import BonitaTestVariablesRequest
 
 router = APIRouter(prefix="/bonita", tags=["Bonita"])
 
