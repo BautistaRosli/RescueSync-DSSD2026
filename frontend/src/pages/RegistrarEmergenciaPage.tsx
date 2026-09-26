@@ -37,13 +37,7 @@ function describirError(error: unknown): string {
   return 'Ocurrió un error inesperado. Intentá de nuevo.'
 }
 
-export function RegistrarEmergenciaPage({
-  sesion,
-  onCerrarSesion,
-}: {
-  sesion: AuthResponse
-  onCerrarSesion: () => void
-}) {
+export function RegistrarEmergenciaPage({ sesion }: { sesion: AuthResponse }) {
   const [nivelGravedad, setNivelGravedad] = useState<NivelGravedad>('media')
   const [zona, setZona] = useState('')
   const [descripcion, setDescripcion] = useState('')
@@ -131,14 +125,6 @@ export function RegistrarEmergenciaPage({
             <dd className="font-mono text-cyan-400">{sesion.rol}</dd>
           </div>
         </dl>
-
-        <button
-          type="button"
-          onClick={onCerrarSesion}
-          className="mt-4 w-full rounded-lg border border-slate-700 px-4 py-2 font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-400"
-        >
-          Cerrar sesión
-        </button>
       </div>
 
       {creada ? (
