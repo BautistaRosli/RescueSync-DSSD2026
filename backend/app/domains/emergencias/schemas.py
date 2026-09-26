@@ -58,6 +58,7 @@ class EmergenciaRespuesta(EmergenciaBase):
     fecha_hora_registro: datetime
     publicada: bool
     fecha_publicacion: Optional[datetime] = None
+    estado: Optional[str] = None
     bonita_case_id: Optional[str] = None
     bonita_variables_json: Optional[str] = None
     lotes: list[LoteNecesidadRespuesta] = []

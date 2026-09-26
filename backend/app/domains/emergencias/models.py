@@ -16,6 +16,13 @@ class NivelGravedad:
     CRITICA = "critica"
 
 
+class EstadoEmergencia:
+    ESPERA_LOTES = "esperando_lotes"
+    ESPERA_OFERTAS = "esperando_ofertas"
+    EN_PROCESO = "en_proceso"
+    RESUELTA = "resuelta"
+
+
 class Emergencia(Base):
     """Emergencia registrada en la plataforma."""
 
@@ -39,6 +46,9 @@ class Emergencia(Base):
     bonita_case_id: Mapped[Optional[str]] = mapped_column(String(50), index=True)
     tipo_desastre: Mapped[Optional[str]] = mapped_column(String(100))
     bonita_variables_json: Mapped[Optional[str]] = mapped_column(Text)
+    estado: Mapped[Optional[str]] = mapped_column(
+        String(50), default=EstadoEmergencia.ESPERA_LOTES, nullable=False
+    )
 
     lotes: Mapped[List["LoteNecesidad"]] = relationship(
         back_populates="emergencia", cascade="all, delete-orphan"
