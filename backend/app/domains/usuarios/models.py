@@ -8,10 +8,17 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ...database import Base
 
 
-class RolUsuario:
-    OPERADOR_MUNICIPAL = "OPERADOR_MUNICIPAL"
-    CENTRO_COORDINADOR = "CENTRO_COORDINADOR"
-    REPRESENTANTE_ONG = "REPRESENTANTE_ONG"
+class Rol(Base):
+    """Rol de usuario almacenado como dato en la tabla roles."""
+
+    __tablename__ = "roles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nombre: Mapped[str] = mapped_column(
+        String(30), nullable=False, unique=True, index=True
+    )
+
+    usuarios: Mapped[List["Usuario"]] = relationship(back_populates="rol")
 
 
 class Organizacion(Base):
@@ -40,8 +47,10 @@ class Usuario(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(150), nullable=False, unique=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    rol: Mapped[str] = mapped_column(
-        String(30), default=RolUsuario.OPERADOR_MUNICIPAL, nullable=False
+    nombre: Mapped[str] = mapped_column(String(80), nullable=False)
+    apellido: Mapped[str] = mapped_column(String(80), nullable=False)
+    rol_id: Mapped[int] = mapped_column(
+        ForeignKey("roles.id")
     )
     municipio_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("municipios.id")
@@ -51,6 +60,7 @@ class Usuario(Base):
     )
     activo: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    rol: Mapped[Rol] = relationship(back_populates="usuarios")
     municipio: Mapped[Optional["Municipio"]] = relationship(
         back_populates="usuarios"
     )

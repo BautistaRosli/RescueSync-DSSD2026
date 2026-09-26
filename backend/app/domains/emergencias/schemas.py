@@ -1,9 +1,10 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from ..lotes.schemas import LoteNecesidadRespuesta
+from .models import NivelGravedad
 
 
 class MunicipioBase(BaseModel):
@@ -30,6 +31,24 @@ class MunicipioRespuesta(MunicipioBase):
     id: int
 
 
+NIVELES_GRAVEDAD_VALIDOS = {
+    valor
+    for nombre, valor in vars(NivelGravedad).items()
+    if not nombre.startswith("_") and isinstance(valor, str)
+}
+
+
+def validar_nivel_gravedad(valor: Optional[str]) -> Optional[str]:
+    if valor is None:
+        return valor
+    if valor not in NIVELES_GRAVEDAD_VALIDOS:
+        raise ValueError(
+            "nivel_gravedad debe ser uno de: "
+            + ", ".join(sorted(NIVELES_GRAVEDAD_VALIDOS))
+        )
+    return valor
+
+
 class EmergenciaBase(BaseModel):
     municipio_id: int
     nivel_gravedad: str
@@ -39,7 +58,10 @@ class EmergenciaBase(BaseModel):
 
 
 class EmergenciaCrear(EmergenciaBase):
-    pass
+    @field_validator("nivel_gravedad")
+    @classmethod
+    def nivel_gravedad_valido(cls, valor: str) -> str:
+        return validar_nivel_gravedad(valor)
 
 
 class EmergenciaActualizar(BaseModel):
@@ -48,6 +70,11 @@ class EmergenciaActualizar(BaseModel):
     zona_afectada: Optional[str] = None
     descripcion_inicial: Optional[str] = None
     tipo_desastre: Optional[str] = None
+
+    @field_validator("nivel_gravedad")
+    @classmethod
+    def nivel_gravedad_valido(cls, valor: Optional[str]) -> Optional[str]:
+        return validar_nivel_gravedad(valor)
 
 
 class EmergenciaRespuesta(EmergenciaBase):
