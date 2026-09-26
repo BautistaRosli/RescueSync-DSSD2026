@@ -28,12 +28,17 @@ function describirError(error: unknown): string {
   return 'Ocurrió un error inesperado. Intentá de nuevo.'
 }
 
-export function LoginPage({ onIrARegistro }: { onIrARegistro: () => void }) {
+export function LoginPage({
+  onIrARegistro,
+  onSesionIniciada,
+}: {
+  onIrARegistro: () => void
+  onSesionIniciada: (sesion: AuthResponse) => void
+}) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
-  const [sesion, setSesion] = useState<AuthResponse | null>(null)
 
   async function manejarEnvio(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault()
@@ -55,67 +60,13 @@ export function LoginPage({ onIrARegistro }: { onIrARegistro: () => void }) {
     setEnviando(true)
     try {
       const datos: LoginRequest = { email: email.trim(), password }
-      setSesion(await iniciarSesion(datos))
+      onSesionIniciada(await iniciarSesion(datos))
       setPassword('')
     } catch (fallo) {
       setError(describirError(fallo))
     } finally {
       setEnviando(false)
     }
-  }
-
-  if (sesion) {
-    return (
-      <section className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
-        <h2 className="text-xl font-bold text-emerald-400 mb-1">Sesión iniciada</h2>
-        <p className="text-sm text-slate-400 mb-5">
-          El backend confirmó estos datos para tu usuario.
-        </p>
-
-        <dl className="rounded-lg bg-slate-900 border border-slate-700 p-4 text-sm">
-          <div className="flex justify-between gap-4 py-1">
-            <dt className="text-slate-400">Email</dt>
-            <dd className="font-mono text-cyan-400 break-all">{sesion.usuario.email}</dd>
-          </div>
-          <div className="flex justify-between gap-4 py-1">
-            <dt className="text-slate-400">Nombre</dt>
-            <dd className="font-mono text-cyan-400">
-              {sesion.usuario.nombre} {sesion.usuario.apellido}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-4 py-1">
-            <dt className="text-slate-400">Rol</dt>
-            <dd className="font-mono text-cyan-400">{sesion.rol}</dd>
-          </div>
-          <div className="flex justify-between gap-4 py-1">
-            <dt className="text-slate-400">Id de rol</dt>
-            <dd className="font-mono text-cyan-400">{sesion.usuario.rol_id}</dd>
-          </div>
-          <div className="flex justify-between gap-4 py-1">
-            <dt className="text-slate-400">Id</dt>
-            <dd className="font-mono text-cyan-400">{sesion.usuario.id}</dd>
-          </div>
-          <div className="flex justify-between gap-4 py-1">
-            <dt className="text-slate-400">Activo</dt>
-            <dd className="font-mono text-cyan-400">
-              {sesion.usuario.activo ? 'Sí' : 'No'}
-            </dd>
-          </div>
-        </dl>
-
-        <p className="mt-4 text-xs text-slate-500">
-          El token no se persiste en el navegador.
-        </p>
-
-        <button
-          type="button"
-          onClick={() => setSesion(null)}
-          className="mt-4 w-full rounded-lg border border-slate-700 px-4 py-2 font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-400"
-        >
-          Cerrar sesión
-        </button>
-      </section>
-    )
   }
 
   return (
