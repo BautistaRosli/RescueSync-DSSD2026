@@ -9,5 +9,4 @@ export type {
   EmergenciaCreada,
   NivelGravedad,
 } from './emergencia'
-export type { MunicipioRead } from './municipio'
 export type { Rol } from './rol'

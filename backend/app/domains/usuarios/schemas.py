@@ -32,7 +32,6 @@ class UsuarioCrear(BaseModel):
         ..., min_length=LONGITUD_MINIMA_NOMBRE, max_length=MAXIMO_NOMBRE
     )
     rol_id: int = Field(..., gt=0)
-    municipio_id: Optional[int] = None
     organizacion_id: Optional[int] = None
 
     @field_validator("email")
@@ -50,7 +49,6 @@ class UsuarioRespuesta(BaseModel):
     apellido: str
     rol_id: int
     activo: bool
-    municipio_id: Optional[int] = None
     organizacion_id: Optional[int] = None
 
 

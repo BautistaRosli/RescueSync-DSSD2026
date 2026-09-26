@@ -18,12 +18,11 @@ servicio_emergencias = EmergenciaService()
 
 @router.get("", response_model=list[EmergenciaRespuesta])
 def listar_emergencias(
-    municipio_id: Optional[int] = None,
     publicada: Optional[bool] = None,
     db: Session = Depends(get_db),
 ):
     return servicio_emergencias.listar_emergencias(
-        db, municipio_id=municipio_id, publicada=publicada
+        db, publicada=publicada
     )
 
 

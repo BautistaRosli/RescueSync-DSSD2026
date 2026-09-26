@@ -52,18 +52,12 @@ class Usuario(Base):
     rol_id: Mapped[int] = mapped_column(
         ForeignKey("roles.id")
     )
-    municipio_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("municipios.id")
-    )
     organizacion_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("organizaciones.id")
     )
     activo: Mapped[bool] = mapped_column(Boolean, default=True)
 
     rol: Mapped[Rol] = relationship(back_populates="usuarios")
-    municipio: Mapped[Optional["Municipio"]] = relationship(
-        back_populates="usuarios"
-    )
     organizacion: Mapped[Optional["Organizacion"]] = relationship(
         back_populates="usuarios"
     )

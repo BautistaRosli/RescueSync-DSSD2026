@@ -7,30 +7,6 @@ from ..lotes.schemas import LoteNecesidadRespuesta
 from .models import NivelGravedad
 
 
-class MunicipioBase(BaseModel):
-    nombre: str
-    provincia: Optional[str] = None
-    localidad: Optional[str] = None
-    contacto: Optional[str] = None
-
-
-class MunicipioCrear(MunicipioBase):
-    pass
-
-
-class MunicipioActualizar(BaseModel):
-    nombre: Optional[str] = None
-    provincia: Optional[str] = None
-    localidad: Optional[str] = None
-    contacto: Optional[str] = None
-
-
-class MunicipioRespuesta(MunicipioBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-
-
 NIVELES_GRAVEDAD_VALIDOS = {
     valor
     for nombre, valor in vars(NivelGravedad).items()
@@ -50,7 +26,6 @@ def validar_nivel_gravedad(valor: Optional[str]) -> Optional[str]:
 
 
 class EmergenciaBase(BaseModel):
-    municipio_id: int
     nivel_gravedad: str
     zona_afectada: str
     descripcion_inicial: str
@@ -65,7 +40,6 @@ class EmergenciaCrear(EmergenciaBase):
 
 
 class EmergenciaActualizar(BaseModel):
-    municipio_id: Optional[int] = None
     nivel_gravedad: Optional[str] = None
     zona_afectada: Optional[str] = None
     descripcion_inicial: Optional[str] = None

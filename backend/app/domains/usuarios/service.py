@@ -91,7 +91,6 @@ class AuthService:
             nombre=data.nombre,
             apellido=data.apellido,
             rol_id=rol.id,
-            municipio_id=data.municipio_id,
             organizacion_id=data.organizacion_id,
             activo=True,
         )

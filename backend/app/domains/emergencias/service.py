@@ -7,58 +7,27 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from ...integrations.bonita.client import BonitaClientError, bonita_client
-from .models import Emergencia, Municipio
-from .repository import EmergenciaRepository, MunicipioRepository
+from .models import Emergencia
+from .repository import EmergenciaRepository
 from .schemas import (
     EmergenciaActualizar,
     EmergenciaCrear,
-    MunicipioActualizar,
-    MunicipioCrear,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class MunicipioService:
-    def __init__(self) -> None:
-        self._repository = MunicipioRepository()
-
-    def listar_municipios(self, db: Session):
-        return self._repository.listar(db)
-
-    def obtener_municipio(self, db: Session, municipio_id: int):
-        municipio = self._repository.obtener_por_id(db, municipio_id)
-        if municipio is None:
-            raise HTTPException(
-                status_code=404, detail="Municipio no encontrado"
-            )
-        return municipio
-
-    def crear_municipio(self, db: Session, data: MunicipioCrear):
-        return self._repository.crear(db, Municipio(**data.model_dump()))
-
-    def actualizar_municipio(
-        self, db: Session, municipio_id: int, data: MunicipioActualizar
-    ):
-        municipio = self.obtener_municipio(db, municipio_id)
-        for field, value in data.model_dump(exclude_unset=True).items():
-            setattr(municipio, field, value)
-        return self._repository.actualizar(db, municipio)
-
-
 class EmergenciaService:
     def __init__(self) -> None:
         self._repository = EmergenciaRepository()
-        self._municipios = MunicipioRepository()
 
     def listar_emergencias(
         self,
         db: Session,
-        municipio_id: Optional[int] = None,
         publicada: Optional[bool] = None,
     ):
         return self._repository.listar(
-            db, municipio_id=municipio_id, publicada=publicada
+            db, publicada=publicada
         )
 
     def obtener_emergencia(self, db: Session, emergencia_id: int) -> Emergencia:
@@ -72,10 +41,6 @@ class EmergenciaService:
     def crear_emergencia(
         self, db: Session, data: EmergenciaCrear
     ) -> Emergencia:
-        if self._municipios.obtener_por_id(db, data.municipio_id) is None:
-            raise HTTPException(
-                status_code=404, detail="Municipio no encontrado"
-            )
         emergencia = Emergencia(**data.model_dump())
         return self._repository.crear(db, emergencia)
 
@@ -84,17 +49,6 @@ class EmergenciaService:
     ) -> Emergencia:
         emergencia = self.obtener_emergencia(db, emergencia_id)
         updates = data.model_dump(exclude_unset=True)
-        if "municipio_id" in updates:
-            if (
-                updates["municipio_id"] is not None
-                and self._municipios.obtener_por_id(
-                    db, updates["municipio_id"]
-                )
-                is None
-            ):
-                raise HTTPException(
-                    status_code=404, detail="Municipio no encontrado"
-                )
         for field, value in updates.items():
             setattr(emergencia, field, value)
         return self._repository.actualizar(db, emergencia)
@@ -104,7 +58,7 @@ class EmergenciaService:
     ) -> Emergencia:
         """Marca la emergencia como publicada.
 
-        No interactua con Bonita: la publicacion es un acto del municipio.
+        No interactua con Bonita: la publicacion es un acto administrativo.
         """
         emergencia = self.obtener_emergencia(db, emergencia_id)
         if emergencia.publicada:
