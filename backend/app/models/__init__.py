@@ -4,7 +4,8 @@ from .municipio import Municipio
 from .oferta_ayuda import OfertaAyuda
 from .oferta_item import OfertaItem
 from .organizacion import Organizacion
-from .usuario import RolUsuario, Usuario
+from .rol import Rol
+from .usuario import Usuario
 
 __all__ = [
     "Emergencia",
@@ -14,6 +15,6 @@ __all__ = [
     "OfertaAyuda",
     "OfertaItem",
     "Organizacion",
-    "RolUsuario",
+    "Rol",
     "Usuario",
 ]

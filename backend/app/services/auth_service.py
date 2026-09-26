@@ -4,10 +4,10 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 import jwt
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..api.dto import AuthResponseDTO
-from ..models import Usuario
+from ..models import Rol, Usuario
 from ..schemas.usuario import LoginRequest, UsuarioCreate, UsuarioRead
 
 JWT_SECRET = os.getenv(
@@ -50,7 +50,8 @@ def generar_token(usuario: Usuario) -> str:
     emitido = datetime.now(timezone.utc)
     payload = {
         "sub": str(usuario.id),
-        "rol": usuario.rol,
+        "rol": usuario.rol.nombre,
+        "rol_id": usuario.rol_id,
         "iat": emitido,
         "exp": emitido + timedelta(minutes=expiracion_minutes()),
     }
@@ -61,7 +62,7 @@ def construir_auth_response(usuario: Usuario) -> AuthResponseDTO:
     return AuthResponseDTO(
         access_token=generar_token(usuario),
         token_type="bearer",
-        rol=usuario.rol,
+        rol=usuario.rol.nombre,
         usuario=UsuarioRead.model_validate(usuario),
     )
 
@@ -75,10 +76,18 @@ def registrar_usuario(db: Session, data: UsuarioCreate) -> Usuario:
             status_code=409, detail="El email ya está registrado"
         )
 
+    rol = db.get(Rol, data.rol_id)
+    if rol is None:
+        raise HTTPException(
+            status_code=404, detail="Rol no encontrado"
+        )
+
     usuario = Usuario(
         email=data.email,
         password_hash=hashear_password(data.password),
-        rol=data.rol,
+        nombre=data.nombre,
+        apellido=data.apellido,
+        rol_id=rol.id,
         municipio_id=data.municipio_id,
         organizacion_id=data.organizacion_id,
         activo=True,
@@ -90,7 +99,12 @@ def registrar_usuario(db: Session, data: UsuarioCreate) -> Usuario:
 
 
 def login(db: Session, data: LoginRequest) -> AuthResponseDTO:
-    usuario = db.query(Usuario).filter(Usuario.email == data.email).first()
+    usuario = (
+        db.query(Usuario)
+        .options(joinedload(Usuario.rol))
+        .filter(Usuario.email == data.email)
+        .first()
+    )
 
     if usuario is None or not verificar_password(
         data.password, usuario.password_hash

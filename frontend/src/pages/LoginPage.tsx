@@ -78,8 +78,18 @@ export function LoginPage({ onIrARegistro }: { onIrARegistro: () => void }) {
             <dd className="font-mono text-cyan-400 break-all">{sesion.usuario.email}</dd>
           </div>
           <div className="flex justify-between gap-4 py-1">
+            <dt className="text-slate-400">Nombre</dt>
+            <dd className="font-mono text-cyan-400">
+              {sesion.usuario.nombre} {sesion.usuario.apellido}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 py-1">
             <dt className="text-slate-400">Rol</dt>
             <dd className="font-mono text-cyan-400">{sesion.rol}</dd>
+          </div>
+          <div className="flex justify-between gap-4 py-1">
+            <dt className="text-slate-400">Id de rol</dt>
+            <dd className="font-mono text-cyan-400">{sesion.usuario.rol_id}</dd>
           </div>
           <div className="flex justify-between gap-4 py-1">
             <dt className="text-slate-400">Id</dt>

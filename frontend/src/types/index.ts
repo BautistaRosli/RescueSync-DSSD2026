@@ -2,6 +2,6 @@ export type {
   AuthResponse,
   LoginRequest,
   RegistroRequest,
-  RolUsuario,
   UsuarioRead,
 } from './auth'
+export type { Rol } from './rol'

@@ -1,18 +1,13 @@
-import { useState } from 'react'
-import type { FormEvent } from 'react'
-import { ApiError, registrar } from '../services'
-import type { RegistroRequest, RolUsuario } from '../types'
+import { useEffect, useState } from 'react'
+import type { ChangeEvent, FormEvent } from 'react'
+import { ApiError, listarRoles, registrar } from '../services'
+import type { RegistroRequest, Rol } from '../types'
 
-const ROLES: RolUsuario[] = [
-  'OPERADOR_MUNICIPAL',
-  'CENTRO_COORDINADOR',
-  'REPRESENTANTE_ONG',
-]
-
-const ETIQUETAS_ROL: Record<RolUsuario, string> = {
+const ETIQUETAS_ROL: Record<string, string> = {
   OPERADOR_MUNICIPAL: 'Operador municipal',
   CENTRO_COORDINADOR: 'Centro coordinador',
   REPRESENTANTE_ONG: 'Representante de ONG',
+  DIRECTOR_AUDITOR: 'Director/Auditor',
 }
 
 const claseCampo =
@@ -20,12 +15,22 @@ const claseCampo =
 
 const claseEtiqueta = 'block text-sm text-slate-300 mb-1'
 
+const claseAviso =
+  'rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-300'
+
+function nombreDeRol(rol: Rol): string {
+  return ETIQUETAS_ROL[rol.nombre] ?? rol.nombre
+}
+
 function esEmailValido(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 }
 
 function describirError(error: unknown): string {
   if (error instanceof ApiError) {
+    if (error.status === 404) {
+      return 'El rol seleccionado no existe. Recargá la página.'
+    }
     if (error.status === 409) {
       return 'Ese email ya está registrado. Probá iniciar sesión.'
     }
@@ -44,16 +49,80 @@ function describirError(error: unknown): string {
 }
 
 export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
+  const [nombre, setNombre] = useState('')
+  const [apellido, setApellido] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [rol, setRol] = useState<RolUsuario>('OPERADOR_MUNICIPAL')
+  const [roles, setRoles] = useState<Rol[]>([])
+  const [rolId, setRolId] = useState<number | ''>('')
+  const [cargandoRoles, setCargandoRoles] = useState(true)
+  const [errorRoles, setErrorRoles] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
+
+  useEffect(() => {
+    let vigente = true
+
+    async function cargarRoles() {
+      setCargandoRoles(true)
+      setErrorRoles(null)
+      try {
+        const datos = await listarRoles()
+        if (!vigente) return
+        setRoles(datos)
+        setRolId(datos.length > 0 ? datos[0].id : '')
+      } catch (fallo) {
+        if (!vigente) return
+        setRoles([])
+        setErrorRoles(
+          fallo instanceof ApiError
+            ? fallo.detail
+            : 'No se pudieron cargar los roles disponibles.',
+        )
+      } finally {
+        if (vigente) setCargandoRoles(false)
+      }
+    }
+
+    void cargarRoles()
+
+    return () => {
+      vigente = false
+    }
+  }, [])
+
+  function manejarNombre(evento: ChangeEvent<HTMLInputElement>) {
+    setNombre(evento.target.value)
+  }
+
+  function manejarApellido(evento: ChangeEvent<HTMLInputElement>) {
+    setApellido(evento.target.value)
+  }
+
+  function manejarEmail(evento: ChangeEvent<HTMLInputElement>) {
+    setEmail(evento.target.value)
+  }
+
+  function manejarPassword(evento: ChangeEvent<HTMLInputElement>) {
+    setPassword(evento.target.value)
+  }
+
+  function manejarRol(evento: ChangeEvent<HTMLSelectElement>) {
+    setRolId(Number(evento.target.value))
+  }
 
   async function manejarEnvio(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault()
     setError(null)
 
+    if (nombre.trim().length < 2) {
+      setError('Ingresá tu nombre (mínimo 2 caracteres).')
+      return
+    }
+    if (apellido.trim().length < 2) {
+      setError('Ingresá tu apellido (mínimo 2 caracteres).')
+      return
+    }
     if (!email.trim()) {
       setError('Ingresá tu email.')
       return
@@ -70,10 +139,20 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
       setError('La contraseña debe tener al menos 8 caracteres.')
       return
     }
+    if (rolId === '') {
+      setError('Seleccioná un rol.')
+      return
+    }
 
     setEnviando(true)
     try {
-      const datos: RegistroRequest = { email: email.trim(), password, rol }
+      const datos: RegistroRequest = {
+        email: email.trim(),
+        password,
+        nombre: nombre.trim(),
+        apellido: apellido.trim(),
+        rol_id: rolId,
+      }
       await registrar(datos)
       setPassword('')
       onIrALogin()
@@ -84,6 +163,8 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
     }
   }
 
+  const rolesInhabilitados = cargandoRoles || errorRoles !== null
+
   return (
     <section className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
       <h2 className="text-xl font-bold text-cyan-400 mb-1">Crear cuenta</h2>
@@ -93,6 +174,42 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
 
       <form onSubmit={manejarEnvio} className="flex flex-col gap-4" noValidate>
         <div>
+          <label htmlFor="registro-nombre" className={claseEtiqueta}>
+            Nombre
+          </label>
+          <input
+            id="registro-nombre"
+            type="text"
+            value={nombre}
+            onChange={manejarNombre}
+            placeholder="Ana"
+            minLength={2}
+            maxLength={80}
+            required
+            autoComplete="given-name"
+            className={claseCampo}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="registro-apellido" className={claseEtiqueta}>
+            Apellido
+          </label>
+          <input
+            id="registro-apellido"
+            type="text"
+            value={apellido}
+            onChange={manejarApellido}
+            placeholder="Gómez"
+            minLength={2}
+            maxLength={80}
+            required
+            autoComplete="family-name"
+            className={claseCampo}
+          />
+        </div>
+
+        <div>
           <label htmlFor="registro-email" className={claseEtiqueta}>
             Email
           </label>
@@ -100,7 +217,7 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
             id="registro-email"
             type="email"
             value={email}
-            onChange={(evento) => setEmail(evento.target.value)}
+            onChange={manejarEmail}
             placeholder="operador@rescuesync.com"
             autoComplete="email"
             className={claseCampo}
@@ -115,7 +232,7 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
             id="registro-password"
             type="password"
             value={password}
-            onChange={(evento) => setPassword(evento.target.value)}
+            onChange={manejarPassword}
             placeholder="Mínimo 8 caracteres"
             autoComplete="new-password"
             className={claseCampo}
@@ -128,17 +245,25 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
           </label>
           <select
             id="registro-rol"
-            value={rol}
-            onChange={(evento) => setRol(evento.target.value as RolUsuario)}
+            value={rolId}
+            onChange={manejarRol}
+            disabled={rolesInhabilitados}
             className={claseCampo}
           >
-            {ROLES.map((valor) => (
-              <option key={valor} value={valor}>
-                {ETIQUETAS_ROL[valor]}
+            {cargandoRoles && <option value="">Cargando roles...</option>}
+            {roles.map((rol) => (
+              <option key={rol.id} value={rol.id}>
+                {nombreDeRol(rol)}
               </option>
             ))}
           </select>
         </div>
+
+        {errorRoles && (
+          <p role="alert" className={claseAviso}>
+            {errorRoles}
+          </p>
+        )}
 
         {error && (
           <p
