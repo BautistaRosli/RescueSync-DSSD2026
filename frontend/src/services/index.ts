@@ -1,3 +1,5 @@
 export { ApiError } from './http'
 export { iniciarSesion, registrar } from './auth'
+export { registrarEmergencia } from './emergencia'
+export { listarMunicipios } from './municipio'
 export { listarRoles } from './rol'
