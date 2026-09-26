@@ -64,4 +64,6 @@ postgres_data/
 AGENTS.md
 backend/skills/*
 backend/scripts/*
+backend/backend.md
+frontend/frontend.md
 *.pdf

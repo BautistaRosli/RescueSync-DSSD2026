@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import models  # noqa: F401  # registra los modelos en Base.metadata
 from .api.routes import (
+    auth,
     bonita,
     emergencias,
     lotes,
@@ -25,6 +26,7 @@ app.add_middleware(
 )
 
 API_PREFIX = "/api/v1"
+app.include_router(auth.router, prefix=API_PREFIX)
 app.include_router(municipios.router, prefix=API_PREFIX)
 app.include_router(organizaciones.router, prefix=API_PREFIX)
 app.include_router(emergencias.router, prefix=API_PREFIX)
