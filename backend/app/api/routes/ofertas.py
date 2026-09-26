@@ -3,62 +3,64 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ...db import get_db
-from ...schemas.oferta import (
-    OfertaAyudaCreate,
-    OfertaAyudaListRead,
-    OfertaAyudaRead,
-    OfertaAyudaUpdate,
+from ...database import get_db
+from ...domains.ofertas.schemas import (
+    OfertaActualizar,
+    OfertaCrear,
+    OfertaListadoRespuesta,
+    OfertaRespuesta,
     OfertasConsolidadas,
 )
-from ...services import oferta_service
+from ...domains.ofertas.service import OfertaService
 
 router = APIRouter(tags=["Ofertas"])
 
+servicio_ofertas = OfertaService()
 
-@router.get("/ofertas", response_model=list[OfertaAyudaRead])
-def list_ofertas(
+
+@router.get("/ofertas", response_model=list[OfertaRespuesta])
+def listar_ofertas(
     emergencia_id: Optional[int] = None,
     organizacion_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
-    return oferta_service.list_ofertas(
+    return servicio_ofertas.listar_ofertas(
         db, emergencia_id=emergencia_id, organizacion_id=organizacion_id
     )
 
 
-@router.get("/ofertas/{oferta_id}", response_model=OfertaAyudaRead)
-def get_oferta(oferta_id: int, db: Session = Depends(get_db)):
-    return oferta_service.get_oferta(db, oferta_id)
+@router.get("/ofertas/{oferta_id}", response_model=OfertaRespuesta)
+def obtener_oferta(oferta_id: int, db: Session = Depends(get_db)):
+    return servicio_ofertas.obtener_oferta(db, oferta_id)
 
 
-@router.post("/ofertas", response_model=OfertaAyudaRead, status_code=201)
-def create_oferta(data: OfertaAyudaCreate, db: Session = Depends(get_db)):
-    return oferta_service.create_oferta(db, data)
+@router.post("/ofertas", response_model=OfertaRespuesta, status_code=201)
+def crear_oferta(data: OfertaCrear, db: Session = Depends(get_db)):
+    return servicio_ofertas.crear_oferta(db, data)
 
 
-@router.patch("/ofertas/{oferta_id}", response_model=OfertaAyudaRead)
-def update_oferta(
-    oferta_id: int, data: OfertaAyudaUpdate, db: Session = Depends(get_db)
+@router.patch("/ofertas/{oferta_id}", response_model=OfertaRespuesta)
+def actualizar_oferta(
+    oferta_id: int, data: OfertaActualizar, db: Session = Depends(get_db)
 ):
-    return oferta_service.update_oferta(db, oferta_id, data)
+    return servicio_ofertas.actualizar_oferta(db, oferta_id, data)
 
 
 @router.get(
     "/emergencias/{emergencia_id}/ofertas",
-    response_model=list[OfertaAyudaListRead],
+    response_model=list[OfertaListadoRespuesta],
 )
-def list_ofertas_emergencia(
+def listar_ofertas_de_emergencia(
     emergencia_id: int, db: Session = Depends(get_db)
 ):
-    return oferta_service.list_ofertas_emergencia(db, emergencia_id)
+    return servicio_ofertas.listar_ofertas_de_emergencia(db, emergencia_id)
 
 
 @router.get(
     "/emergencias/{emergencia_id}/ofertas/consolidadas",
     response_model=OfertasConsolidadas,
 )
-def ofertas_consolidadas(
+def obtener_ofertas_consolidadas(
     emergencia_id: int, db: Session = Depends(get_db)
 ):
-    return oferta_service.list_consolidadas(db, emergencia_id)
+    return servicio_ofertas.obtener_ofertas_consolidadas(db, emergencia_id)

@@ -1,13 +1,15 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ...db import get_db
-from ...schemas.rol import RolRead
-from ...services import rol_service
+from ...database import get_db
+from ...domains.usuarios.schemas import RolRespuesta
+from ...domains.usuarios.service import RolService
 
 router = APIRouter(prefix="/roles", tags=["Roles"])
 
+rol_service = RolService()
 
-@router.get("", response_model=list[RolRead])
+
+@router.get("", response_model=list[RolRespuesta])
 def list_roles(db: Session = Depends(get_db)):
-    return rol_service.list_roles(db)
+    return rol_service.listar_roles(db)

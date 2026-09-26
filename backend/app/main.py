@@ -3,7 +3,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import models  # noqa: F401  # registra los modelos en Base.metadata
+# importa los modelos de todos los dominios para registrarlos en Base.metadata
+from .domains.emergencias import models as modelos_emergencias
+from .domains.lotes import models as modelos_lotes
+from .domains.ofertas import models as modelos_ofertas
+from .domains.usuarios import models as modelos_usuarios
 from .api.routes import (
     auth,
     bonita,
@@ -14,10 +18,12 @@ from .api.routes import (
     organizaciones,
     roles,
 )
-from .db import Base, SessionLocal, engine
-from .services import rol_service
+from .database import Base, SessionLocal, engine
+from .domains.usuarios.service import RolService
 
 Base.metadata.create_all(bind=engine)
+
+rol_service = RolService()
 
 
 @asynccontextmanager
