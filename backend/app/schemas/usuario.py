@@ -3,19 +3,15 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ..models.usuario import RolUsuario
-
-ROLES_VALIDOS = {
-    valor
-    for nombre, valor in vars(RolUsuario).items()
-    if not nombre.startswith("_")
-}
-
 PATRON_EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
 LONGITUD_MINIMA_PASSWORD = 8
 
 MAXIMO_BYTES_PASSWORD = 72
+
+LONGITUD_MINIMA_NOMBRE = 2
+
+MAXIMO_NOMBRE = 80
 
 
 def validar_formato_email(valor: str) -> str:
@@ -29,7 +25,13 @@ class UsuarioCreate(BaseModel):
     password: str = Field(
         ..., min_length=LONGITUD_MINIMA_PASSWORD, max_length=MAXIMO_BYTES_PASSWORD
     )
-    rol: str = RolUsuario.OPERADOR_MUNICIPAL
+    nombre: str = Field(
+        ..., min_length=LONGITUD_MINIMA_NOMBRE, max_length=MAXIMO_NOMBRE
+    )
+    apellido: str = Field(
+        ..., min_length=LONGITUD_MINIMA_NOMBRE, max_length=MAXIMO_NOMBRE
+    )
+    rol_id: int = Field(..., gt=0)
     municipio_id: Optional[int] = None
     organizacion_id: Optional[int] = None
 
@@ -38,22 +40,15 @@ class UsuarioCreate(BaseModel):
     def email_valido(cls, valor: str) -> str:
         return validar_formato_email(valor)
 
-    @field_validator("rol")
-    @classmethod
-    def rol_valido(cls, valor: str) -> str:
-        if valor not in ROLES_VALIDOS:
-            raise ValueError(
-                f"Rol inválido. Debe ser uno de: {', '.join(sorted(ROLES_VALIDOS))}"
-            )
-        return valor
-
 
 class UsuarioRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     email: str
-    rol: str
+    nombre: str
+    apellido: str
+    rol_id: int
     activo: bool
     municipio_id: Optional[int] = None
     organizacion_id: Optional[int] = None
