@@ -10,18 +10,18 @@ class LoteNecesidadBase(BaseModel):
     descripcion: Optional[str] = None
 
 
-class LoteNecesidadCreate(LoteNecesidadBase):
+class LoteNecesidadCrear(LoteNecesidadBase):
     pass
 
 
-class LoteNecesidadUpdate(BaseModel):
+class LoteNecesidadActualizar(BaseModel):
     tipo: Optional[str] = None
     cantidad: Optional[int] = Field(default=None, gt=0)
     unidad: Optional[str] = None
     descripcion: Optional[str] = None
 
 
-class LoteNecesidadRead(LoteNecesidadBase):
+class LoteNecesidadRespuesta(LoteNecesidadBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int

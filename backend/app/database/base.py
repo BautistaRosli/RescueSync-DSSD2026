@@ -1,3 +1,9 @@
+"""Infraestructura de persistencia compartida por todos los dominios.
+
+Contiene la Base declarativa, el engine, la fabrica de sesiones y la
+dependencia de obtencion de sesion que inyectan las rutas.
+"""
+
 import os
 
 from sqlalchemy import create_engine

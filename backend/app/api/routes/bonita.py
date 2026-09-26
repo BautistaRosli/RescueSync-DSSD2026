@@ -1,23 +1,20 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
-from ...integrations.bonita_client import BonitaClientError, bonita_client
-from ...schemas.bonita import BonitaTestVariablesRequest
+from ...integrations.bonita.schemas import BonitaTestVariablesRequest
+from ...integrations.bonita.service import (
+    setear_variables_prueba,
+    verificar_conexion,
+)
 
 router = APIRouter(prefix="/bonita", tags=["Bonita"])
 
 
 @router.get("/test-login")
 async def test_login():
-    try:
-        return await bonita_client.test_login()
-    except BonitaClientError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+    return await verificar_conexion()
 
 
 @router.post("/test-variables")
 async def test_variables(data: BonitaTestVariablesRequest):
-    try:
-        await bonita_client.set_case_variables(data.case_id, data.variables)
-        return {"ok": True}
-    except BonitaClientError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+    await setear_variables_prueba(data.case_id, data.variables)
+    return {"ok": True}

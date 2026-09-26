@@ -10,25 +10,25 @@ class OfertaItemBase(BaseModel):
     descripcion: Optional[str] = None
 
 
-class OfertaItemRead(OfertaItemBase):
+class OfertaItemRespuesta(OfertaItemBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
 
 
-class OfertaAyudaCreate(BaseModel):
+class OfertaCrear(BaseModel):
     emergencia_id: int
     organizacion_id: int
     observaciones: Optional[str] = None
     items: List[OfertaItemBase] = []
 
 
-class OfertaAyudaUpdate(BaseModel):
+class OfertaActualizar(BaseModel):
     observaciones: Optional[str] = None
     items: Optional[List[OfertaItemBase]] = None
 
 
-class OfertaAyudaRead(BaseModel):
+class OfertaRespuesta(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -36,17 +36,17 @@ class OfertaAyudaRead(BaseModel):
     organizacion_id: int
     observaciones: Optional[str] = None
     fecha_hora_oferta: datetime
-    items: List[OfertaItemRead] = []
+    items: List[OfertaItemRespuesta] = []
 
 
-class OfertaAyudaListRead(BaseModel):
+class OfertaListadoRespuesta(BaseModel):
     id: int
     emergencia_id: int
     organizacion_id: int
     organizacion_nombre: Optional[str] = None
     observaciones: Optional[str] = None
     fecha_hora_oferta: datetime
-    items: List[OfertaItemRead] = []
+    items: List[OfertaItemRespuesta] = []
 
 
 class OfertaItemConsolidado(BaseModel):

@@ -1,10 +1,3 @@
-"""
-Cliente HTTP aislado para hablar con Bonita
-Hace login, busca el ID del proceso, crea el caso y setea variables.
-Concentra todo el acoplamiento (URL, autenticacion de errores, etc..) en un solo lugar, para que 
-services/bonita_service.py y las rutas no dependan de los detalles del REST de Bonita. 
-"""
-
 import json
 import os
 from typing import Any
@@ -29,15 +22,18 @@ class BonitaClient:
         return httpx.AsyncClient(base_url=self.url, timeout=30.0)
 
     async def login(self, client: httpx.AsyncClient) -> dict[str, str]:
-        response = await client.post(
-            "/loginservice",
-            data={
-                "username": self.username,
-                "password": self.password,
-                "redirect": "false",
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
+        try:
+            response = await client.post(
+                "/loginservice",
+                data={
+                    "username": self.username,
+                    "password": self.password,
+                    "redirect": "false",
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        except httpx.RequestError as exc:
+            raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
         if response.status_code not in (200, 204):
             raise BonitaClientError(
                 f"Fallo de autenticación en Bonita (HTTP {response.status_code})"
@@ -62,10 +58,13 @@ class BonitaClient:
             raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
 
     async def get_process_id(self, client: httpx.AsyncClient) -> str:
-        response = await client.get(
-            "/API/bpm/process",
-            params={"f": f"name={self.process_name}"},
-        )
+        try:
+            response = await client.get(
+                "/API/bpm/process",
+                params={"f": f"name={self.process_name}"},
+            )
+        except httpx.RequestError as exc:
+            raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
         if response.status_code != 200:
             raise BonitaClientError(
                 f"Error consultando proceso (HTTP {response.status_code})"
@@ -84,11 +83,16 @@ class BonitaClient:
             await self.login(client)
             set_names = []
             for name, value in variables.items():
-                response = await client.put(
-                    f"/API/bpm/caseVariable/{case_id}/{name}",
-                    content=json.dumps(value),
-                    headers={"Content-Type": "application/json"},
-                )
+                try:
+                    response = await client.put(
+                        f"/API/bpm/caseVariable/{case_id}/{name}",
+                        content=json.dumps(value),
+                        headers={"Content-Type": "application/json"},
+                    )
+                except httpx.RequestError as exc:
+                    raise BonitaClientError(
+                        f"No se pudo conectar a Bonita: {exc}"
+                    )
                 if response.status_code != 200:
                     raise BonitaClientError(
                         f"Error seteando variable '{name}' (HTTP {response.status_code})"
@@ -102,10 +106,13 @@ class BonitaClient:
         async with await self._client() as client:
             await self.login(client)
             process_id = await self.get_process_id(client)
-            response = await client.post(
-                f"/API/bpm/process/{process_id}/instantiation",
-                json=variables,
-            )
+            try:
+                response = await client.post(
+                    f"/API/bpm/process/{process_id}/instantiation",
+                    json=variables,
+                )
+            except httpx.RequestError as exc:
+                raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
             if response.status_code != 200:
                 raise BonitaClientError(
                     f"Error instanciando caso (HTTP {response.status_code}): {response.text}"

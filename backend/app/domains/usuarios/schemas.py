@@ -11,11 +11,11 @@ class OrganizacionBase(BaseModel):
     activa: bool = True
 
 
-class OrganizacionCreate(OrganizacionBase):
+class OrganizacionCrear(OrganizacionBase):
     pass
 
 
-class OrganizacionUpdate(BaseModel):
+class OrganizacionActualizar(BaseModel):
     nombre: Optional[str] = None
     tipo: Optional[str] = None
     email: Optional[str] = None
@@ -23,7 +23,7 @@ class OrganizacionUpdate(BaseModel):
     activa: Optional[bool] = None
 
 
-class OrganizacionRead(OrganizacionBase):
+class OrganizacionRespuesta(OrganizacionBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int

@@ -3,7 +3,31 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from .lote import LoteNecesidadRead
+from ..lotes.schemas import LoteNecesidadRespuesta
+
+
+class MunicipioBase(BaseModel):
+    nombre: str
+    provincia: Optional[str] = None
+    localidad: Optional[str] = None
+    contacto: Optional[str] = None
+
+
+class MunicipioCrear(MunicipioBase):
+    pass
+
+
+class MunicipioActualizar(BaseModel):
+    nombre: Optional[str] = None
+    provincia: Optional[str] = None
+    localidad: Optional[str] = None
+    contacto: Optional[str] = None
+
+
+class MunicipioRespuesta(MunicipioBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
 
 
 class EmergenciaBase(BaseModel):
@@ -14,11 +38,11 @@ class EmergenciaBase(BaseModel):
     tipo_desastre: Optional[str] = None
 
 
-class EmergenciaCreate(EmergenciaBase):
+class EmergenciaCrear(EmergenciaBase):
     pass
 
 
-class EmergenciaUpdate(BaseModel):
+class EmergenciaActualizar(BaseModel):
     municipio_id: Optional[int] = None
     nivel_gravedad: Optional[str] = None
     zona_afectada: Optional[str] = None
@@ -26,7 +50,7 @@ class EmergenciaUpdate(BaseModel):
     tipo_desastre: Optional[str] = None
 
 
-class EmergenciaRead(EmergenciaBase):
+class EmergenciaRespuesta(EmergenciaBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -35,4 +59,4 @@ class EmergenciaRead(EmergenciaBase):
     fecha_publicacion: Optional[datetime] = None
     bonita_case_id: Optional[str] = None
     bonita_variables_json: Optional[str] = None
-    lotes: list[LoteNecesidadRead] = []
+    lotes: list[LoteNecesidadRespuesta] = []

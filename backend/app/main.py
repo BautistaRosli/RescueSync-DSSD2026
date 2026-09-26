@@ -1,7 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import models  # noqa: F401  # registra los modelos en Base.metadata
+# importa los modelos de todos los dominios para registrarlos en Base.metadata
+from .domains.emergencias import models as modelos_emergencias
+from .domains.lotes import models as modelos_lotes
+from .domains.ofertas import models as modelos_ofertas
+from .domains.usuarios import models as modelos_usuarios
 from .api.routes import (
     bonita,
     emergencias,
@@ -10,7 +14,7 @@ from .api.routes import (
     ofertas,
     organizaciones,
 )
-from .db import Base, engine
+from .database import Base, engine
 
 Base.metadata.create_all(bind=engine)
 
