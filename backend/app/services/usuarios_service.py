@@ -1,6 +1,12 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from ..dto import (
+    AuthRespuesta,
+    OrganizacionRespuesta,
+    RolRespuesta,
+    UsuarioRespuesta,
+)
 from ..models import Organizacion, Rol, Usuario
 from ..repositories import (
     OrganizacionRepository,
@@ -8,14 +14,12 @@ from ..repositories import (
     UsuarioRepository,
 )
 from ..schemas import (
-    AuthRespuesta,
     LoginSolicitud,
     OrganizacionActualizar,
     OrganizacionCrear,
     UsuarioCrear,
-    UsuarioRespuesta,
 )
-from .security import generar_token, hashear_password, verificar_password
+from .security_service import generar_token, hashear_password, verificar_password
 
 ROLES_INICIALES = [
     "OPERADOR_MUNICIPAL",
@@ -29,10 +33,38 @@ class OrganizacionService:
     def __init__(self) -> None:
         self._repository = OrganizacionRepository()
 
-    def listar_organizaciones(self, db: Session) -> list[Organizacion]:
-        return self._repository.listar(db)
+    def listar_organizaciones(
+        self, db: Session
+    ) -> list[OrganizacionRespuesta]:
+        organizaciones = self._repository.listar(db)
+        return [OrganizacionRespuesta.model_validate(o) for o in organizaciones]
 
     def obtener_organizacion(
+        self, db: Session, organizacion_id: int
+    ) -> OrganizacionRespuesta:
+        organizacion = self._obtener_organizacion_entidad(
+            db, organizacion_id
+        )
+        return OrganizacionRespuesta.model_validate(organizacion)
+
+    def crear_organizacion(
+        self, db: Session, data: OrganizacionCrear
+    ) -> OrganizacionRespuesta:
+        creada = self._repository.crear(db, Organizacion(**data.model_dump()))
+        return OrganizacionRespuesta.model_validate(creada)
+
+    def actualizar_organizacion(
+        self, db: Session, organizacion_id: int, data: OrganizacionActualizar
+    ) -> OrganizacionRespuesta:
+        organizacion = self._obtener_organizacion_entidad(
+            db, organizacion_id
+        )
+        for field, value in data.model_dump(exclude_unset=True).items():
+            setattr(organizacion, field, value)
+        actualizada = self._repository.actualizar(db, organizacion)
+        return OrganizacionRespuesta.model_validate(actualizada)
+
+    def _obtener_organizacion_entidad(
         self, db: Session, organizacion_id: int
     ) -> Organizacion:
         organizacion = self._repository.obtener_por_id(db, organizacion_id)
@@ -42,26 +74,14 @@ class OrganizacionService:
             )
         return organizacion
 
-    def crear_organizacion(
-        self, db: Session, data: OrganizacionCrear
-    ) -> Organizacion:
-        return self._repository.crear(db, Organizacion(**data.model_dump()))
-
-    def actualizar_organizacion(
-        self, db: Session, organizacion_id: int, data: OrganizacionActualizar
-    ) -> Organizacion:
-        organizacion = self.obtener_organizacion(db, organizacion_id)
-        for field, value in data.model_dump(exclude_unset=True).items():
-            setattr(organizacion, field, value)
-        return self._repository.actualizar(db, organizacion)
-
 
 class RolService:
     def __init__(self) -> None:
         self._repository = RolRepository()
 
-    def listar_roles(self, db: Session) -> list[Rol]:
-        return self._repository.listar(db)
+    def listar_roles(self, db: Session) -> list[RolRespuesta]:
+        roles = self._repository.listar(db)
+        return [RolRespuesta.model_validate(r) for r in roles]
 
     def sembrar_roles(self, db: Session) -> None:
         """Inserta los roles base solo si no existen (idempotente)."""

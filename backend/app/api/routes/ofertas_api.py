@@ -4,14 +4,16 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ...database import get_db
-from ...schemas.ofertas import (
-    OfertaActualizar,
-    OfertaCrear,
+from ...dto.ofertas_dto import (
     OfertaListadoRespuesta,
     OfertaRespuesta,
     OfertasConsolidadas,
 )
-from ...services.ofertas import OfertaService
+from ...schemas.ofertas_schema import (
+    OfertaActualizar,
+    OfertaCrear,
+)
+from ...services.ofertas_service import OfertaService
 
 router = APIRouter(tags=["Ofertas"])
 

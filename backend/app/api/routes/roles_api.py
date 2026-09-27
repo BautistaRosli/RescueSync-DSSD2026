@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ...database import get_db
-from ...schemas.usuarios import RolRespuesta
-from ...services.usuarios import RolService
+from ...dto.usuarios_dto import RolRespuesta
+from ...services.usuarios_service import RolService
 
 router = APIRouter(prefix="/roles", tags=["Roles"])
 

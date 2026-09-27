@@ -1,7 +1,7 @@
 import re
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 PATRON_EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
@@ -40,18 +40,6 @@ class UsuarioCrear(BaseModel):
         return validar_formato_email(valor)
 
 
-class UsuarioRespuesta(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    email: str
-    nombre: str
-    apellido: str
-    rol_id: int
-    activo: bool
-    organizacion_id: Optional[int] = None
-
-
 class LoginSolicitud(BaseModel):
     email: str
     password: str = Field(
@@ -62,13 +50,6 @@ class LoginSolicitud(BaseModel):
     @classmethod
     def email_valido(cls, valor: str) -> str:
         return validar_formato_email(valor)
-
-
-class AuthRespuesta(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    rol: str
-    usuario: UsuarioRespuesta
 
 
 class OrganizacionBase(BaseModel):
@@ -89,16 +70,3 @@ class OrganizacionActualizar(BaseModel):
     email: Optional[str] = None
     telefono: Optional[str] = None
     activa: Optional[bool] = None
-
-
-class OrganizacionRespuesta(OrganizacionBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-
-
-class RolRespuesta(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    nombre: str

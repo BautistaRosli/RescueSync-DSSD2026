@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class LoteNecesidadBase(BaseModel):
@@ -19,10 +19,3 @@ class LoteNecesidadActualizar(BaseModel):
     cantidad: Optional[int] = Field(default=None, gt=0)
     unidad: Optional[str] = None
     descripcion: Optional[str] = None
-
-
-class LoteNecesidadRespuesta(LoteNecesidadBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    emergencia_id: int

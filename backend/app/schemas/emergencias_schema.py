@@ -1,9 +1,7 @@
-from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, Field, field_validator
 
-from .lotes import LoteNecesidadRespuesta
 from ..models import EstadoEmergencia, NivelGravedad
 
 
@@ -72,16 +70,3 @@ class EmergenciaActualizar(BaseModel):
     @classmethod
     def estado_valido(cls, valor: Optional[str]) -> Optional[str]:
         return validar_estado_emergencia(valor)
-
-
-class EmergenciaRespuesta(EmergenciaBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    fecha_hora_registro: datetime
-    publicada: bool
-    fecha_publicacion: Optional[datetime] = None
-    estado: Optional[str] = None
-    bonita_case_id: Optional[str] = None
-    bonita_variables_json: Optional[str] = None
-    lotes: list[LoteNecesidadRespuesta] = []

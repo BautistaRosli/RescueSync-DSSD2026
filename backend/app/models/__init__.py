@@ -1,7 +1,7 @@
-from .emergencias import Emergencia, EstadoEmergencia, NivelGravedad
-from .lotes import LoteNecesidad
-from .ofertas import OfertaAyuda, OfertaItem
-from .usuarios import Organizacion, Rol, Usuario
+from .emergencias_model import Emergencia, EstadoEmergencia, NivelGravedad
+from .lotes_model import LoteNecesidad
+from .ofertas_model import OfertaAyuda, OfertaItem
+from .usuarios_model import Organizacion, Rol, Usuario
 
 __all__ = [
     "Emergencia",

@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from ..dto import EmergenciaRespuesta
 from ..integrations.bonita.client import BonitaClientError, bonita_client
 from ..models import Emergencia
 from ..repositories import EmergenciaRepository
@@ -25,49 +26,55 @@ class EmergenciaService:
         self,
         db: Session,
         publicada: Optional[bool] = None,
-    ):
-        return self._repository.listar(
-            db, publicada=publicada
-        )
+    ) -> list[EmergenciaRespuesta]:
+        emergencias = self._repository.listar(db, publicada=publicada)
+        return [EmergenciaRespuesta.model_validate(e) for e in emergencias]
 
-    def obtener_emergencia(self, db: Session, emergencia_id: int) -> Emergencia:
-        emergencia = self._repository.obtener_por_id(db, emergencia_id)
-        if emergencia is None:
-            raise HTTPException(
-                status_code=404, detail="Emergencia no encontrada"
-            )
-        return emergencia
+    def obtener_emergencia_entidad(
+        self, db: Session, emergencia_id: int
+    ) -> Emergencia:
+        """Devuelve la entidad para uso de otros services."""
+        return self._obtener_emergencia_entidad(db, emergencia_id)
+
+    def obtener_emergencia(
+        self, db: Session, emergencia_id: int
+    ) -> EmergenciaRespuesta:
+        emergencia = self._obtener_emergencia_entidad(db, emergencia_id)
+        return EmergenciaRespuesta.model_validate(emergencia)
 
     def crear_emergencia(
         self, db: Session, data: EmergenciaCrear
-    ) -> Emergencia:
+    ) -> EmergenciaRespuesta:
         emergencia = Emergencia(**data.model_dump())
-        return self._repository.crear(db, emergencia)
+        creada = self._repository.crear(db, emergencia)
+        return EmergenciaRespuesta.model_validate(creada)
 
     def actualizar_emergencia(
         self, db: Session, emergencia_id: int, data: EmergenciaActualizar
-    ) -> Emergencia:
-        emergencia = self.obtener_emergencia(db, emergencia_id)
+    ) -> EmergenciaRespuesta:
+        emergencia = self._obtener_emergencia_entidad(db, emergencia_id)
         updates = data.model_dump(exclude_unset=True)
         for field, value in updates.items():
             setattr(emergencia, field, value)
-        return self._repository.actualizar(db, emergencia)
+        actualizada = self._repository.actualizar(db, emergencia)
+        return EmergenciaRespuesta.model_validate(actualizada)
 
     def publicar_emergencia(
         self, db: Session, emergencia_id: int
-    ) -> Emergencia:
+    ) -> EmergenciaRespuesta:
         """Marca la emergencia como publicada.
 
         No interactua con Bonita: la publicacion es un acto administrativo.
         """
-        emergencia = self.obtener_emergencia(db, emergencia_id)
+        emergencia = self._obtener_emergencia_entidad(db, emergencia_id)
         if emergencia.publicada:
             raise HTTPException(
                 status_code=409, detail="La emergencia ya fue publicada"
             )
         emergencia.publicada = True
         emergencia.fecha_publicacion = datetime.now(timezone.utc)
-        return self._repository.actualizar(db, emergencia)
+        publicada = self._repository.actualizar(db, emergencia)
+        return EmergenciaRespuesta.model_validate(publicada)
 
     async def iniciar_proceso_bonita(
         self, db: Session, emergencia_id: int
@@ -76,7 +83,7 @@ class EmergenciaService:
 
         Es idempotente: si la emergencia ya tiene un caso, devuelve el mismo.
         """
-        emergencia = self.obtener_emergencia(db, emergencia_id)
+        emergencia = self._obtener_emergencia_entidad(db, emergencia_id)
 
         # Idempotencia: si ya tiene caso, no crear otro
         if emergencia.bonita_case_id:
@@ -125,3 +132,13 @@ class EmergenciaService:
         self._repository.actualizar(db, emergencia)
 
         return case_id
+
+    def _obtener_emergencia_entidad(
+        self, db: Session, emergencia_id: int
+    ) -> Emergencia:
+        emergencia = self._repository.obtener_por_id(db, emergencia_id)
+        if emergencia is None:
+            raise HTTPException(
+                status_code=404, detail="Emergencia no encontrada"
+            )
+        return emergencia

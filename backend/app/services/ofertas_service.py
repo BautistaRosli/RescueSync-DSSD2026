@@ -3,11 +3,19 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from .emergencias import EmergenciaService
-from .usuarios import OrganizacionService
+from ..dto import (
+    OfertaConsolidada,
+    OfertaItemConsolidado,
+    OfertaItemRespuesta,
+    OfertaListadoRespuesta,
+    OfertaRespuesta,
+    OfertasConsolidadas,
+)
 from ..models import OfertaAyuda, OfertaItem
 from ..repositories import OfertaItemRepository, OfertaRepository
 from ..schemas import OfertaActualizar, OfertaCrear
+from .emergencias_service import EmergenciaService
+from .usuarios_service import OrganizacionService
 
 
 class OfertaService:
@@ -22,20 +30,21 @@ class OfertaService:
         db: Session,
         emergencia_id: Optional[int] = None,
         organizacion_id: Optional[int] = None,
-    ):
-        return self._repository.listar(
+    ) -> list[OfertaRespuesta]:
+        ofertas = self._repository.listar(
             db,
             emergencia_id=emergencia_id,
             organizacion_id=organizacion_id,
         )
+        return [OfertaRespuesta.model_validate(o) for o in ofertas]
 
-    def obtener_oferta(self, db: Session, oferta_id: int) -> OfertaAyuda:
-        oferta = self._repository.obtener_por_id(db, oferta_id)
-        if oferta is None:
-            raise HTTPException(status_code=404, detail="Oferta no encontrada")
-        return oferta
+    def obtener_oferta(
+        self, db: Session, oferta_id: int
+    ) -> OfertaRespuesta:
+        oferta = self._obtener_oferta_entidad(db, oferta_id)
+        return OfertaRespuesta.model_validate(oferta)
 
-    def crear_oferta(self, db: Session, data: OfertaCrear) -> OfertaAyuda:
+    def crear_oferta(self, db: Session, data: OfertaCrear) -> OfertaRespuesta:
         self._organizaciones.obtener_organizacion(db, data.organizacion_id)
         items = self._validar_items(db, data.emergencia_id, data.items)
         oferta = OfertaAyuda(
@@ -44,61 +53,73 @@ class OfertaService:
             observaciones=data.observaciones,
         )
         oferta.items = items
-        return self._repository.crear(db, oferta)
+        creada = self._repository.crear(db, oferta)
+        return OfertaRespuesta.model_validate(creada)
 
     def actualizar_oferta(
         self, db: Session, oferta_id: int, data: OfertaActualizar
-    ) -> OfertaAyuda:
-        oferta = self.obtener_oferta(db, oferta_id)
+    ) -> OfertaRespuesta:
+        oferta = self._obtener_oferta_entidad(db, oferta_id)
         if data.observaciones is not None:
             oferta.observaciones = data.observaciones
         if data.items is not None:
             oferta.items = self._validar_items(
                 db, oferta.emergencia_id, data.items
             )
-        return self._repository.actualizar(db, oferta)
+        actualizada = self._repository.actualizar(db, oferta)
+        return OfertaRespuesta.model_validate(actualizada)
 
     def listar_ofertas_de_emergencia(
         self, db: Session, emergencia_id: int
-    ) -> list[dict]:
-        self._emergencias.obtener_emergencia(db, emergencia_id)
+    ) -> list[OfertaListadoRespuesta]:
+        self._emergencias.obtener_emergencia_entidad(db, emergencia_id)
         ofertas = self._repository.listar_de_emergencia(db, emergencia_id)
-        return [self._serializar_listado(oferta) for oferta in ofertas]
+        return [self._construir_listado(oferta) for oferta in ofertas]
 
     def obtener_ofertas_consolidadas(
         self, db: Session, emergencia_id: int
-    ) -> dict:
-        self._emergencias.obtener_emergencia(db, emergencia_id)
+    ) -> OfertasConsolidadas:
+        self._emergencias.obtener_emergencia_entidad(db, emergencia_id)
         ofertas = self._repository.listar_de_emergencia(db, emergencia_id)
-        return {
-            "emergencia_id": emergencia_id,
-            "ofertas": [
-                {
-                    "organizacion_id": oferta.organizacion_id,
-                    "organizacion_nombre": (
+        return OfertasConsolidadas(
+            emergencia_id=emergencia_id,
+            ofertas=[
+                OfertaConsolidada(
+                    organizacion_id=oferta.organizacion_id,
+                    organizacion_nombre=(
                         oferta.organizacion.nombre
                         if oferta.organizacion
                         else ""
                     ),
-                    "items": [
-                        {
-                            "lote_id": item.lote_necesidad_id,
-                            "cantidad_ofrecida": item.cantidad_ofrecida,
-                            "descripcion": item.descripcion,
-                        }
+                    items=[
+                        OfertaItemConsolidado(
+                            lote_id=item.lote_necesidad_id,
+                            cantidad_ofrecida=item.cantidad_ofrecida,
+                            descripcion=item.descripcion,
+                        )
                         for item in oferta.items
                     ],
-                }
+                )
                 for oferta in ofertas
             ],
-        }
+        )
 
     def existe_referencia_a_lote(self, db: Session, lote_id: int) -> bool:
         """Informa si alguna oferta usa el lote indicado."""
         return self._items.existe_referencia_a_lote(db, lote_id)
 
+    def _obtener_oferta_entidad(
+        self, db: Session, oferta_id: int
+    ) -> OfertaAyuda:
+        oferta = self._repository.obtener_por_id(db, oferta_id)
+        if oferta is None:
+            raise HTTPException(status_code=404, detail="Oferta no encontrada")
+        return oferta
+
     def _validar_items(self, db: Session, emergencia_id: int, items) -> list[OfertaItem]:
-        emergencia = self._emergencias.obtener_emergencia(db, emergencia_id)
+        emergencia = self._emergencias.obtener_emergencia_entidad(
+            db, emergencia_id
+        )
         lotes_validos = {lote.id for lote in emergencia.lotes}
         vistos = set()
         nuevos = []
@@ -121,23 +142,23 @@ class OfertaService:
         return nuevos
 
     @staticmethod
-    def _serializar_listado(oferta: OfertaAyuda) -> dict:
-        return {
-            "id": oferta.id,
-            "emergencia_id": oferta.emergencia_id,
-            "organizacion_id": oferta.organizacion_id,
-            "organizacion_nombre": (
+    def _construir_listado(oferta: OfertaAyuda) -> OfertaListadoRespuesta:
+        return OfertaListadoRespuesta(
+            id=oferta.id,
+            emergencia_id=oferta.emergencia_id,
+            organizacion_id=oferta.organizacion_id,
+            organizacion_nombre=(
                 oferta.organizacion.nombre if oferta.organizacion else None
             ),
-            "observaciones": oferta.observaciones,
-            "fecha_hora_oferta": oferta.fecha_hora_oferta,
-            "items": [
-                {
-                    "id": item.id,
-                    "lote_necesidad_id": item.lote_necesidad_id,
-                    "cantidad_ofrecida": item.cantidad_ofrecida,
-                    "descripcion": item.descripcion,
-                }
+            observaciones=oferta.observaciones,
+            fecha_hora_oferta=oferta.fecha_hora_oferta,
+            items=[
+                OfertaItemRespuesta(
+                    id=item.id,
+                    lote_necesidad_id=item.lote_necesidad_id,
+                    cantidad_ofrecida=item.cantidad_ofrecida,
+                    descripcion=item.descripcion,
+                )
                 for item in oferta.items
             ],
-        }
+        )
