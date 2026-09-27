@@ -73,12 +73,6 @@ function DetalleEmergencia({ emergencia }: { emergencia: EmergenciaRead }) {
           </dd>
         </div>
         <div className="flex justify-between gap-4 py-1">
-          <dt className="text-slate-400">Tipo de desastre</dt>
-          <dd className="font-mono text-cyan-400 break-all">
-            {emergencia.tipo_desastre ?? 'Sin especificar'}
-          </dd>
-        </div>
-        <div className="flex justify-between gap-4 py-1">
           <dt className="text-slate-400">Estado</dt>
           <dd className="font-mono text-cyan-400">
             {etiquetaDeEstado(emergencia.estado)}

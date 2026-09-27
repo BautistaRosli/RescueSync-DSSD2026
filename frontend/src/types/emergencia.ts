@@ -27,7 +27,6 @@ export interface EmergenciaRead {
   nivel_gravedad: NivelGravedad
   zona_afectada: string
   descripcion_inicial: string
-  tipo_desastre: string | null
   fecha_hora_registro: string
   publicada: boolean
   fecha_publicacion: string | null
