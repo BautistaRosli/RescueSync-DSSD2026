@@ -4,12 +4,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ...database import get_db
-from ...domains.emergencias.schemas import (
+from ...schemas.emergencias import (
     EmergenciaActualizar,
     EmergenciaCrear,
     EmergenciaRespuesta,
 )
-from ...domains.emergencias.service import EmergenciaService
+from ...services.emergencias import EmergenciaService
 
 router = APIRouter(prefix="/emergencias", tags=["Emergencias"])
 

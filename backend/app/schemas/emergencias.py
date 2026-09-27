@@ -3,8 +3,8 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from ..lotes.schemas import LoteNecesidadRespuesta
-from .models import EstadoEmergencia, NivelGravedad
+from .lotes import LoteNecesidadRespuesta
+from ..models import EstadoEmergencia, NivelGravedad
 
 
 NIVELES_GRAVEDAD_VALIDOS = {

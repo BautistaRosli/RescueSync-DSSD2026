@@ -6,10 +6,10 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from ...integrations.bonita.client import BonitaClientError, bonita_client
-from .models import Emergencia
-from .repository import EmergenciaRepository
-from .schemas import (
+from ..integrations.bonita.client import BonitaClientError, bonita_client
+from ..models import Emergencia
+from ..repositories import EmergenciaRepository
+from ..schemas import (
     EmergenciaActualizar,
     EmergenciaCrear,
 )

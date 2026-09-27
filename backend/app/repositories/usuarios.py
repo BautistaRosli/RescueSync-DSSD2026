@@ -2,7 +2,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session, joinedload
 
-from .models import Organizacion, Rol, Usuario
+from ..models import Organizacion, Rol, Usuario
 
 
 class OrganizacionRepository:

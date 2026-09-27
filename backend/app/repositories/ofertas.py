@@ -2,7 +2,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session, selectinload
 
-from .models import OfertaAyuda, OfertaItem
+from ..models import OfertaAyuda, OfertaItem
 
 
 class OfertaItemRepository:

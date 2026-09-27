@@ -6,7 +6,7 @@ from typing import List, Optional
 from sqlalchemy import Boolean, DateTime, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from ...database import Base
+from ..database import Base
 
 
 class NivelGravedad:

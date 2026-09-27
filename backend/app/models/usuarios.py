@@ -5,7 +5,7 @@ from typing import List, Optional
 from sqlalchemy import Boolean, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from ...database import Base
+from ..database import Base
 
 
 class Rol(Base):

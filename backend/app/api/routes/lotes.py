@@ -2,12 +2,12 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from ...database import get_db
-from ...domains.lotes.schemas import (
+from ...schemas.lotes import (
     LoteNecesidadActualizar,
     LoteNecesidadCrear,
     LoteNecesidadRespuesta,
 )
-from ...domains.lotes.service import LoteService
+from ...services.lotes import LoteService
 
 router = APIRouter(tags=["Lotes"])
 

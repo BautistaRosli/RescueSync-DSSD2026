@@ -2,7 +2,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from .models import LoteNecesidad
+from ..models import LoteNecesidad
 
 
 class LoteNecesidadRepository:

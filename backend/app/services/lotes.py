@@ -1,11 +1,11 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from ..emergencias.service import EmergenciaService
-from ..ofertas.service import OfertaService
-from .models import LoteNecesidad
-from .repository import LoteNecesidadRepository
-from .schemas import LoteNecesidadActualizar, LoteNecesidadCrear
+from .emergencias import EmergenciaService
+from .ofertas import OfertaService
+from ..models import LoteNecesidad
+from ..repositories import LoteNecesidadRepository
+from ..schemas import LoteNecesidadActualizar, LoteNecesidadCrear
 
 
 class LoteService:

@@ -3,11 +3,11 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from ..emergencias.service import EmergenciaService
-from ..usuarios.service import OrganizacionService
-from .models import OfertaAyuda, OfertaItem
-from .repository import OfertaItemRepository, OfertaRepository
-from .schemas import OfertaActualizar, OfertaCrear
+from .emergencias import EmergenciaService
+from .usuarios import OrganizacionService
+from ..models import OfertaAyuda, OfertaItem
+from ..repositories import OfertaItemRepository, OfertaRepository
+from ..schemas import OfertaActualizar, OfertaCrear
 
 
 class OfertaService:

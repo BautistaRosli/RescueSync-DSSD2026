@@ -2,12 +2,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ...database import get_db
-from ...domains.usuarios.schemas import (
+from ...schemas.usuarios import (
     OrganizacionActualizar,
     OrganizacionCrear,
     OrganizacionRespuesta,
 )
-from ...domains.usuarios.service import OrganizacionService
+from ...services.usuarios import OrganizacionService
 
 router = APIRouter(prefix="/organizaciones", tags=["Organizaciones"])
 

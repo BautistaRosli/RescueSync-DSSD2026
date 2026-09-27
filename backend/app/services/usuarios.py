@@ -1,13 +1,13 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from .models import Organizacion, Rol, Usuario
-from .repository import (
+from ..models import Organizacion, Rol, Usuario
+from ..repositories import (
     OrganizacionRepository,
     RolRepository,
     UsuarioRepository,
 )
-from .schemas import (
+from ..schemas import (
     AuthRespuesta,
     LoginSolicitud,
     OrganizacionActualizar,

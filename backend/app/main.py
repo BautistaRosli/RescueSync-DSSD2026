@@ -4,10 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # importa los modelos de todos los dominios para registrarlos en Base.metadata
-from .domains.emergencias import models as modelos_emergencias
-from .domains.lotes import models as modelos_lotes
-from .domains.ofertas import models as modelos_ofertas
-from .domains.usuarios import models as modelos_usuarios
+from . import models as modelos
 from .api.routes import (
     auth,
     bonita,
@@ -18,7 +15,7 @@ from .api.routes import (
     roles,
 )
 from .database import Base, SessionLocal, engine
-from .domains.usuarios.service import RolService
+from .services.usuarios import RolService
 
 Base.metadata.create_all(bind=engine)
 
