@@ -2,6 +2,13 @@ export type {
   AuthResponse,
   LoginRequest,
   RegistroRequest,
-  RolUsuario,
   UsuarioRead,
 } from './auth'
+export type {
+  EstadoEmergencia,
+  EmergenciaCreateRequest,
+  EmergenciaCreada,
+  EmergenciaRead,
+  NivelGravedad,
+} from './emergencia'
+export type { Rol } from './rol'

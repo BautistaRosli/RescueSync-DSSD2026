@@ -1,14 +1,10 @@
-export type RolUsuario =
-  | 'OPERADOR_MUNICIPAL'
-  | 'CENTRO_COORDINADOR'
-  | 'REPRESENTANTE_ONG'
-
 export interface UsuarioRead {
   id: number
   email: string
-  rol: string
+  nombre: string
+  apellido: string
+  rol_id: number
   activo: boolean
-  municipio_id: number | null
   organizacion_id: number | null
 }
 
@@ -22,8 +18,9 @@ export interface AuthResponse {
 export interface RegistroRequest {
   email: string
   password: string
-  rol?: RolUsuario
-  municipio_id?: number | null
+  nombre: string
+  apellido: string
+  rol_id: number
   organizacion_id?: number | null
 }
 

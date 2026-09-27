@@ -81,3 +81,7 @@ async function apiPeticion<T>(
 export async function apiPost<T>(ruta: string, cuerpo: unknown): Promise<T> {
   return apiPeticion<T>(ruta, 'POST', cuerpo)
 }
+
+export async function apiGet<T>(ruta: string): Promise<T> {
+  return apiPeticion<T>(ruta, 'GET')
+}
