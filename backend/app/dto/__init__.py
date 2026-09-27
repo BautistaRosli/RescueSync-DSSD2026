@@ -7,6 +7,7 @@ from .ofertas_dto import (
     OfertaListadoRespuesta,
     OfertaRespuesta,
     OfertasConsolidadas,
+    OrganizacionResumen,
 )
 from .usuarios_dto import (
     AuthRespuesta,
@@ -26,6 +27,7 @@ __all__ = [
     "OfertaRespuesta",
     "OfertasConsolidadas",
     "OrganizacionRespuesta",
+    "OrganizacionResumen",
     "RolRespuesta",
     "UsuarioRespuesta",
 ]

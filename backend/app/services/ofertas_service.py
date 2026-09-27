@@ -10,8 +10,9 @@ from ..dto import (
     OfertaListadoRespuesta,
     OfertaRespuesta,
     OfertasConsolidadas,
+    OrganizacionResumen,
 )
-from ..models import OfertaAyuda, OfertaItem
+from ..models import OfertaAyuda, OfertaItem, Organizacion
 from ..repositories import OfertaItemRepository, OfertaRepository
 from ..schemas import OfertaActualizar, OfertaCrear
 from .emergencias_service import EmergenciaService
@@ -47,12 +48,17 @@ class OfertaService:
     def crear_oferta(self, db: Session, data: OfertaCrear) -> OfertaRespuesta:
         self._organizaciones.obtener_organizacion(db, data.organizacion_id)
         items = self._validar_items(db, data.emergencia_id, data.items)
+        organizaciones = self._resolver_organizaciones(
+            db, data.organizacion_id, data.organizaciones_ids
+        )
         oferta = OfertaAyuda(
             emergencia_id=data.emergencia_id,
             organizacion_id=data.organizacion_id,
             observaciones=data.observaciones,
         )
         oferta.items = items
+        oferta.organizaciones = organizaciones
+        oferta.es_conjunta = len(organizaciones) > 1
         creada = self._repository.crear(db, oferta)
         return OfertaRespuesta.model_validate(creada)
 
@@ -63,9 +69,16 @@ class OfertaService:
         if data.observaciones is not None:
             oferta.observaciones = data.observaciones
         if data.items is not None:
-            oferta.items = self._validar_items(
-                db, oferta.emergencia_id, data.items
+            self._repository.reemplazar_items(
+                db,
+                oferta,
+                self._validar_items(db, oferta.emergencia_id, data.items),
             )
+        if data.organizaciones_ids is not None:
+            oferta.organizaciones = self._resolver_organizaciones(
+                db, oferta.organizacion_id, data.organizaciones_ids
+            )
+            oferta.es_conjunta = len(oferta.organizaciones) > 1
         actualizada = self._repository.actualizar(db, oferta)
         return OfertaRespuesta.model_validate(actualizada)
 
@@ -116,6 +129,25 @@ class OfertaService:
             raise HTTPException(status_code=404, detail="Oferta no encontrada")
         return oferta
 
+    def _resolver_organizaciones(
+        self, db: Session, lider_id: int, socias_ids: list[int]
+    ) -> list[Organizacion]:
+        """Arma la lista de participantes de la oferta (lider + socias).
+
+        La ONG lider siempre queda incluida y los ids repetidos se descartan,
+        de modo que `es_conjunta` se deduce del largo de la lista.
+        """
+        ids_ordenados = [lider_id]
+        for organizacion_id in socias_ids:
+            if organizacion_id not in ids_ordenados:
+                ids_ordenados.append(organizacion_id)
+        return [
+            self._organizaciones.obtener_organizacion_entidad(
+                db, organizacion_id
+            )
+            for organizacion_id in ids_ordenados
+        ]
+
     def _validar_items(self, db: Session, emergencia_id: int, items) -> list[OfertaItem]:
         emergencia = self._emergencias.obtener_emergencia_entidad(
             db, emergencia_id
@@ -152,6 +184,13 @@ class OfertaService:
             ),
             observaciones=oferta.observaciones,
             fecha_hora_oferta=oferta.fecha_hora_oferta,
+            es_conjunta=oferta.es_conjunta,
+            organizaciones=[
+                OrganizacionResumen(
+                    id=organizacion.id, nombre=organizacion.nombre
+                )
+                for organizacion in oferta.organizaciones
+            ],
             items=[
                 OfertaItemRespuesta(
                     id=item.id,

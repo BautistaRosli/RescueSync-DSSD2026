@@ -33,4 +33,8 @@ export interface EmergenciaRead {
   fecha_publicacion: string | null
   estado: EstadoEmergencia | null
   bonita_case_id: string | null
+  // Ventana de convocatoria: todavía no existe en el backend (la agrega otro
+  // integrante del equipo). Opcionales para que la UI funcione sin ellas.
+  fecha_apertura_convocatoria?: string | null
+  fecha_cierre_convocatoria?: string | null
 }

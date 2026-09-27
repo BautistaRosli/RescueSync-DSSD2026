@@ -12,6 +12,15 @@ class OfertaItemRespuesta(OfertaItemBase):
     id: int
 
 
+class OrganizacionResumen(BaseModel):
+    """Datos mínimos de una ONG participante de una oferta."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    nombre: str
+
+
 class OfertaRespuesta(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -20,6 +29,8 @@ class OfertaRespuesta(BaseModel):
     organizacion_id: int
     observaciones: Optional[str] = None
     fecha_hora_oferta: datetime
+    es_conjunta: bool = False
+    organizaciones: List[OrganizacionResumen] = []
     items: List[OfertaItemRespuesta] = []
 
 
@@ -30,6 +41,8 @@ class OfertaListadoRespuesta(BaseModel):
     organizacion_nombre: Optional[str] = None
     observaciones: Optional[str] = None
     fecha_hora_oferta: datetime
+    es_conjunta: bool = False
+    organizaciones: List[OrganizacionResumen] = []
     items: List[OfertaItemRespuesta] = []
 
 

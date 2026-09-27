@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   EmergenciasPage,
   LoginPage,
+  PanelOngPage,
   RegistroPage,
   RegistrarEmergenciaPage,
 } from './pages'
@@ -12,6 +13,8 @@ type Vista = 'login' | 'registro'
 type VistaOperador = 'registrar' | 'emergencias'
 
 const ROL_OPERADOR_MUNICIPAL = 'OPERADOR_MUNICIPAL'
+
+const ROL_REPRESENTANTE_ONG = 'REPRESENTANTE_ONG'
 
 const PESTANIAS_OPERADOR: { valor: VistaOperador; etiqueta: string }[] = [
   { valor: 'registrar', etiqueta: 'Registrar emergencia' },
@@ -96,13 +99,15 @@ function App() {
               <EmergenciasPage />
             )}
           </section>
+        ) : sesion.rol === ROL_REPRESENTANTE_ONG ? (
+          <PanelOngPage sesion={sesion} />
         ) : (
           <section className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
             <h2 className="text-xl font-bold text-amber-400 mb-1">
               Sección no disponible
             </h2>
             <p className="text-sm text-slate-400">
-              Esta sección es exclusiva para operadores municipales. Tu rol actual es{' '}
+              Todavía no hay una sección para tu rol. Tu rol actual es{' '}
               <span className="font-mono text-cyan-400">{sesion.rol}</span>.
             </p>
           </section>

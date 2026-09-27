@@ -50,7 +50,7 @@ function escribirDetalle(cuerpo: unknown, status: number): string {
 
 async function apiPeticion<T>(
   ruta: string,
-  metodo: 'GET' | 'POST',
+  metodo: 'GET' | 'POST' | 'PATCH',
   cuerpo?: unknown,
 ): Promise<T> {
   let respuesta: Response
@@ -84,4 +84,8 @@ export async function apiPost<T>(ruta: string, cuerpo: unknown): Promise<T> {
 
 export async function apiGet<T>(ruta: string): Promise<T> {
   return apiPeticion<T>(ruta, 'GET')
+}
+
+export async function apiPatch<T>(ruta: string, cuerpo: unknown): Promise<T> {
+  return apiPeticion<T>(ruta, 'PATCH', cuerpo)
 }
