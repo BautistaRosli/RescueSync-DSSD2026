@@ -65,5 +65,7 @@ AGENTS.md
 backend/skills/*
 backend/scripts/*
 backend/backend.md
+backend_modificado.md
+
 frontend/frontend.md
 *.pdf

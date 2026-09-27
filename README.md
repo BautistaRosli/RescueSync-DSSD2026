@@ -28,7 +28,7 @@ Solo se necesita tener instalado Docker (con Docker Desktop o Docker Engine en W
    * Base de datos: `localhost:5432`
 
 3. **Apagar los servicios:**
-   ```bash
+   ```bash 
    docker compose down
    ```
    *(Si además querés borrar la persistencia de la BD, agregá `-v`)*

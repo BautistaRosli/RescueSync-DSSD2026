@@ -5,7 +5,6 @@ export interface UsuarioRead {
   apellido: string
   rol_id: number
   activo: boolean
-  municipio_id: number | null
   organizacion_id: number | null
 }
 
@@ -22,7 +21,6 @@ export interface RegistroRequest {
   nombre: string
   apellido: string
   rol_id: number
-  municipio_id?: number | null
   organizacion_id?: number | null
 }
 

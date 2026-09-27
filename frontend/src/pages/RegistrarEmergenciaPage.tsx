@@ -1,11 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
-import { ApiError, listarMunicipios, registrarEmergencia } from '../services'
+import { ApiError, registrarEmergencia } from '../services'
 import type {
   AuthResponse,
   EmergenciaCreateRequest,
   EmergenciaCreada,
-  MunicipioRead,
   NivelGravedad,
 } from '../types'
 
@@ -21,9 +20,6 @@ const claseCampo =
 
 const claseEtiqueta = 'block text-sm text-slate-300 mb-1'
 
-const claseAviso =
-  'rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-300'
-
 const claseError =
   'rounded-lg border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm text-red-300'
 
@@ -33,9 +29,6 @@ function etiquetaDeGravedad(nivel: NivelGravedad): string {
 
 function describirError(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 404) {
-      return 'El municipio seleccionado no existe. Recargá la página.'
-    }
     if (error.status === 422) {
       return `Revisá los datos enviados. ${error.detail}`
     }
@@ -44,61 +37,13 @@ function describirError(error: unknown): string {
   return 'Ocurrió un error inesperado. Intentá de nuevo.'
 }
 
-export function RegistrarEmergenciaPage({
-  sesion,
-  onCerrarSesion,
-}: {
-  sesion: AuthResponse
-  onCerrarSesion: () => void
-}) {
-  const municipioAsignado = sesion.usuario.municipio_id
-  const [municipios, setMunicipios] = useState<MunicipioRead[]>([])
-  const [municipioId, setMunicipioId] = useState<number | ''>(
-    municipioAsignado ?? '',
-  )
-  const [cargandoMunicipios, setCargandoMunicipios] = useState(false)
-  const [errorMunicipios, setErrorMunicipios] = useState<string | null>(null)
+export function RegistrarEmergenciaPage({ sesion }: { sesion: AuthResponse }) {
   const [nivelGravedad, setNivelGravedad] = useState<NivelGravedad>('media')
   const [zona, setZona] = useState('')
   const [descripcion, setDescripcion] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
   const [creada, setCreada] = useState<EmergenciaCreada | null>(null)
-
-  useEffect(() => {
-    let vigente = true
-
-    async function cargarMunicipios() {
-      if (municipioAsignado !== null) return
-      setCargandoMunicipios(true)
-      setErrorMunicipios(null)
-      try {
-        const datos = await listarMunicipios()
-        if (!vigente) return
-        setMunicipios(datos)
-      } catch (fallo) {
-        if (!vigente) return
-        setMunicipios([])
-        setErrorMunicipios(
-          fallo instanceof ApiError
-            ? fallo.detail
-            : 'No se pudieron cargar los municipios disponibles.',
-        )
-      } finally {
-        if (vigente) setCargandoMunicipios(false)
-      }
-    }
-
-    void cargarMunicipios()
-
-    return () => {
-      vigente = false
-    }
-  }, [municipioAsignado])
-
-  function manejarMunicipio(evento: ChangeEvent<HTMLSelectElement>) {
-    setMunicipioId(Number(evento.target.value))
-  }
 
   function manejarGravedad(evento: ChangeEvent<HTMLSelectElement>) {
     setNivelGravedad(evento.target.value as NivelGravedad)
@@ -114,7 +59,6 @@ export function RegistrarEmergenciaPage({
 
   function registrarOtra() {
     setCreada(null)
-    setMunicipioId('')
     setNivelGravedad('media')
     setZona('')
     setDescripcion('')
@@ -125,12 +69,6 @@ export function RegistrarEmergenciaPage({
     evento.preventDefault()
     setError(null)
 
-    const municipioElegido = municipioAsignado !== null ? municipioAsignado : municipioId
-
-    if (municipioElegido === '') {
-      setError('Seleccioná un municipio.')
-      return
-    }
     if (!nivelGravedad) {
       setError('Seleccioná un nivel de gravedad.')
       return
@@ -147,7 +85,6 @@ export function RegistrarEmergenciaPage({
     setEnviando(true)
     try {
       const datos: EmergenciaCreateRequest = {
-        municipio_id: municipioElegido,
         nivel_gravedad: nivelGravedad,
         zona_afectada: zona.trim(),
         descripcion_inicial: descripcion.trim(),
@@ -160,7 +97,6 @@ export function RegistrarEmergenciaPage({
     }
   }
 
-  const municipiosInhabilitados = cargandoMunicipios || errorMunicipios !== null
   const fechaRegistro = creada
     ? new Date(creada.fecha_hora_registro).toLocaleString('es-AR')
     : ''
@@ -170,7 +106,7 @@ export function RegistrarEmergenciaPage({
       <div className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
         <h2 className="text-xl font-bold text-cyan-400 mb-1">Operador municipal</h2>
         <p className="text-sm text-slate-400 mb-5">
-          Sesión activa. Registrá una emergencia en el municipio que te fue asignado.
+          Sesión activa. Registrá una emergencia del desastre.
         </p>
 
         <dl className="rounded-lg bg-slate-900 border border-slate-700 p-4 text-sm">
@@ -189,14 +125,6 @@ export function RegistrarEmergenciaPage({
             <dd className="font-mono text-cyan-400">{sesion.rol}</dd>
           </div>
         </dl>
-
-        <button
-          type="button"
-          onClick={onCerrarSesion}
-          className="mt-4 w-full rounded-lg border border-slate-700 px-4 py-2 font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-400"
-        >
-          Cerrar sesión
-        </button>
       </div>
 
       {creada ? (
@@ -212,10 +140,6 @@ export function RegistrarEmergenciaPage({
             <div className="flex justify-between gap-4 py-1">
               <dt className="text-slate-400">Id</dt>
               <dd className="font-mono text-cyan-400">{creada.id}</dd>
-            </div>
-            <div className="flex justify-between gap-4 py-1">
-              <dt className="text-slate-400">Id de municipio</dt>
-              <dd className="font-mono text-cyan-400">{creada.municipio_id}</dd>
             </div>
             <div className="flex justify-between gap-4 py-1">
               <dt className="text-slate-400">Nivel de gravedad</dt>
@@ -248,49 +172,6 @@ export function RegistrarEmergenciaPage({
           noValidate
         >
           <h3 className="text-lg font-bold text-cyan-400">Registrar emergencia</h3>
-
-          <div>
-            <label htmlFor="emergencia-municipio" className={claseEtiqueta}>
-              Municipio
-            </label>
-            {municipioAsignado !== null ? (
-              <>
-                <input
-                  id="emergencia-municipio"
-                  type="text"
-                  value={`Municipio asignado (id ${municipioAsignado})`}
-                  disabled
-                  readOnly
-                  className={claseCampo}
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  Se registra en el municipio asignado a tu usuario.
-                </p>
-              </>
-            ) : (
-              <>
-                <select
-                  id="emergencia-municipio"
-                  value={municipioId}
-                  onChange={manejarMunicipio}
-                  disabled={municipiosInhabilitados}
-                  className={claseCampo}
-                >
-                  {cargandoMunicipios && <option value="">Cargando municipios...</option>}
-                  {municipios.map((municipio) => (
-                    <option key={municipio.id} value={municipio.id}>
-                      {municipio.nombre}
-                    </option>
-                  ))}
-                </select>
-                {errorMunicipios && (
-                  <p role="alert" className={`${claseAviso} mt-2`}>
-                    {errorMunicipios}
-                  </p>
-                )}
-              </>
-            )}
-          </div>
 
           <div>
             <label htmlFor="emergencia-gravedad" className={claseEtiqueta}>
