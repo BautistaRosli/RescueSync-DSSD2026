@@ -102,6 +102,13 @@ export function RegistrarEmergenciaPage() {
 
   return (
     <section className="flex flex-col gap-6">
+      <div className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
+        <p className="text-sm text-slate-400">
+          Cargá los datos de la emergencia: nivel de gravedad, zona afectada y
+          descripción.
+        </p>
+      </div>
+
       {creada ? (
         <div className="rounded-xl bg-slate-800 border border-emerald-500/40 p-6 shadow-2xl">
           <h2 className="text-xl font-bold text-emerald-400 mb-1">

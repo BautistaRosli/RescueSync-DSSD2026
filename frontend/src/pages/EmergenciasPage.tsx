@@ -196,6 +196,12 @@ export function EmergenciasPage() {
 
   return (
     <section className="flex flex-col gap-4">
+      <div className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
+        <p className="text-sm text-slate-400">
+          Emergencias sin publicar. Tocá una fila para ver su detalle.
+        </p>
+      </div>
+
       {cargando && (
         <p className="rounded-xl bg-slate-800 border border-slate-700 p-6 text-sm text-slate-400 shadow-2xl">
           Cargando emergencias...

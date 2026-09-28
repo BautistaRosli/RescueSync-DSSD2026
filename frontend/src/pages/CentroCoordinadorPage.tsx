@@ -37,6 +37,13 @@ const PESTANIAS_BANDEJA: { valor: PestaniaBandeja; etiqueta: string }[] = [
   { valor: 'publicadas', etiqueta: 'Publicadas' },
 ]
 
+const DESCRIPCIONES_BANDEJA: Record<PestaniaBandeja, string> = {
+  sin_publicar:
+    'Emergencias que todavía no se difundieron. Tocá una fila para desplegar su detalle, cargarle sus lotes o publicarla.',
+  publicadas:
+    'Emergencias ya publicadas, a la espera de ofertas de ayuda. Solo se pueden consultar.',
+}
+
 const POR_PAGINA = 10
 
 const clasePestania = (activa: boolean): string =>
@@ -684,6 +691,10 @@ export function CentroCoordinadorPage() {
           </button>
         ))}
       </nav>
+
+      <div className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
+        <p className="text-sm text-slate-400">{DESCRIPCIONES_BANDEJA[pestania]}</p>
+      </div>
 
       {avisoLote !== null && (
         <p role="alert" className={claseError}>
