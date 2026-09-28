@@ -23,6 +23,17 @@ function etiquetaDeGravedad(nivel: NivelGravedad): string {
   return NIVELES_GRAVEDAD.find((opcion) => opcion.valor === nivel)?.etiqueta ?? nivel
 }
 
+const CLASES_GRAVEDAD: Record<NivelGravedad, string> = {
+  baja: 'rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-300',
+  media: 'rounded-full border border-yellow-500/50 bg-yellow-500/10 px-2 py-0.5 text-xs text-yellow-300',
+  alta: 'rounded-full border border-orange-500/50 bg-orange-500/10 px-2 py-0.5 text-xs text-orange-300',
+  critica: 'rounded-full border border-red-500/50 bg-red-500/10 px-2 py-0.5 text-xs text-red-300',
+}
+
+function clasesDeGravedad(nivel: NivelGravedad): string {
+  return CLASES_GRAVEDAD[nivel]
+}
+
 function etiquetaDeEstado(estado: EstadoEmergencia | null): string {
   if (estado === null) {
     return 'Sin estado'
@@ -216,7 +227,9 @@ export function EmergenciasPage() {
                   </span>
 
                   <span className="flex flex-wrap gap-2">
-                    <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-300">
+                    <span
+                      className={clasesDeGravedad(emergencia.nivel_gravedad)}
+                    >
                       Gravedad: {etiquetaDeGravedad(emergencia.nivel_gravedad)}
                     </span>
                     <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-300">
