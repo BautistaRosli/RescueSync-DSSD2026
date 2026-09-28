@@ -1,4 +1,4 @@
-from .emergencias_dto import EmergenciaRespuesta
+from .emergencias_dto import EmergenciaRespuesta, EmergenciasPaginadas
 from .lotes_dto import LoteNecesidadRespuesta
 from .ofertas_dto import (
     OfertaConsolidada,
@@ -19,6 +19,7 @@ from .usuarios_dto import (
 __all__ = [
     "AuthRespuesta",
     "EmergenciaRespuesta",
+    "EmergenciasPaginadas",
     "LoteNecesidadRespuesta",
     "OfertaConsolidada",
     "OfertaItemConsolidado",

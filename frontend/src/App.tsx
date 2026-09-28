@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import {
+  CentroCoordinadorPage,
   EmergenciasPage,
   LoginPage,
   PanelOngPage,
@@ -15,6 +16,7 @@ type VistaOperador = 'registrar' | 'emergencias'
 const ROL_OPERADOR_MUNICIPAL = 'OPERADOR_MUNICIPAL'
 
 const ROL_REPRESENTANTE_ONG = 'REPRESENTANTE_ONG'
+const ROL_CENTRO_COORDINADOR = 'CENTRO_COORDINADOR'
 
 const PESTANIAS_OPERADOR: { valor: VistaOperador; etiqueta: string }[] = [
   { valor: 'registrar', etiqueta: 'Registrar emergencia' },
@@ -76,6 +78,16 @@ function App() {
           )
         ) : sesion.rol === ROL_OPERADOR_MUNICIPAL ? (
           <section className="flex flex-col gap-6">
+            <div className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
+              <h2 className="text-xl font-bold text-cyan-400 mb-1">
+                Operador municipal
+              </h2>
+              <p className="text-sm text-slate-400">
+                Registrá una emergencia del desastre o consultá las que están sin
+                publicar.
+              </p>
+            </div>
+
             <nav
               aria-label="Secciones del operador"
               className="flex flex-wrap gap-2"
@@ -94,13 +106,15 @@ function App() {
             </nav>
 
             {vistaOperador === 'registrar' ? (
-              <RegistrarEmergenciaPage sesion={sesion} />
+              <RegistrarEmergenciaPage />
             ) : (
               <EmergenciasPage />
             )}
           </section>
         ) : sesion.rol === ROL_REPRESENTANTE_ONG ? (
           <PanelOngPage sesion={sesion} />
+        ) : sesion.rol === ROL_CENTRO_COORDINADOR ? (
+          <CentroCoordinadorPage />
         ) : (
           <section className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
             <h2 className="text-xl font-bold text-amber-400 mb-1">
