@@ -2,7 +2,6 @@ import { useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { ApiError, registrarEmergencia } from '../services'
 import type {
-  AuthResponse,
   EmergenciaCreateRequest,
   EmergenciaCreada,
   NivelGravedad,
@@ -37,7 +36,7 @@ function describirError(error: unknown): string {
   return 'Ocurrió un error inesperado. Intentá de nuevo.'
 }
 
-export function RegistrarEmergenciaPage({ sesion }: { sesion: AuthResponse }) {
+export function RegistrarEmergenciaPage() {
   const [nivelGravedad, setNivelGravedad] = useState<NivelGravedad>('media')
   const [zona, setZona] = useState('')
   const [descripcion, setDescripcion] = useState('')
@@ -104,27 +103,10 @@ export function RegistrarEmergenciaPage({ sesion }: { sesion: AuthResponse }) {
   return (
     <section className="flex flex-col gap-6">
       <div className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
-        <h2 className="text-xl font-bold text-cyan-400 mb-1">Operador municipal</h2>
-        <p className="text-sm text-slate-400 mb-5">
-          Sesión activa. Registrá una emergencia del desastre.
+        <p className="text-sm text-slate-400">
+          Cargá los datos de la emergencia: nivel de gravedad, zona afectada y
+          descripción.
         </p>
-
-        <dl className="rounded-lg bg-slate-900 border border-slate-700 p-4 text-sm">
-          <div className="flex justify-between gap-4 py-1">
-            <dt className="text-slate-400">Email</dt>
-            <dd className="font-mono text-cyan-400 break-all">{sesion.usuario.email}</dd>
-          </div>
-          <div className="flex justify-between gap-4 py-1">
-            <dt className="text-slate-400">Nombre</dt>
-            <dd className="font-mono text-cyan-400">
-              {sesion.usuario.nombre} {sesion.usuario.apellido}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-4 py-1">
-            <dt className="text-slate-400">Rol</dt>
-            <dd className="font-mono text-cyan-400">{sesion.rol}</dd>
-          </div>
-        </dl>
       </div>
 
       {creada ? (

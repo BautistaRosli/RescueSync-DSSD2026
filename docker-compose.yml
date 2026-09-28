@@ -28,11 +28,18 @@ services:
     restart: always
     ports:
       - "8000:8000"
+    env_file:
+      - path: ./backend/.env
+        required: false
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:postgrespassword@postgres:5432/app_db
       - BONITA_URL=http://host.docker.internal:8080/bonita
       - BONITA_USER=install
       - BONITA_PASSWORD=install
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USER=ventasgoats@gmail.com
+      - SMTP_FROM=rescuesync@gmail.com
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

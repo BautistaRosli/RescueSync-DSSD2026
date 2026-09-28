@@ -1,5 +1,6 @@
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from ..models import Emergencia
@@ -18,6 +19,41 @@ class EmergenciaRepository:
         if publicada is not None:
             query = query.filter(Emergencia.publicada == publicada)
         return query.order_by(Emergencia.id.desc()).all()
+
+    def listar_paginado(
+        self,
+        db: Session,
+        publicada: bool,
+        pagina: int,
+        por_pagina: int,
+    ) -> list[Emergencia]:
+        """Pagina un bucket de emergencias.
+
+        Las no publicadas se ordenan de la mas vieja a la mas nueva y las
+        publicadas al reves. El desempate por id mantiene el orden estable
+        entre paginas.
+        """
+        columnas = (
+            (Emergencia.fecha_hora_registro.asc(), Emergencia.id.asc())
+            if not publicada
+            else (Emergencia.fecha_hora_registro.desc(), Emergencia.id.desc())
+        )
+        return (
+            self._consulta_con_lotes(db)
+            .filter(Emergencia.publicada == publicada)
+            .order_by(*columnas)
+            .limit(por_pagina)
+            .offset((pagina - 1) * por_pagina)
+            .all()
+        )
+
+    def contar_por_publicada(self, db: Session, publicada: bool) -> int:
+        return (
+            db.query(func.count(Emergencia.id))
+            .filter(Emergencia.publicada == publicada)
+            .scalar()
+            or 0
+        )
 
     def obtener_por_id(
         self, db: Session, emergencia_id: int

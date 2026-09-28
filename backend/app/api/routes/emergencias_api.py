@@ -1,10 +1,10 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
 from ...database import get_db
-from ...dto.emergencias_dto import EmergenciaRespuesta
+from ...dto.emergencias_dto import EmergenciaRespuesta, EmergenciasPaginadas
 from ...schemas.emergencias_schema import (
     EmergenciaActualizar,
     EmergenciaCrear,
@@ -14,6 +14,8 @@ from ...services.emergencias_service import EmergenciaService
 router = APIRouter(prefix="/emergencias", tags=["Emergencias"])
 
 servicio_emergencias = EmergenciaService()
+
+POR_PAGINA_MAXIMO = 10
 
 
 @router.get("", response_model=list[EmergenciaRespuesta])
@@ -26,6 +28,21 @@ def listar_emergencias(
     )
 
 
+@router.get("/bandeja", response_model=EmergenciasPaginadas)
+def listar_bandeja_emergencias(
+    publicada: bool,
+    pagina: int = Query(default=1, ge=1),
+    por_pagina: int = Query(
+        default=POR_PAGINA_MAXIMO, ge=1, le=POR_PAGINA_MAXIMO
+    ),
+    db: Session = Depends(get_db),
+):
+    """Bandeja del Centro Coordinador, paginada por bucket de publicacion."""
+    return servicio_emergencias.listar_emergencias_paginadas(
+        db, publicada=publicada, pagina=pagina, por_pagina=por_pagina
+    )
+
+
 @router.get("/{emergencia_id}", response_model=EmergenciaRespuesta)
 def obtener_emergencia(emergencia_id: int, db: Session = Depends(get_db)):
     return servicio_emergencias.obtener_emergencia(db, emergencia_id)
@@ -33,9 +50,13 @@ def obtener_emergencia(emergencia_id: int, db: Session = Depends(get_db)):
 
 @router.post("", response_model=EmergenciaRespuesta, status_code=201)
 def crear_emergencia(
-    data: EmergenciaCrear, db: Session = Depends(get_db)
+    data: EmergenciaCrear,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
 ):
-    return servicio_emergencias.crear_emergencia(db, data)
+    return servicio_emergencias.crear_emergencia(
+        db, data, background_tasks=background_tasks
+    )
 
 
 @router.patch("/{emergencia_id}", response_model=EmergenciaRespuesta)
