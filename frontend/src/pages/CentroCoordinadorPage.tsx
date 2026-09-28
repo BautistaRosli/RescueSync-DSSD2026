@@ -32,16 +32,24 @@ const ESTADOS_EMERGENCIA: { valor: EstadoEmergencia; etiqueta: string }[] = [
   { valor: 'resuelta', etiqueta: 'Resuelta' },
 ]
 
-const PESTANIAS_BANDEJA: { valor: PestaniaBandeja; etiqueta: string }[] = [
-  { valor: 'sin_publicar', etiqueta: 'Sin publicar' },
-  { valor: 'publicadas', etiqueta: 'Publicadas' },
+const PESTANIAS_BANDEJA: {
+  valor: PestaniaBandeja
+  etiqueta: string
+  titulo: string
+}[] = [
+  {
+    valor: 'sin_publicar',
+    etiqueta: 'Sin publicar',
+    titulo: 'Emergencias sin publicar',
+  },
+  { valor: 'publicadas', etiqueta: 'Publicadas', titulo: 'Emergencias publicadas' },
 ]
 
 const DESCRIPCIONES_BANDEJA: Record<PestaniaBandeja, string> = {
   sin_publicar:
-    'Emergencias que todavía no se difundieron. Tocá una fila para desplegar su detalle, cargarle sus lotes o publicarla.',
+    'Emergencias a la espera de lotes. Tocá una fila para desplegar su detalle, cargarle sus lotes o publicarla.',
   publicadas:
-    'Emergencias ya publicadas, a la espera de ofertas de ayuda. Solo se pueden consultar.',
+    'Emergencias a la espera de ofertas de ayuda. Tocá una fila para desplegar su detalle.',
 }
 
 const POR_PAGINA = 10
@@ -667,6 +675,8 @@ export function CentroCoordinadorPage() {
   const paginaActual = bandeja?.pagina ?? pagina
   const sinPaginas = totalPaginas === 0
   const editable = pestania === 'sin_publicar'
+  const tituloBandeja =
+    PESTANIAS_BANDEJA.find((p) => p.valor === pestania)?.titulo ?? pestania
 
   return (
     <section className="flex flex-col gap-4">
@@ -693,6 +703,7 @@ export function CentroCoordinadorPage() {
       </nav>
 
       <div className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
+        <h2 className="text-xl font-bold text-cyan-400 mb-1">{tituloBandeja}</h2>
         <p className="text-sm text-slate-400">{DESCRIPCIONES_BANDEJA[pestania]}</p>
       </div>
 
