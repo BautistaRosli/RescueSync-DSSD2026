@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
-import { ApiError, listarEmergencias } from '../services'
-import type { EstadoEmergencia, EmergenciaRead, NivelGravedad } from '../types'
+import { ApiError, listarBandejaEmergencias } from '../services'
+import type {
+  BandaEmergencias,
+  EstadoEmergencia,
+  EmergenciaRead,
+  NivelGravedad,
+} from '../types'
 
 const NIVELES_GRAVEDAD: { valor: NivelGravedad; etiqueta: string }[] = [
   { valor: 'baja', etiqueta: 'Baja' },
@@ -15,6 +20,8 @@ const ESTADOS_EMERGENCIA: { valor: EstadoEmergencia; etiqueta: string }[] = [
   { valor: 'en_proceso', etiqueta: 'En proceso' },
   { valor: 'resuelta', etiqueta: 'Resuelta' },
 ]
+
+const POR_PAGINA = 10
 
 const claseError =
   'rounded-lg border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm text-red-300'
@@ -128,7 +135,8 @@ function DetalleEmergencia({ emergencia }: { emergencia: EmergenciaRead }) {
 }
 
 export function EmergenciasPage() {
-  const [emergencias, setEmergencias] = useState<EmergenciaRead[]>([])
+  const [pagina, setPagina] = useState(1)
+  const [bandeja, setBandeja] = useState<BandaEmergencias | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [desplegadas, setDesplegadas] = useState<Set<number>>(() => new Set())
@@ -137,10 +145,20 @@ export function EmergenciasPage() {
     let vigente = true
 
     async function cargar() {
+      setCargando(true)
+      setError(null)
       try {
-        const datos = await listarEmergencias()
-        if (vigente) {
-          setEmergencias(datos)
+        const datos = await listarBandejaEmergencias({
+          publicada: false,
+          pagina,
+          por_pagina: POR_PAGINA,
+        })
+        if (!vigente) {
+          return
+        }
+        setBandeja(datos)
+        if (datos.paginas > 0 && datos.pagina > datos.paginas) {
+          setPagina(datos.paginas)
         }
       } catch (fallo) {
         if (vigente) {
@@ -158,7 +176,7 @@ export function EmergenciasPage() {
     return () => {
       vigente = false
     }
-  }, [])
+  }, [pagina])
 
   function alternar(emergenciaId: number) {
     setDesplegadas((actuales) => {
@@ -172,16 +190,12 @@ export function EmergenciasPage() {
     })
   }
 
+  const totalPaginas = bandeja?.paginas ?? 0
+  const paginaActual = bandeja?.pagina ?? pagina
+  const sinPaginas = totalPaginas === 0
+
   return (
     <section className="flex flex-col gap-4">
-      <div className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
-        <h2 className="text-xl font-bold text-cyan-400 mb-1">Emergencias</h2>
-        <p className="text-sm text-slate-400">
-          Listado completo de emergencias registradas. Tocá una fila para desplegar su
-          detalle.
-        </p>
-      </div>
-
       {cargando && (
         <p className="rounded-xl bg-slate-800 border border-slate-700 p-6 text-sm text-slate-400 shadow-2xl">
           Cargando emergencias...
@@ -194,15 +208,15 @@ export function EmergenciasPage() {
         </p>
       )}
 
-      {!cargando && error === null && emergencias.length === 0 && (
+      {!cargando && error === null && bandeja !== null && bandeja.items.length === 0 && (
         <p className="rounded-xl bg-slate-800 border border-slate-700 p-6 text-sm text-slate-400 shadow-2xl">
           Todavía no hay emergencias registradas.
         </p>
       )}
 
-      {!cargando && error === null && emergencias.length > 0 && (
+      {!cargando && error === null && bandeja !== null && bandeja.items.length > 0 && (
         <ul className="flex flex-col gap-3">
-          {emergencias.map((emergencia) => {
+          {bandeja.items.map((emergencia) => {
             const desplegada = desplegadas.has(emergencia.id)
 
             return (
@@ -257,6 +271,35 @@ export function EmergenciasPage() {
             )
           })}
         </ul>
+      )}
+
+      {!sinPaginas && (
+        <nav
+          aria-label="Paginación de emergencias"
+          className="flex flex-wrap items-center justify-between gap-3"
+        >
+          <button
+            type="button"
+            onClick={() => setPagina((actual) => Math.max(1, actual - 1))}
+            disabled={cargando || paginaActual <= 1}
+            className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Anterior
+          </button>
+
+          <p className="text-sm text-slate-400">
+            Página {paginaActual} de {totalPaginas}
+          </p>
+
+          <button
+            type="button"
+            onClick={() => setPagina((actual) => actual + 1)}
+            disabled={cargando || paginaActual >= totalPaginas}
+            className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Siguiente
+          </button>
+        </nav>
       )}
     </section>
   )
