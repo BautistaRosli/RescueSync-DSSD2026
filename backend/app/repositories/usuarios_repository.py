@@ -67,3 +67,18 @@ class UsuarioRepository:
         db.commit()
         db.refresh(usuario)
         return usuario
+
+    def listar_por_rol_nombre(
+        self, db: Session, nombre_rol: str, solo_activos: bool = True
+    ) -> list[Usuario]:
+        """Lista usuarios que pertenecen a un rol determinado."""
+
+        query = (
+            db.query(Usuario)
+            .options(joinedload(Usuario.rol))
+            .join(Rol, Rol.id == Usuario.rol_id)
+            .filter(Rol.nombre == nombre_rol)
+        )
+        if solo_activos:
+            query = query.filter(Usuario.activo.is_(True))
+        return query.order_by(Usuario.id.asc()).all()

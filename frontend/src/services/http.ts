@@ -50,8 +50,9 @@ function escribirDetalle(cuerpo: unknown, status: number): string {
 
 async function apiPeticion<T>(
   ruta: string,
-  metodo: 'GET' | 'POST',
+  metodo: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   cuerpo?: unknown,
+  esperaSinCuerpo = false,
 ): Promise<T> {
   let respuesta: Response
 
@@ -72,6 +73,9 @@ async function apiPeticion<T>(
   }
 
   if (cuerpoRespuesta === null) {
+    if (esperaSinCuerpo) {
+      return undefined as T
+    }
     throw new ApiError(respuesta.status, 'La respuesta del servidor no pudo interpretarse.')
   }
 
@@ -84,4 +88,12 @@ export async function apiPost<T>(ruta: string, cuerpo: unknown): Promise<T> {
 
 export async function apiGet<T>(ruta: string): Promise<T> {
   return apiPeticion<T>(ruta, 'GET')
+}
+
+export async function apiPatch<T>(ruta: string, cuerpo: unknown): Promise<T> {
+  return apiPeticion<T>(ruta, 'PATCH', cuerpo)
+}
+
+export async function apiDelete(ruta: string): Promise<void> {
+  return apiPeticion<void>(ruta, 'DELETE', undefined, true)
 }

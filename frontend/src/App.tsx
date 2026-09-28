@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import {
+  CentroCoordinadorPage,
   EmergenciasPage,
   LoginPage,
   RegistroPage,
@@ -12,6 +13,8 @@ type Vista = 'login' | 'registro'
 type VistaOperador = 'registrar' | 'emergencias'
 
 const ROL_OPERADOR_MUNICIPAL = 'OPERADOR_MUNICIPAL'
+
+const ROL_CENTRO_COORDINADOR = 'CENTRO_COORDINADOR'
 
 const PESTANIAS_OPERADOR: { valor: VistaOperador; etiqueta: string }[] = [
   { valor: 'registrar', etiqueta: 'Registrar emergencia' },
@@ -96,6 +99,8 @@ function App() {
               <EmergenciasPage />
             )}
           </section>
+        ) : sesion.rol === ROL_CENTRO_COORDINADOR ? (
+          <CentroCoordinadorPage />
         ) : (
           <section className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
             <h2 className="text-xl font-bold text-amber-400 mb-1">
