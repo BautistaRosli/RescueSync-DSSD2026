@@ -44,7 +44,6 @@ class EmergenciaBase(BaseModel):
     nivel_gravedad: str
     zona_afectada: str
     descripcion_inicial: str
-    tipo_desastre: Optional[str] = None
 
 
 class EmergenciaCrear(EmergenciaBase):
@@ -58,7 +57,6 @@ class EmergenciaActualizar(BaseModel):
     nivel_gravedad: Optional[str] = None
     zona_afectada: Optional[str] = None
     descripcion_inicial: Optional[str] = None
-    tipo_desastre: Optional[str] = None
     estado: Optional[str] = None
 
     @field_validator("nivel_gravedad")

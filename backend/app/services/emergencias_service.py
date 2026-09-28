@@ -1,15 +1,17 @@
 import json
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
 
-from ..dto import EmergenciaRespuesta
+from ..dto import EmergenciaRespuesta, EmergenciasPaginadas
 from ..integrations.bonita.client import BonitaClientError, bonita_client
-from ..models import Emergencia
-from ..repositories import EmergenciaRepository
+from ..integrations.email.service import notificar_nueva_emergencia
+from ..models import EstadoEmergencia, Emergencia
+from ..repositories import EmergenciaRepository, UsuarioRepository
 from ..schemas import (
     EmergenciaActualizar,
     EmergenciaCrear,
@@ -17,10 +19,13 @@ from ..schemas import (
 
 logger = logging.getLogger(__name__)
 
+NOMBRE_ROL_CENTRO_COORDINADOR = "CENTRO_COORDINADOR"
+
 
 class EmergenciaService:
     def __init__(self) -> None:
         self._repository = EmergenciaRepository()
+        self._usuarios = UsuarioRepository()
 
     def listar_emergencias(
         self,
@@ -29,6 +34,26 @@ class EmergenciaService:
     ) -> list[EmergenciaRespuesta]:
         emergencias = self._repository.listar(db, publicada=publicada)
         return [EmergenciaRespuesta.model_validate(e) for e in emergencias]
+
+    def listar_emergencias_paginadas(
+        self,
+        db: Session,
+        publicada: bool,
+        pagina: int = 1,
+        por_pagina: int = 10,
+    ) -> EmergenciasPaginadas:
+        """Bandeja paginada: bucket de no publicadas o de publicadas."""
+        total = self._repository.contar_por_publicada(db, publicada)
+        emergencias = self._repository.listar_paginado(
+            db, publicada, pagina, por_pagina
+        )
+        return EmergenciasPaginadas(
+            items=[EmergenciaRespuesta.model_validate(e) for e in emergencias],
+            pagina=pagina,
+            por_pagina=por_pagina,
+            total=total,
+            paginas=math.ceil(total / por_pagina) if total else 0,
+        )
 
     def obtener_emergencia_entidad(
         self, db: Session, emergencia_id: int
@@ -43,11 +68,45 @@ class EmergenciaService:
         return EmergenciaRespuesta.model_validate(emergencia)
 
     def crear_emergencia(
-        self, db: Session, data: EmergenciaCrear
+        self,
+        db: Session,
+        data: EmergenciaCrear,
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> EmergenciaRespuesta:
         emergencia = Emergencia(**data.model_dump())
         creada = self._repository.crear(db, emergencia)
-        return EmergenciaRespuesta.model_validate(creada)
+        respuesta = EmergenciaRespuesta.model_validate(creada)
+        if background_tasks is not None:
+            self._programar_notificacion(db, creada, background_tasks)
+        return respuesta
+
+    def _programar_notificacion(
+        self,
+        db: Session,
+        emergencia: Emergencia,
+        background_tasks: BackgroundTasks,
+    ) -> None:
+        """Agenda el aviso por email al Centro Coordinador.
+
+        Los destinatarios y los datos de la emergencia se resuelven aca, con
+        la sesion de la request todavia abierta. La background task recibe
+        solo primitivos porque su sesion ya fue cerrada.
+        """
+        destinatarios = [
+            usuario.email
+            for usuario in self._usuarios.listar_por_rol_nombre(
+                db, NOMBRE_ROL_CENTRO_COORDINADOR
+            )
+        ]
+        background_tasks.add_task(
+            notificar_nueva_emergencia,
+            destinatarios,
+            emergencia.id,
+            emergencia.nivel_gravedad,
+            emergencia.zona_afectada,
+            emergencia.descripcion_inicial,
+            emergencia.fecha_hora_registro,
+        )
 
     def actualizar_emergencia(
         self, db: Session, emergencia_id: int, data: EmergenciaActualizar
@@ -62,7 +121,7 @@ class EmergenciaService:
     def publicar_emergencia(
         self, db: Session, emergencia_id: int
     ) -> EmergenciaRespuesta:
-        """Marca la emergencia como publicada.
+        """Publica la emergencia y abre la convocatoria de ofertas.
 
         No interactua con Bonita: la publicacion es un acto administrativo.
         """
@@ -71,8 +130,17 @@ class EmergenciaService:
             raise HTTPException(
                 status_code=409, detail="La emergencia ya fue publicada"
             )
+        if not emergencia.lotes:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "La emergencia no tiene lotes de necesidad cargados: "
+                    "no se puede publicar"
+                ),
+            )
         emergencia.publicada = True
         emergencia.fecha_publicacion = datetime.now(timezone.utc)
+        emergencia.estado = EstadoEmergencia.ESPERA_OFERTAS
         publicada = self._repository.actualizar(db, emergencia)
         return EmergenciaRespuesta.model_validate(publicada)
 

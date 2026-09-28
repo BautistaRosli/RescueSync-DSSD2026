@@ -44,7 +44,6 @@ class Emergencia(Base):
         DateTime(timezone=True)
     )
     bonita_case_id: Mapped[Optional[str]] = mapped_column(String(50), index=True)
-    tipo_desastre: Mapped[Optional[str]] = mapped_column(String(100))
     bonita_variables_json: Mapped[Optional[str]] = mapped_column(Text)
     estado: Mapped[Optional[str]] = mapped_column(
         String(50), default=EstadoEmergencia.ESPERA_LOTES, nullable=False
