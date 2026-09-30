@@ -27,10 +27,10 @@ def listar_lotes(emergencia_id: int, db: Session = Depends(get_db)):
     response_model=LoteNecesidadRespuesta,
     status_code=201,
 )
-def crear_lote(
+async def crear_lote(
     emergencia_id: int, data: LoteNecesidadCrear, db: Session = Depends(get_db)
 ):
-    return servicio_lotes.crear_lote(db, emergencia_id, data)
+    return await servicio_lotes.crear_lote(db, emergencia_id, data)
 
 
 @router.get("/lotes/{lote_id}", response_model=LoteNecesidadRespuesta)
