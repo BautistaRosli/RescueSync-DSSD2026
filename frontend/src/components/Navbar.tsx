@@ -15,25 +15,18 @@ export function Navbar({ sesion, onCerrarSesion }: NavbarProps) {
 
   return (
     <header className="border-b border-slate-700 bg-slate-800/60">
-      <div className="mx-auto max-w-3xl px-4 py-6 flex flex-wrap items-center justify-between gap-4">
-        <img src="/logo.png" alt="RescueSync" className="h-12 w-auto" />
+      <div className="mx-auto max-w-4xl px-4 py-4 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <img src="/logo.png" alt="RescueSync" className="h-16 w-auto" />
+          <span className="bg-linear-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent text-2xl font-bold tracking-tight">
+            RescueSync
+          </span>
+        </div>
 
         {sesion !== null && (
-          <section
-            aria-label="Sesión activa"
-            className="flex min-w-56 flex-col gap-3 rounded-xl bg-slate-900 border border-slate-700 p-4 shadow-2xl"
-          >
-            <dl className="flex flex-col gap-1">
-              <div className="flex items-baseline justify-between gap-4">
-                <dt className="text-xs text-slate-400">Usuario</dt>
-                <dd className="text-sm font-semibold text-white">{nombreCompleto}</dd>
-              </div>
-              <div className="flex items-baseline justify-between gap-4">
-                <dt className="text-xs text-slate-400">Rol</dt>
-                <dd className="font-mono text-cyan-400">{sesion.rol}</dd>
-              </div>
-            </dl>
-
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-slate-300">{nombreCompleto}</span>
+            <span aria-hidden="true" className="h-4 w-px bg-slate-700" />
             <button
               type="button"
               onClick={onCerrarSesion}
@@ -41,7 +34,7 @@ export function Navbar({ sesion, onCerrarSesion }: NavbarProps) {
             >
               Cerrar sesión
             </button>
-          </section>
+          </div>
         )}
       </div>
     </header>
