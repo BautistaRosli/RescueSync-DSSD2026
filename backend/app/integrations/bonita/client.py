@@ -119,4 +119,70 @@ class BonitaClient:
                 )
             return int(response.json()["caseId"])
 
+    async def obtener_tarea_pendiente(
+        self, case_id: int, nombre_tarea: str
+    ) -> dict | None:
+        """Devuelve la tarea humana pendiente del caso o None si no existe."""
+        async with await self._client() as client:
+            await self.login(client)
+            response = await client.get(
+                "/API/bpm/userTask",
+                params={"f": [f"caseId={case_id}", f"name={nombre_tarea}"]},
+            )
+            if response.status_code != 200:
+                raise BonitaClientError(
+                    f"Error consultando tarea '{nombre_tarea}' "
+                    f"(HTTP {response.status_code})"
+                )
+            tareas = response.json()
+            return tareas[0] if tareas else None
+
+    async def obtener_miembro_actor(self, actor_id: int) -> dict | None:
+        """Devuelve el primer usuario miembro del actor Bonita, o None si no tiene."""
+        async with await self._client() as client:
+            await self.login(client)
+            response = await client.get(
+                "/API/bpm/actorMember",
+                params={"f": f"actor_id={actor_id}"},
+            )
+            if response.status_code != 200:
+                raise BonitaClientError(
+                    f"Error consultando actor {actor_id} "
+                    f"(HTTP {response.status_code})"
+                )
+            miembros = response.json()
+            return miembros[0] if miembros else None
+
+    async def asignar_tarea(self, tarea_id: int, usuario_id: int) -> None:
+        """Asigna una tarea humana a un usuario del actor (requisito previo para ejecutarla por API)."""
+        async with await self._client() as client:
+            await self.login(client)
+            response = await client.put(
+                f"/API/bpm/userTask/{tarea_id}",
+                json={"assigned_id": str(usuario_id)},
+            )
+            if response.status_code not in (200, 204):
+                raise BonitaClientError(
+                    f"Error asignando tarea {tarea_id} "
+                    f"(HTTP {response.status_code}): {response.text}"
+                )
+
+    async def ejecutar_tarea(self, tarea_id: int) -> None:
+        """Ejecuta una tarea humana del caso (barrera de sincronizacion).
+
+        Sin `assign`: la tarea debe estar previamente asignada a un usuario
+        del actor, porque el usuario tecnico no puede autoasignarse.
+        """
+        async with await self._client() as client:
+            await self.login(client)
+            response = await client.post(
+                f"/API/bpm/userTask/{tarea_id}/execution",
+                json={},
+            )
+            if response.status_code not in (200, 204):
+                raise BonitaClientError(
+                    f"Error ejecutando tarea {tarea_id} "
+                    f"(HTTP {response.status_code}): {response.text}"
+                )
+
 bonita_client = BonitaClient()
