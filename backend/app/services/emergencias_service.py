@@ -149,6 +149,9 @@ class EmergenciaService:
     ) -> int:
         """Instancia en Bonita el proceso de convocatoria de la emergencia.
 
+        Instancia el caso y recien despues escribe las variables de caso, que
+        el contrato del proceso deja en null.
+
         Es idempotente: si la emergencia ya tiene un caso, devuelve el mismo.
         """
         emergencia = self._obtener_emergencia_entidad(db, emergencia_id)
@@ -194,6 +197,31 @@ class EmergenciaService:
                 status_code=503,
                 detail=f"No se pudo iniciar el proceso en Bonita: {exc}",
             )
+
+        # El contrato del proceso instancia el caso pero deja las variables en
+        # null, asi que se escriben explicitamente recien creado. Va antes de
+        # persistir `bonita_case_id` a proposito: si falla, la emergencia no
+        # queda marcada como instancia y se puede reintentar, en vez de
+        # quedar con un caso de Bonita huerfano y variables en null.
+        try:
+            set_names = await bonita_client.set_case_variables(
+                case_id, variables
+            )
+        except BonitaClientError as exc:
+            logger.error(
+                f"Error seteando variables del caso {case_id} en Bonita: {exc}"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "No se pudieron setear las variables del caso "
+                    f"en Bonita: {exc}"
+                ),
+            )
+
+        logger.info(
+            f"Variables seteadas en el caso {case_id} de Bonita: {set_names}"
+        )
 
         emergencia.bonita_case_id = str(case_id)
         emergencia.bonita_variables_json = json.dumps(variables, default=str)
