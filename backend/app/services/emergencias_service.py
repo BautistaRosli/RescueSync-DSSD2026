@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import BackgroundTasks, HTTPException
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from ..dto import EmergenciaRespuesta, EmergenciasPaginadas
@@ -56,10 +57,10 @@ class EmergenciaService:
         )
 
     def obtener_emergencia_entidad(
-        self, db: Session, emergencia_id: int
+        self, db: Session, emergencia_id: int, bloquear: bool = False
     ) -> Emergencia:
         """Devuelve la entidad para uso de otros services."""
-        return self._obtener_emergencia_entidad(db, emergencia_id)
+        return self._obtener_emergencia_entidad(db, emergencia_id, bloquear)
 
     def obtener_emergencia(
         self, db: Session, emergencia_id: int
@@ -125,7 +126,7 @@ class EmergenciaService:
 
         No interactua con Bonita: la publicacion es un acto administrativo.
         """
-        emergencia = self._obtener_emergencia_entidad(db, emergencia_id)
+        emergencia = self._obtener_emergencia_entidad(db, emergencia_id, bloquear=True)
         if emergencia.publicada:
             raise HTTPException(
                 status_code=409, detail="La emergencia ya fue publicada"
@@ -151,7 +152,10 @@ class EmergenciaService:
 
         Es idempotente: si la emergencia ya tiene un caso, devuelve el mismo.
         """
-        emergencia = self._obtener_emergencia_entidad(db, emergencia_id)
+        # La espera del bloqueo no debe impedir que otra petición termine su HTTP.
+        emergencia = await run_in_threadpool(
+            self._obtener_emergencia_entidad, db, emergencia_id, bloquear=True
+        )
 
         # Idempotencia: si ya tiene caso, no crear otro
         if emergencia.bonita_case_id:
@@ -202,9 +206,9 @@ class EmergenciaService:
         return case_id
 
     def _obtener_emergencia_entidad(
-        self, db: Session, emergencia_id: int
+        self, db: Session, emergencia_id: int, bloquear: bool = False
     ) -> Emergencia:
-        emergencia = self._repository.obtener_por_id(db, emergencia_id)
+        emergencia = self._repository.obtener_por_id(db, emergencia_id, bloquear)
         if emergencia is None:
             raise HTTPException(
                 status_code=404, detail="Emergencia no encontrada"

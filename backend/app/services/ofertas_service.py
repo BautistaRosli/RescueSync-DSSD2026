@@ -59,7 +59,7 @@ class OfertaService:
     def actualizar_oferta(
         self, db: Session, oferta_id: int, data: OfertaActualizar
     ) -> OfertaRespuesta:
-        oferta = self._obtener_oferta_entidad(db, oferta_id)
+        oferta = self._obtener_oferta_entidad(db, oferta_id, bloquear=True)
         if data.observaciones is not None:
             oferta.observaciones = data.observaciones
         if data.items is not None:
@@ -109,16 +109,16 @@ class OfertaService:
         return self._items.existe_referencia_a_lote(db, lote_id)
 
     def _obtener_oferta_entidad(
-        self, db: Session, oferta_id: int
+        self, db: Session, oferta_id: int, bloquear: bool = False
     ) -> OfertaAyuda:
-        oferta = self._repository.obtener_por_id(db, oferta_id)
+        oferta = self._repository.obtener_por_id(db, oferta_id, bloquear)
         if oferta is None:
             raise HTTPException(status_code=404, detail="Oferta no encontrada")
         return oferta
 
     def _validar_items(self, db: Session, emergencia_id: int, items) -> list[OfertaItem]:
         emergencia = self._emergencias.obtener_emergencia_entidad(
-            db, emergencia_id
+            db, emergencia_id, bloquear=True
         )
         lotes_validos = {lote.id for lote in emergencia.lotes}
         vistos = set()

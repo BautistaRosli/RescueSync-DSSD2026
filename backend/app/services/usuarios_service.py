@@ -1,4 +1,5 @@
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..dto import (
@@ -87,7 +88,13 @@ class RolService:
         """Inserta los roles base solo si no existen (idempotente)."""
         for nombre in ROLES_INICIALES:
             if self._repository.obtener_por_nombre(db, nombre) is None:
-                self._repository.agregar(db, Rol(nombre=nombre))
+                try:
+                    self._repository.agregar(db, Rol(nombre=nombre))
+                except IntegrityError:
+                    db.rollback()
+                    # Otro proceso puede haber sembrado el mismo rol al arrancar.
+                    if self._repository.obtener_por_nombre(db, nombre) is None:
+                        raise
 
 
 class AuthService:
@@ -114,7 +121,15 @@ class AuthService:
             organizacion_id=data.organizacion_id,
             activo=True,
         )
-        return self._usuarios.crear(db, usuario)
+        try:
+            return self._usuarios.crear(db, usuario)
+        except IntegrityError as exc:
+            db.rollback()
+            if self._usuarios.obtener_por_email(db, data.email) is not None:
+                raise HTTPException(
+                    status_code=409, detail="El email ya está registrado"
+                ) from exc
+            raise
 
     def login(self, db: Session, data: LoginSolicitud) -> AuthRespuesta:
         usuario = self._usuarios.obtener_por_email(db, data.email)

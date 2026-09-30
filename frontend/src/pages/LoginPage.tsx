@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { ApiError, iniciarSesion } from '../services'
 import type { AuthResponse, LoginRequest } from '../types'
@@ -39,6 +39,14 @@ export function LoginPage({
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
+  const vigente = useRef(false)
+
+  useEffect(() => {
+    vigente.current = true
+    return () => {
+      vigente.current = false
+    }
+  }, [])
 
   async function manejarEnvio(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault()
@@ -60,7 +68,9 @@ export function LoginPage({
     setEnviando(true)
     try {
       const datos: LoginRequest = { email: email.trim(), password }
-      onSesionIniciada(await iniciarSesion(datos))
+      const sesion = await iniciarSesion(datos)
+      if (!vigente.current) return
+      onSesionIniciada(sesion)
       setPassword('')
     } catch (fallo) {
       setError(describirError(fallo))

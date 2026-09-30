@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   ApiError,
@@ -258,6 +258,7 @@ function ListaLotes({
                   </label>
                   <input
                     id={`lote-edicion-${lote.id}-tipo`}
+                    disabled={guardandoEdicion}
                     type="text"
                     value={borradorEdicion.tipo}
                     onChange={(evento) =>
@@ -280,6 +281,7 @@ function ListaLotes({
                     </label>
                     <input
                       id={`lote-edicion-${lote.id}-cantidad`}
+                      disabled={guardandoEdicion}
                       type="number"
                       min={1}
                       step={1}
@@ -302,6 +304,7 @@ function ListaLotes({
                     </label>
                     <input
                       id={`lote-edicion-${lote.id}-unidad`}
+                      disabled={guardandoEdicion}
                       type="text"
                       value={borradorEdicion.unidad}
                       onChange={(evento) =>
@@ -323,6 +326,7 @@ function ListaLotes({
                   </label>
                   <textarea
                     id={`lote-edicion-${lote.id}-descripcion`}
+                    disabled={guardandoEdicion}
                     value={borradorEdicion.descripcion}
                     onChange={(evento) =>
                       alCambiarCampoEdicion('descripcion', evento.target.value)
@@ -379,7 +383,7 @@ function ListaLotes({
                   <button
                     type="button"
                     onClick={() => alAbrirEdicion(lote)}
-                    disabled={eliminandoLote !== null}
+                    disabled={eliminandoLote !== null || guardandoEdicion}
                     className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Editar
@@ -387,7 +391,7 @@ function ListaLotes({
                   <button
                     type="button"
                     onClick={() => alEliminar(lote)}
-                    disabled={eliminandoLote !== null}
+                    disabled={eliminandoLote !== null || guardandoEdicion}
                     className="rounded-lg border border-red-500/50 px-3 py-1 text-xs font-semibold text-red-300 transition hover:border-red-400 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {eliminandoLote === lote.id ? 'Eliminando...' : 'Eliminar'}
@@ -412,8 +416,8 @@ export function CentroCoordinadorPage() {
   const [desplegadas, setDesplegadas] = useState<Set<number>>(() => new Set())
   const [borradores, setBorradores] = useState<Record<number, BorradorLote>>({})
   const [errorBorrador, setErrorBorrador] = useState<Record<number, string>>({})
-  const [enviandoLote, setEnviandoLote] = useState<number | null>(null)
-  const [publicando, setPublicando] = useState<number | null>(null)
+  const [enviandoLote, setEnviandoLote] = useState<Record<number, boolean>>({})
+  const [publicando, setPublicando] = useState<Record<number, boolean>>({})
   const [errorPublicar, setErrorPublicar] = useState<Record<number, string>>({})
   const [loteEnEdicion, setLoteEnEdicion] = useState<number | null>(null)
   const [borradorEdicion, setBorradorEdicion] = useState<BorradorLote>(BORRADOR_VACIO)
@@ -421,11 +425,13 @@ export function CentroCoordinadorPage() {
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
   const [eliminandoLote, setEliminandoLote] = useState<number | null>(null)
   const [avisoLote, setAvisoLote] = useState<string | null>(null)
+  const revisionLotes = useRef(0)
 
   useEffect(() => {
     let vigente = true
 
     async function cargar() {
+      const revision = revisionLotes.current
       setCargando(true)
       setError(null)
       try {
@@ -435,6 +441,11 @@ export function CentroCoordinadorPage() {
           por_pagina: POR_PAGINA,
         })
         if (!vigente) {
+          return
+        }
+        if (revision !== revisionLotes.current) {
+          // La lectura empezó antes de un cambio confirmado: pedimos datos actuales.
+          setRecargo((actual) => actual + 1)
           return
         }
         setBandeja(datos)
@@ -492,6 +503,7 @@ export function CentroCoordinadorPage() {
     emergenciaId: number,
     transformar: (emergencia: EmergenciaRead) => EmergenciaRead,
   ) {
+    revisionLotes.current += 1
     setBandeja((actual) => {
       if (actual === null) {
         return actual
@@ -530,7 +542,7 @@ export function CentroCoordinadorPage() {
       return
     }
 
-    setEnviandoLote(emergencia.id)
+    setEnviandoLote((actuales) => ({ ...actuales, [emergencia.id]: true }))
     try {
       const creado = await crearLote(emergencia.id, {
         tipo,
@@ -540,7 +552,9 @@ export function CentroCoordinadorPage() {
       })
       actualizarLotesEnBandeja(emergencia.id, (item) => ({
         ...item,
-        lotes: [...item.lotes, creado],
+        lotes: item.lotes.some((lote) => lote.id === creado.id)
+          ? item.lotes
+          : [...item.lotes, creado],
       }))
       setErrorBorrador((actuales) => sinClave(actuales, emergencia.id))
       setBorradores((actuales) => sinClave(actuales, emergencia.id))
@@ -550,7 +564,7 @@ export function CentroCoordinadorPage() {
         [emergencia.id]: describirError(fallo),
       }))
     } finally {
-      setEnviandoLote(null)
+      setEnviandoLote((actuales) => sinClave(actuales, emergencia.id))
     }
   }
 
@@ -656,7 +670,7 @@ export function CentroCoordinadorPage() {
   }
 
   async function manejarPublicar(emergencia: EmergenciaRead) {
-    setPublicando(emergencia.id)
+    setPublicando((actuales) => ({ ...actuales, [emergencia.id]: true }))
     try {
       await publicarEmergencia(emergencia.id)
       setErrorPublicar((actuales) => sinClave(actuales, emergencia.id))
@@ -667,7 +681,7 @@ export function CentroCoordinadorPage() {
         [emergencia.id]: describirError(fallo),
       }))
     } finally {
-      setPublicando(null)
+      setPublicando((actuales) => sinClave(actuales, emergencia.id))
     }
   }
 
@@ -744,7 +758,7 @@ export function CentroCoordinadorPage() {
             const borrador = borradores[emergencia.id] ?? BORRADOR_VACIO
             const errorFormulario = errorBorrador[emergencia.id]
             const errorPublicacion = errorPublicar[emergencia.id]
-            const guardandoLote = enviandoLote === emergencia.id
+            const guardandoLote = enviandoLote[emergencia.id] ?? false
 
             return (
               <li
@@ -834,6 +848,7 @@ export function CentroCoordinadorPage() {
                             </label>
                             <input
                               id={`lote-${emergencia.id}-tipo`}
+                              disabled={guardandoLote}
                               type="text"
                               value={borrador.tipo}
                               onChange={(evento) =>
@@ -860,6 +875,7 @@ export function CentroCoordinadorPage() {
                               </label>
                               <input
                                 id={`lote-${emergencia.id}-cantidad`}
+                                disabled={guardandoLote}
                                 type="number"
                                 min={1}
                                 step={1}
@@ -886,6 +902,7 @@ export function CentroCoordinadorPage() {
                               </label>
                               <input
                                 id={`lote-${emergencia.id}-unidad`}
+                                disabled={guardandoLote}
                                 type="text"
                                 value={borrador.unidad}
                                 onChange={(evento) =>
@@ -911,6 +928,7 @@ export function CentroCoordinadorPage() {
                             </label>
                             <textarea
                               id={`lote-${emergencia.id}-descripcion`}
+                              disabled={guardandoLote}
                               value={borrador.descripcion}
                               onChange={(evento) =>
                                 actualizarBorrador(
@@ -952,11 +970,11 @@ export function CentroCoordinadorPage() {
                             onClick={() => void manejarPublicar(emergencia)}
                             disabled={
                               emergencia.lotes.length === 0 ||
-                              publicando === emergencia.id
+                              publicando[emergencia.id]
                             }
                             className="rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-slate-900 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {publicando === emergencia.id
+                            {publicando[emergencia.id]
                               ? 'Publicando...'
                               : 'Publicar lotes'}
                           </button>

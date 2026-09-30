@@ -43,6 +43,7 @@ class LoteService:
     ) -> LoteNecesidadRespuesta:
         lote = self._obtener_lote_entidad(db, lote_id)
         self._verificar_emergencia_no_publicada(db, lote.emergencia_id)
+        lote = self._obtener_lote_entidad(db, lote_id)
         for field, value in data.model_dump(exclude_unset=True).items():
             setattr(lote, field, value)
         actualizado = self._repository.actualizar(db, lote)
@@ -51,6 +52,7 @@ class LoteService:
     def eliminar_lote(self, db: Session, lote_id: int) -> None:
         lote = self._obtener_lote_entidad(db, lote_id)
         self._verificar_emergencia_no_publicada(db, lote.emergencia_id)
+        lote = self._obtener_lote_entidad(db, lote_id)
         if self._ofertas.existe_referencia_a_lote(db, lote_id):
             raise HTTPException(
                 status_code=409,
@@ -67,7 +69,7 @@ class LoteService:
         emergencias; aca solo se agrega el bloqueo por publicacion.
         """
         emergencia = self._emergencias.obtener_emergencia_entidad(
-            db, emergencia_id
+            db, emergencia_id, bloquear=True
         )
         if emergencia.publicada:
             raise HTTPException(

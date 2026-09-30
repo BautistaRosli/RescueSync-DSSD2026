@@ -48,13 +48,15 @@ class OfertaRepository:
         )
 
     def obtener_por_id(
-        self, db: Session, oferta_id: int
+        self, db: Session, oferta_id: int, bloquear: bool = False
     ) -> Optional[OfertaAyuda]:
-        return (
+        consulta = (
             self._consulta_con_relaciones(db)
             .filter(OfertaAyuda.id == oferta_id)
-            .scalar()
         )
+        if bloquear:
+            consulta = consulta.populate_existing().with_for_update()
+        return consulta.scalar()
 
     def crear(self, db: Session, oferta: OfertaAyuda) -> OfertaAyuda:
         db.add(oferta)

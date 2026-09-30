@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { ApiError, listarRoles, registrar } from '../services'
 import type { RegistroRequest, Rol } from '../types'
@@ -59,6 +59,14 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
   const [errorRoles, setErrorRoles] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
+  const formularioVigente = useRef(false)
+
+  useEffect(() => {
+    formularioVigente.current = true
+    return () => {
+      formularioVigente.current = false
+    }
+  }, [])
 
   useEffect(() => {
     let vigente = true
@@ -154,6 +162,7 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
         rol_id: rolId,
       }
       await registrar(datos)
+      if (!formularioVigente.current) return
       setPassword('')
       onIrALogin()
     } catch (fallo) {
