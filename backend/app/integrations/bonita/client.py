@@ -1,4 +1,3 @@
-import json
 import os
 from typing import Any
 import httpx
@@ -6,6 +5,26 @@ import httpx
 
 class BonitaClientError(Exception):
     pass
+
+
+# Clases Java que espera el motor para cada tipo nativo de Python.
+# La clave es el tipo exacto (no una superclase) para que `bool` no caiga
+# en `int` y termine guardado como Integer.
+TIPOS_JAVA = {
+    bool: "java.lang.Boolean",
+    int: "java.lang.Integer",
+    float: "java.lang.Double",
+    str: "java.lang.String",
+}
+
+# Fallback seguro: ante un tipo desconocido se manda texto, que el motor
+# siempre acepta. Inventar una clase Java nueva seria peor.
+TIPO_JAVA_POR_DEFECTO = "java.lang.String"
+
+
+def tipo_java_de(valor: Any) -> str:
+    """Devuelve la clase Java que el motor de Bonita espera para `valor`."""
+    return TIPOS_JAVA.get(type(valor), TIPO_JAVA_POR_DEFECTO)
 
 
 class BonitaClient:
@@ -79,6 +98,13 @@ class BonitaClient:
     async def set_case_variables(
         self, case_id: int, variables: dict[str, Any]
     ) -> list[str]:
+        """Escribe variables de caso con PUT /API/bpm/caseVariable/{caseId}/{name}.
+
+        El motor exige el envoltorio {"value": ..., "type": ...}: sin `type`
+        responde 500 con `Attribute 'type' must be specified`, y mandar el
+        valor crudo tampoco sirve. Se hace explicito porque el binding del
+        contrato del proceso no deja las variables de caso cargadas.
+        """
         async with await self._client() as client:
             await self.login(client)
             set_names = []
@@ -86,8 +112,7 @@ class BonitaClient:
                 try:
                     response = await client.put(
                         f"/API/bpm/caseVariable/{case_id}/{name}",
-                        content=json.dumps(value),
-                        headers={"Content-Type": "application/json"},
+                        json={"value": value, "type": tipo_java_de(value)},
                     )
                 except httpx.RequestError as exc:
                     raise BonitaClientError(
@@ -95,7 +120,8 @@ class BonitaClient:
                     )
                 if response.status_code != 200:
                     raise BonitaClientError(
-                        f"Error seteando variable '{name}' (HTTP {response.status_code})"
+                        f"Error seteando variable '{name}' "
+                        f"(HTTP {response.status_code}): {response.text}"
                     )
                 set_names.append(name)
             return set_names
