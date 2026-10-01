@@ -56,3 +56,13 @@ def requiere_roles(*roles: str):
 def solo_development() -> None:
     if os.getenv("APP_ENV") != "development":
         raise HTTPException(404, "Diagnóstico no disponible")
+
+
+def usuario_opcional(
+    credenciales: HTTPAuthorizationCredentials | None = Depends(portador),
+    db: Session = Depends(get_db),
+) -> Usuario | None:
+    try:
+        return usuario_actual(credenciales, db)
+    except HTTPException:
+        return None

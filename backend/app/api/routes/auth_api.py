@@ -1,11 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ..dependencias import requiere_roles
-from ...models import Usuario
-from ...services.permisos_service import (
-    COORDINADOR,
-)
 from ...database import get_db
 from ...dto.usuarios_dto import AuthRespuesta
 from ...schemas.usuarios_schema import (
@@ -20,13 +15,9 @@ auth_service = AuthService()
 
 
 @router.post("/registro", response_model=AuthRespuesta, status_code=201)
-def registrar_usuario(
-    data: UsuarioCrear,
-    db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
-):
-    usuario = auth_service.registrar_usuario(db, data)
-    return auth_service.construir_auth_response(usuario)
+def registrar_usuario(data: UsuarioCrear, db: Session = Depends(get_db)):
+    nuevo_usuario = auth_service.registrar_usuario(db, data)
+    return auth_service.construir_auth_response(nuevo_usuario)
 
 
 @router.post("/login", response_model=AuthRespuesta)
