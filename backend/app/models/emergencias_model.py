@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import List, Optional
+
+from sqlalchemy import Boolean, DateTime, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from ..database import Base
+
+
+class NivelGravedad:
+    BAJA = "baja"
+    MEDIA = "media"
+    ALTA = "alta"
+    CRITICA = "critica"
+
+
+class EstadoEmergencia:
+    ESPERA_LOTES = "esperando_lotes"
+    ESPERA_OFERTAS = "esperando_ofertas"
+    EN_PROCESO = "en_proceso"
+    RESUELTA = "resuelta"
+
+
+class Emergencia(Base):
+    """Emergencia registrada en la plataforma."""
+
+    __tablename__ = "emergencias"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nivel_gravedad: Mapped[str] = mapped_column(
+        String(20), default=NivelGravedad.MEDIA, nullable=False
+    )
+    zona_afectada: Mapped[str] = mapped_column(String(200), nullable=False)
+    descripcion_inicial: Mapped[str] = mapped_column(Text, nullable=False)
+    fecha_hora_registro: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    publicada: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    fecha_publicacion: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    bonita_case_id: Mapped[Optional[str]] = mapped_column(String(50), index=True)
+    bonita_variables_json: Mapped[Optional[str]] = mapped_column(Text)
+    estado: Mapped[Optional[str]] = mapped_column(
+        String(50), default=EstadoEmergencia.ESPERA_LOTES, nullable=False
+    )
+
+    lotes: Mapped[List["LoteNecesidad"]] = relationship(
+        back_populates="emergencia", cascade="all, delete-orphan"
+    )
+    ofertas: Mapped[List["OfertaAyuda"]] = relationship(
+        back_populates="emergencia", cascade="all, delete-orphan"
+    )

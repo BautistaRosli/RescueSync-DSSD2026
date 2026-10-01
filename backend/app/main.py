@@ -1,9 +1,46 @@
-import os
-import httpx
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="API Backend")
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+
+# importa los modelos de todos los dominios para registrarlos en Base.metadata
+from . import models as modelos
+from .api.routes import (
+    auth_api,
+    bonita_api,
+    emergencias_api,
+    inventario_api,
+    lotes_api,
+    ofertas_api,
+    organizaciones_api,
+    roles_api,
+)
+from .database import Base, SessionLocal, engine
+from .services.usuarios_service import AuthService, RolService
+
+with engine.begin() as conexion:
+    if conexion.dialect.name == "postgresql":
+        # Serializa el check/create de tablas cuando arrancan varios procesos.
+        conexion.execute(text("SELECT pg_advisory_xact_lock(2026, 1)"))
+    Base.metadata.create_all(bind=conexion)
+
+rol_service = RolService()
+auth_service = AuthService()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db = SessionLocal()
+    try:
+        rol_service.sembrar_roles(db)
+        auth_service.sembrar_usuarios_iniciales(db)
+    finally:
+        db.close()
+    yield
+
+
+app = FastAPI(title="RescueSync API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -13,41 +50,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BONITA_URL = os.getenv("BONITA_URL", "http://host.docker.internal:8080/bonita")
-BONITA_USER = os.getenv("BONITA_USER", "install")
-BONITA_PASSWORD = os.getenv("BONITA_PASSWORD", "install")
+API_PREFIX = "/api/v1"
+app.include_router(auth_api.router, prefix=API_PREFIX)
+app.include_router(organizaciones_api.router, prefix=API_PREFIX)
+app.include_router(roles_api.router, prefix=API_PREFIX)
+app.include_router(emergencias_api.router, prefix=API_PREFIX)
+app.include_router(lotes_api.router, prefix=API_PREFIX)
+app.include_router(inventario_api.router, prefix=API_PREFIX)
+app.include_router(ofertas_api.router, prefix=API_PREFIX)
+app.include_router(bonita_api.router, prefix=API_PREFIX)
+
 
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "FastAPI corriendo correctamente"}
-
-@app.post("/bonita/test-login")
-async def test_bonita_connection():
-    """Valida conexión y autenticación con el motor Bonita BPM."""
-    login_url = f"{BONITA_URL}/loginservice"
-    payload = {
-        "username": BONITA_USER,
-        "password": BONITA_PASSWORD,
-        "redirect": "false"
-    }
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            res = await client.post(
-                login_url,
-                data=payload,
-                headers={"Content-Type": "application/x-www-form-urlencoded"}
-            )
-            if res.status_code != 204 and res.status_code != 200:
-                raise HTTPException(status_code=res.status_code, detail="Fallo de autenticación en Bonita")
-            
-            cookies = res.cookies
-            bonita_token = cookies.get("X-Bonita-API-Token")
-            
-            return {
-                "status": "connected",
-                "session_active": True,
-                "has_csrf_token": bonita_token is not None
-            }
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=503, detail=f"No se pudo conectar a Bonita: {exc}")

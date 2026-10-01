@@ -60,3 +60,5 @@ postgres_data/
 *.swp
 *.swo
 .DS_Store
+
+*.pdf

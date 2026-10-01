@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import List, Optional
+
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Table,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from ..database import Base
+
+oferta_organizaciones = Table(
+    "oferta_organizaciones",
+    Base.metadata,
+    Column(
+        "oferta_id",
+        ForeignKey("ofertas_ayuda.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "organizacion_id",
+        ForeignKey("organizaciones.id"),
+        primary_key=True,
+    ),
+)
+
+
+class OfertaAyuda(Base):
+    """Cabecera de una Oferta de Ayuda cargada por una ONG."""
+
+    __tablename__ = "ofertas_ayuda"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    emergencia_id: Mapped[int] = mapped_column(
+        ForeignKey("emergencias.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    organizacion_id: Mapped[int] = mapped_column(
+        ForeignKey("organizaciones.id"), nullable=False
+    )
+    fecha_hora_oferta: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    observaciones: Mapped[Optional[str]] = mapped_column(Text)
+    es_conjunta: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    # Marca el momento en que el municipio adjudicó esta oferta.
+    adjudicada_en: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+
+    emergencia: Mapped["Emergencia"] = relationship(back_populates="ofertas")
+    organizacion: Mapped["Organizacion"] = relationship(
+        back_populates="ofertas"
+    )
+    organizaciones: Mapped[List["Organizacion"]] = relationship(
+        secondary=oferta_organizaciones,
+        back_populates="ofertas_participadas",
+    )
+    items: Mapped[List["OfertaItem"]] = relationship(
+        back_populates="oferta", cascade="all, delete-orphan"
+    )
+
+
+class OfertaItem(Base):
+    """Detalle de lo ofertado por lote de una Oferta de Ayuda."""
+
+    __tablename__ = "oferta_items"
+    __table_args__ = (
+        UniqueConstraint("oferta_id", "lote_necesidad_id", name="uq_oferta_lote"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    oferta_id: Mapped[int] = mapped_column(
+        ForeignKey("ofertas_ayuda.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    lote_necesidad_id: Mapped[int] = mapped_column(
+        ForeignKey("lotes_necesidad.id"), nullable=False
+    )
+    cantidad_ofrecida: Mapped[int] = mapped_column(Integer, nullable=False)
+    descripcion: Mapped[Optional[str]] = mapped_column(Text)
+    # Marca el cierre de la actividad de este ítem (etapa 7 del flujo).
+    finalizado_en: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+
+    oferta: Mapped["OfertaAyuda"] = relationship(back_populates="items")
+    lote_necesidad: Mapped["LoteNecesidad"] = relationship(
+        back_populates="items"
+    )
