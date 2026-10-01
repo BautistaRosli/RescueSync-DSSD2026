@@ -15,7 +15,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
-from app.models import Emergencia, LoteNecesidad, OfertaAyuda, Organizacion, Rol, Usuario
+from app.models import (Emergencia, EstadoEmergencia, LoteNecesidad, OfertaAyuda,
+                        Organizacion, Rol, Usuario)
 from app.repositories import EmergenciaRepository, OfertaRepository
 from app.schemas import LoteNecesidadCrear, OfertaActualizar, OfertaCrear, UsuarioCrear
 from app.services import AuthService, EmergenciaService, LoteService, OfertaService, RolService
@@ -105,8 +106,11 @@ def sesiones_pg():
         Base.metadata.create_all(motor)
         fabrica = sessionmaker(motor, autoflush=False)
         with fabrica() as db:
+            # Esperando ofertas: de lo contrario la convocatoria está cerrada
+            # y las escrituras de ofertas darían 409.
             db.add(Emergencia(id=1, nivel_gravedad="alta", zona_afectada="Zona",
-                              descripcion_inicial="Prueba"))
+                              descripcion_inicial="Prueba",
+                              estado=EstadoEmergencia.ESPERA_OFERTAS))
             db.add(Organizacion(id=1, nombre="ONG"))
             db.flush()
             db.add_all([LoteNecesidad(id=n, emergencia_id=1, tipo="Agua", cantidad=10)

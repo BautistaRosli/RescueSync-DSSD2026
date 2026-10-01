@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy.orm import Session
 
 from ..dependencias import requiere_roles
@@ -8,6 +8,7 @@ from ...models import Usuario
 from ...services.permisos_service import (
     COORDINADOR,
     ONG,
+    OPERADOR,
     AUDITOR,
     filtrar_organizacion,
     verificar_emergencia,
@@ -15,6 +16,8 @@ from ...services.permisos_service import (
 )
 from ...database import get_db
 from ...dto.ofertas_dto import (
+    AdjudicacionRespuesta,
+    OfertaItemRespuesta,
     OfertaListadoRespuesta,
     OfertaRespuesta,
     OfertasConsolidadas,
@@ -78,6 +81,20 @@ def actualizar_oferta(
     return servicio_ofertas.actualizar_oferta(db, oferta_id, data)
 
 
+@router.post(
+    "/ofertas/{oferta_id}/items/{item_id}/finalizar",
+    response_model=OfertaItemRespuesta,
+)
+def finalizar_item(
+    oferta_id: int,
+    item_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(ONG)),
+):
+    verificar_oferta(db, usuario, oferta_id)
+    return servicio_ofertas.finalizar_item(db, oferta_id, item_id)
+
+
 @router.get(
     "/emergencias/{emergencia_id}/ofertas",
     response_model=list[OfertaListadoRespuesta],
@@ -102,3 +119,13 @@ def obtener_ofertas_consolidadas(
     usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     return servicio_ofertas.obtener_ofertas_consolidadas(db, emergencia_id)
+
+
+@router.post("/ofertas/{oferta_id}/adjudicar", response_model=AdjudicacionRespuesta)
+def adjudicar_oferta(
+    oferta_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, OPERADOR)),
+):
+    return servicio_ofertas.adjudicar_oferta(db, oferta_id, background_tasks)
