@@ -1,9 +1,18 @@
 const API_BASE = 'http://localhost:8000/api/v1'
 
-let tokenSesion: string | null = null
+const CLAVE_TOKEN_SESION = 'rescuesync:token_sesion' as const
+
+export function leerTokenSesion(): string | null {
+  const guardado = localStorage.getItem(CLAVE_TOKEN_SESION)
+  return guardado !== null && guardado !== '' ? guardado : null
+}
 
 export function establecerTokenSesion(token: string | null): void {
-  tokenSesion = token
+  if (token === null) {
+    localStorage.removeItem(CLAVE_TOKEN_SESION)
+    return
+  }
+  localStorage.setItem(CLAVE_TOKEN_SESION, token)
 }
 
 export class ApiError extends Error {
@@ -62,13 +71,15 @@ async function apiPeticion<T>(
 ): Promise<T> {
   let respuesta: Response
 
+  const tokenActual = leerTokenSesion()
+
   try {
     respuesta = await fetch(`${API_BASE}${ruta}`, {
       method: metodo,
       headers: {
         'Content-Type': 'application/json',
-        ...(tokenSesion && ruta !== '/auth/login'
-          ? { Authorization: `Bearer ${tokenSesion}` }
+        ...(tokenActual && ruta !== '/auth/login'
+          ? { Authorization: `Bearer ${tokenActual}` }
           : {}),
       },
       body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),

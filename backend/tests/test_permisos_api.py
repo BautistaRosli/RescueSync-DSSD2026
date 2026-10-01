@@ -1,5 +1,6 @@
 """Pruebas de autorización HTTP con datos aislados e integraciones simuladas."""
 
+import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock
 
@@ -321,3 +322,40 @@ def test_endpoints_publicos_y_login(entorno):
     datos = {"email": "usuario2@example.org", "password": "clave-prueba-123"}
     assert cliente.post("/api/v1/auth/login", json=datos).status_code == 200
     assert cliente.post("/api/v1/auth/login", json={**datos, "password": "otra-clave"}).status_code == 401
+
+
+def test_auth_me_devuelve_el_usuario_del_token(entorno):
+    cliente = entorno[0]
+    respuesta = cliente.get("/api/v1/auth/me", headers=cabecera(COORDINADOR))
+    assert respuesta.status_code == 200, respuesta.text
+    assert respuesta.json() == {"id": 2, "email": "usuario2@example.org", "nombre": "Nombre",
+                               "apellido": "Apellido", "rol_id": 2, "activo": True,
+                               "organizacion_id": None}
+
+
+def test_auth_me_no_expone_datos_sensibles(entorno):
+    cuerpo = entorno[0].get("/api/v1/auth/me", headers=cabecera(ONG)).json()
+    assert set(cuerpo) == {"id", "email", "nombre", "apellido", "rol_id", "activo",
+                           "organizacion_id"}
+    assert "password_hash" not in json.dumps(cuerpo)
+    # El usuario 3 pertenece a la organización 1 y el DTO lo expone.
+    assert cuerpo["organizacion_id"] == 1 and cuerpo["rol_id"] == 3
+
+
+def test_auth_me_devuelve_el_usuario_que_pertenece_al_token(entorno):
+    cliente, sesiones, _ = entorno
+    with sesiones() as db:
+        db.get(Usuario, 2).email = "renombrado@example.org"
+        db.get(Usuario, 2).activo = True
+        db.commit()
+    cuerpo = cliente.get("/api/v1/auth/me", headers=cabecera(COORDINADOR)).json()
+    assert cuerpo["id"] == 2 and cuerpo["email"] == "renombrado@example.org"
+
+
+@pytest.mark.parametrize("encabezados", [
+    {},
+    {"Authorization": "Bearer no-es-jwt"},
+    {"Authorization": "Bearer"},
+])
+def test_auth_me_sin_token_valido_responde_401(entorno, encabezados):
+    assert entorno[0].get("/api/v1/auth/me", headers=encabezados).status_code == 401

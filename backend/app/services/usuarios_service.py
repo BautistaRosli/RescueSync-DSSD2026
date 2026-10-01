@@ -253,6 +253,10 @@ class AuthService:
 
         return self.construir_auth_response(usuario)
 
+    def usuario_actual(self, usuario: Usuario) -> UsuarioRespuesta:
+        """Proyecta el usuario autenticado al DTO de salida sin datos sensibles."""
+        return UsuarioRespuesta.model_validate(usuario)
+
     def construir_auth_response(self, usuario: Usuario) -> AuthRespuesta:
         return AuthRespuesta(
             access_token=generar_token(usuario.id, usuario.rol_id, usuario.rol.nombre),

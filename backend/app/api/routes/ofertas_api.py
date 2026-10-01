@@ -116,7 +116,7 @@ def listar_ofertas_de_emergencia(
 def obtener_ofertas_consolidadas(
     emergencia_id: int,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR, ONG)),
 ):
     return servicio_ofertas.obtener_ofertas_consolidadas(db, emergencia_id)
 
