@@ -29,10 +29,8 @@ function describirError(error: unknown): string {
 }
 
 export function LoginPage({
-  onIrARegistro,
   onSesionIniciada,
 }: {
-  onIrARegistro: () => void
   onSesionIniciada: (sesion: AuthResponse) => void
 }) {
   const [email, setEmail] = useState('')
@@ -135,13 +133,6 @@ export function LoginPage({
         </button>
       </form>
 
-      <button
-        type="button"
-        onClick={onIrARegistro}
-        className="mt-4 w-full text-sm text-sky-400 hover:underline"
-      >
-        ¿No tenés cuenta? Registrate
-      </button>
     </section>
   )
 }

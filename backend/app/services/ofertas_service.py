@@ -70,10 +70,10 @@ class OfertaService:
         return OfertaRespuesta.model_validate(actualizada)
 
     def listar_ofertas_de_emergencia(
-        self, db: Session, emergencia_id: int
+        self, db: Session, emergencia_id: int, organizacion_id: int | None = None
     ) -> list[OfertaListadoRespuesta]:
         self._emergencias.obtener_emergencia_entidad(db, emergencia_id)
-        ofertas = self._repository.listar_de_emergencia(db, emergencia_id)
+        ofertas = self._repository.listar_de_emergencia(db, emergencia_id, organizacion_id)
         return [self._construir_listado(oferta) for oferta in ofertas]
 
     def obtener_ofertas_consolidadas(

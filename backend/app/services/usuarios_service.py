@@ -35,9 +35,9 @@ class OrganizacionService:
         self._repository = OrganizacionRepository()
 
     def listar_organizaciones(
-        self, db: Session
+        self, db: Session, organizacion_id: int | None = None
     ) -> list[OrganizacionRespuesta]:
-        organizaciones = self._repository.listar(db)
+        organizaciones = self._repository.listar(db, organizacion_id)
         return [OrganizacionRespuesta.model_validate(o) for o in organizaciones]
 
     def obtener_organizacion(
@@ -111,6 +111,11 @@ class AuthService:
         rol = self._roles.obtener_por_id(db, data.rol_id)
         if rol is None:
             raise HTTPException(status_code=404, detail="Rol no encontrado")
+
+        if rol.nombre == "REPRESENTANTE_ONG" and data.organizacion_id is None:
+            raise HTTPException(400, "El representante de ONG debe pertenecer a una organización")
+        if data.organizacion_id is not None:
+            OrganizacionService().obtener_organizacion(db, data.organizacion_id)
 
         usuario = Usuario(
             email=data.email,

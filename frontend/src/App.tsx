@@ -8,8 +8,9 @@ import {
   RegistrarEmergenciaPage,
 } from './pages'
 import type { AuthResponse } from './types'
+import { cerrarSesion } from './services'
 
-type Vista = 'login' | 'registro'
+type Vista = 'bandeja' | 'registro'
 
 type VistaOperador = 'registrar' | 'emergencias'
 
@@ -29,24 +30,21 @@ function clasePestania(activa: boolean): string {
 }
 
 function App() {
-  const [vista, setVista] = useState<Vista>('login')
+  const [vista, setVista] = useState<Vista>('bandeja')
   const [vistaOperador, setVistaOperador] = useState<VistaOperador>('registrar')
   const [sesion, setSesion] = useState<AuthResponse | null>(null)
 
   return (
     <div className="min-h-screen bg-slate-900 text-white">
-      <Navbar sesion={sesion} onCerrarSesion={() => setSesion(null)} />
+      <Navbar sesion={sesion} onCerrarSesion={() => {
+        cerrarSesion()
+        setSesion(null)
+        setVista('bandeja')
+      }} />
 
       <main className="mx-auto max-w-3xl px-4 py-8">
         {sesion === null ? (
-          vista === 'login' ? (
-            <LoginPage
-              onIrARegistro={() => setVista('registro')}
-              onSesionIniciada={setSesion}
-            />
-          ) : (
-            <RegistroPage onIrALogin={() => setVista('login')} />
-          )
+          <LoginPage onSesionIniciada={setSesion} />
         ) : sesion.rol === ROL_OPERADOR_MUNICIPAL ? (
           <section className="flex flex-col gap-6">
             <div className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
@@ -83,7 +81,17 @@ function App() {
             )}
           </section>
         ) : sesion.rol === ROL_CENTRO_COORDINADOR ? (
-          <CentroCoordinadorPage />
+          vista === 'registro' ? (
+            <RegistroPage onVolver={() => setVista('bandeja')} />
+          ) : (
+            <section className="flex flex-col gap-4">
+              {/* <button type="button" onClick={() => setVista('registro')}
+                className={clasePestania(false)}>
+                Crear usuario
+              </button> */}
+              <CentroCoordinadorPage />
+            </section>
+          )
         ) : (
           <section className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
             <h2 className="text-xl font-bold text-amber-400 mb-1">

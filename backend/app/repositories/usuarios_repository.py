@@ -11,8 +11,11 @@ class OrganizacionRepository:
     ) -> Optional[Organizacion]:
         return db.get(Organizacion, organizacion_id)
 
-    def listar(self, db: Session) -> list[Organizacion]:
-        return db.query(Organizacion).order_by(Organizacion.id.asc()).all()
+    def listar(self, db: Session, organizacion_id: int | None = None) -> list[Organizacion]:
+        consulta = db.query(Organizacion)
+        if organizacion_id is not None:
+            consulta = consulta.filter(Organizacion.id == organizacion_id)
+        return consulta.order_by(Organizacion.id.asc()).all()
 
     def crear(self, db: Session, organizacion: Organizacion) -> Organizacion:
         db.add(organizacion)
