@@ -21,6 +21,7 @@ export interface OfertaRead {
   observaciones: string | null
   fecha_hora_oferta: string
   es_conjunta: boolean
+  adjudicada_en: string | null
   organizaciones: OrganizacionResumen[]
   items: OfertaItemRead[]
 }

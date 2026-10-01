@@ -31,6 +31,7 @@ class OfertaRespuesta(BaseModel):
     observaciones: Optional[str] = None
     fecha_hora_oferta: datetime
     es_conjunta: bool = False
+    adjudicada_en: Optional[datetime] = None
     organizaciones: List[OrganizacionResumen] = []
     items: List[OfertaItemRespuesta] = []
 
@@ -43,6 +44,7 @@ class OfertaListadoRespuesta(BaseModel):
     observaciones: Optional[str] = None
     fecha_hora_oferta: datetime
     es_conjunta: bool = False
+    adjudicada_en: Optional[datetime] = None
     organizaciones: List[OrganizacionResumen] = []
     items: List[OfertaItemRespuesta] = []
 

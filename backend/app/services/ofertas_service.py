@@ -15,7 +15,7 @@ from ..dto import (
     OrganizacionResumen,
 )
 from ..integrations.email.service import notificar_adjudicacion
-from ..models import OfertaAyuda, OfertaItem, Organizacion
+from ..models import EstadoEmergencia, OfertaAyuda, OfertaItem, Organizacion
 from ..repositories import (
     OfertaItemRepository,
     OfertaRepository,
@@ -56,6 +56,7 @@ class OfertaService:
         return OfertaRespuesta.model_validate(oferta)
 
     def crear_oferta(self, db: Session, data: OfertaCrear) -> OfertaRespuesta:
+        self._verificar_convocatoria_abierta(db, data.emergencia_id)
         self._organizaciones.obtener_organizacion(db, data.organizacion_id)
         items = self._validar_items(db, data.emergencia_id, data.items)
         organizaciones = self._resolver_organizaciones(
@@ -76,6 +77,7 @@ class OfertaService:
         self, db: Session, oferta_id: int, data: OfertaActualizar
     ) -> OfertaRespuesta:
         oferta = self._obtener_oferta_entidad(db, oferta_id, bloquear=True)
+        self._verificar_convocatoria_abierta(db, oferta.emergencia_id)
         if data.observaciones is not None:
             oferta.observaciones = data.observaciones
         if data.items is not None:
@@ -140,6 +142,10 @@ class OfertaService:
                 status_code=400,
                 detail="La oferta no tiene ítems cargados",
             )
+        # Idempotente: si ya estaba adjudicada se conserva la fecha original.
+        if oferta.adjudicada_en is None:
+            oferta.adjudicada_en = datetime.now(timezone.utc)
+            self._repository.actualizar(db, oferta)
         self._programar_notificacion_adjudicacion(db, oferta, background_tasks)
         return AdjudicacionRespuesta(
             oferta_id=oferta_id,
@@ -217,6 +223,27 @@ class OfertaService:
             raise HTTPException(status_code=404, detail="Oferta no encontrada")
         return oferta
 
+    def _verificar_convocatoria_abierta(
+        self, db: Session, emergencia_id: int
+    ) -> None:
+        """Implementa la ventana de tiempo de la convocatoria del enunciado.
+
+        Solo se pueden cargar o modificar ofertas mientras la emergencia esté
+        esperando ofertas; en cualquier otro estado la convocatoria está
+        cerrada.
+        """
+        emergencia = self._emergencias.obtener_emergencia_entidad(
+            db, emergencia_id
+        )
+        if emergencia.estado != EstadoEmergencia.ESPERA_OFERTAS:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "La convocatoria está cerrada: no se pueden cargar ni "
+                    "modificar ofertas"
+                ),
+            )
+
     def _resolver_organizaciones(
         self, db: Session, lider_id: int, socias_ids: list[int]
     ) -> list[Organizacion]:
@@ -273,6 +300,7 @@ class OfertaService:
             observaciones=oferta.observaciones,
             fecha_hora_oferta=oferta.fecha_hora_oferta,
             es_conjunta=oferta.es_conjunta,
+            adjudicada_en=oferta.adjudicada_en,
             organizaciones=[
                 OrganizacionResumen(
                     id=organizacion.id, nombre=organizacion.nombre

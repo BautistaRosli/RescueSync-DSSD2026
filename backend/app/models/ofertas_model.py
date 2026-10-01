@@ -55,6 +55,10 @@ class OfertaAyuda(Base):
     es_conjunta: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
+    # Marca el momento en que el municipio adjudicó esta oferta.
+    adjudicada_en: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     emergencia: Mapped["Emergencia"] = relationship(back_populates="ofertas")
     organizacion: Mapped["Organizacion"] = relationship(

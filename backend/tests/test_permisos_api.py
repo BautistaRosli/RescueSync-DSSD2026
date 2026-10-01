@@ -14,6 +14,7 @@ from app.database import Base, get_db
 from app.main import app
 from app.models import (
     Emergencia,
+    EstadoEmergencia,
     LoteNecesidad,
     OfertaAyuda,
     OfertaItem,
@@ -81,7 +82,12 @@ def entorno(monkeypatch):
         db.add_all([Usuario(id=i, email=f"usuario{i}@example.org", nombre="Nombre", apellido="Apellido",
                             password_hash="sin-login", rol_id=i, organizacion_id=1 if i == 3 else None)
                     for i in range(1, 5)])
-        db.add_all([Emergencia(id=i, publicada=i == 2, **EMERGENCIA) for i in (1, 2)])
+        # La emergencia publicada queda esperando ofertas: con otro estado la
+        # convocatoria está cerrada y las escrituras de ofertas darían 409.
+        db.add_all([Emergencia(id=i, publicada=i == 2,
+                               estado=EstadoEmergencia.ESPERA_OFERTAS if i == 2
+                               else EstadoEmergencia.ESPERA_LOTES,
+                               **EMERGENCIA) for i in (1, 2)])
         db.add_all([LoteNecesidad(id=i, emergencia_id=i, **LOTE) for i in (1, 2)])
         db.add_all([OfertaAyuda(id=i, emergencia_id=2, organizacion_id=i) for i in (1, 2)])
         # Ítem de la oferta 1 sobre el lote 2 (emergencia 2): sin ítems la
@@ -190,6 +196,27 @@ def test_ong_no_puede_escribir_ofertas_ajenas_o_no_publicadas(entorno):
     respuesta = cliente.patch("/api/v1/ofertas/1", json={"items": [{"lote_necesidad_id": 1, "cantidad_ofrecida": 1}]}, headers=cabecera(ONG))
     assert respuesta.status_code == 400
     assert estado(sesiones) == anterior
+
+
+def test_convocatoria_cerrada_bloquea_ofertas_pero_no_finalizar(entorno):
+    """Fuera del estado esperando_ofertas no se cargan ni modifican ofertas.
+
+    Cerrar la actividad de un ítem sí sigue permitido: ocurre después del
+    cierre de la convocatoria.
+    """
+    cliente, sesiones, _ = entorno
+    with sesiones() as db:
+        db.get(Emergencia, 2).estado = EstadoEmergencia.RESUELTA
+        db.commit()
+    cerrada = "La convocatoria está cerrada: no se pueden cargar ni modificar ofertas"
+    creacion = cliente.post("/api/v1/ofertas", json=OFERTA, headers=cabecera(ONG))
+    assert creacion.status_code == 409 and creacion.json()["detail"] == cerrada
+    edicion = cliente.patch("/api/v1/ofertas/1", json={"observaciones": "Cambio"},
+                            headers=cabecera(ONG))
+    assert edicion.status_code == 409 and edicion.json()["detail"] == cerrada
+    finalizacion = cliente.post("/api/v1/ofertas/1/items/1/finalizar", headers=cabecera(ONG))
+    assert finalizacion.status_code == 200, finalizacion.text
+    assert finalizacion.json()["finalizado_en"]
 
 
 def test_rol_y_organizacion_se_resuelven_desde_bd(entorno):

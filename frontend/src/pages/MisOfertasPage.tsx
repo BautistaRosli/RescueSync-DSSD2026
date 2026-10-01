@@ -241,6 +241,12 @@ export function MisOfertasPage({ organizacionId }: Props) {
                         {finalizadas} de {oferta.items.length} finalizadas
                       </span>
                     )}
+                    {oferta.adjudicada_en !== null && (
+                      <span className={claseBadgeExito}>
+                        Adjudicada el{' '}
+                        {formatearFecha(oferta.adjudicada_en, 'Sin fecha')}
+                      </span>
+                    )}
                   </span>
 
                   <span className="flex flex-wrap items-baseline justify-between gap-2">
