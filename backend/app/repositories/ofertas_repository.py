@@ -1,8 +1,9 @@
 from typing import Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
-from ..models import OfertaAyuda, OfertaItem
+from ..models import OfertaAyuda, OfertaItem, Organizacion
 
 
 class OfertaItemRepository:
@@ -20,6 +21,11 @@ class OfertaRepository:
         return db.query(OfertaAyuda).options(
             selectinload(OfertaAyuda.items),
             selectinload(OfertaAyuda.organizacion),
+            selectinload(OfertaAyuda.organizaciones),
+            selectinload(OfertaAyuda.emergencia),
+            selectinload(OfertaAyuda.items).selectinload(
+                OfertaItem.lote_necesidad
+            ),
         )
 
     def listar(
@@ -32,8 +38,15 @@ class OfertaRepository:
         if emergencia_id is not None:
             query = query.filter(OfertaAyuda.emergencia_id == emergencia_id)
         if organizacion_id is not None:
+            # Una ONG ve tanto las ofertas que lidera como aquellas en las que
+            # participa como socia de un consorcio.
             query = query.filter(
-                OfertaAyuda.organizacion_id == organizacion_id
+                or_(
+                    OfertaAyuda.organizacion_id == organizacion_id,
+                    OfertaAyuda.organizaciones.any(
+                        Organizacion.id == organizacion_id
+                    ),
+                )
             )
         return query.order_by(OfertaAyuda.id.desc()).all()
 
@@ -64,6 +77,18 @@ class OfertaRepository:
         db.commit()
         db.refresh(oferta)
         return oferta
+
+    def reemplazar_items(
+        self, db: Session, oferta: OfertaAyuda, items: list[OfertaItem]
+    ) -> None:
+        """Sustituye el detalle de la oferta por el indicado.
+
+        El borrado se envia a la base antes del alta para no violar
+        `uq_oferta_lote` cuando un lote sigue presente en la nueva version.
+        """
+        oferta.items.clear()
+        db.flush()
+        oferta.items = items
 
     def actualizar(self, db: Session, oferta: OfertaAyuda) -> OfertaAyuda:
         db.commit()

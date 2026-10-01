@@ -10,6 +10,7 @@ from .api.routes import (
     auth_api,
     bonita_api,
     emergencias_api,
+    inventario_api,
     lotes_api,
     ofertas_api,
     organizaciones_api,
@@ -53,6 +54,7 @@ app.include_router(organizaciones_api.router, prefix=API_PREFIX)
 app.include_router(roles_api.router, prefix=API_PREFIX)
 app.include_router(emergencias_api.router, prefix=API_PREFIX)
 app.include_router(lotes_api.router, prefix=API_PREFIX)
+app.include_router(inventario_api.router, prefix=API_PREFIX)
 app.include_router(ofertas_api.router, prefix=API_PREFIX)
 app.include_router(bonita_api.router, prefix=API_PREFIX)
 

@@ -4,6 +4,7 @@ import {
   CentroCoordinadorPage,
   EmergenciasPage,
   LoginPage,
+  PanelOngPage,
   RegistroPage,
   RegistrarEmergenciaPage,
 } from './pages'
@@ -16,6 +17,7 @@ type VistaOperador = 'registrar' | 'emergencias'
 
 const ROL_OPERADOR_MUNICIPAL = 'OPERADOR_MUNICIPAL'
 
+const ROL_REPRESENTANTE_ONG = 'REPRESENTANTE_ONG'
 const ROL_CENTRO_COORDINADOR = 'CENTRO_COORDINADOR'
 
 const PESTANIAS_OPERADOR: { valor: VistaOperador; etiqueta: string }[] = [
@@ -80,6 +82,8 @@ function App() {
               <EmergenciasPage />
             )}
           </section>
+        ) : sesion.rol === ROL_REPRESENTANTE_ONG ? (
+          <PanelOngPage sesion={sesion} />
         ) : sesion.rol === ROL_CENTRO_COORDINADOR ? (
           vista === 'registro' ? (
             <RegistroPage onVolver={() => setVista('bandeja')} />
@@ -98,7 +102,7 @@ function App() {
               Sección no disponible
             </h2>
             <p className="text-sm text-slate-400">
-              Esta sección es exclusiva para operadores municipales. Tu rol actual es{' '}
+              Todavía no hay una sección para tu rol. Tu rol actual es{' '}
               <span className="font-mono text-cyan-400">{sesion.rol}</span>.
             </p>
           </section>

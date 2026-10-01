@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
-import { ApiError, listarOrganizaciones, listarRoles, registrar } from '../services'
-import type { Organizacion, RegistroRequest, Rol } from '../types'
+import {
+  ApiError,
+  crearOrganizacion,
+  listarOrganizaciones,
+  listarRoles,
+  registrar,
+} from '../services'
+import type { OrganizacionRead, RegistroRequest, Rol } from '../types'
 
 const ETIQUETAS_ROL: Record<string, string> = {
   OPERADOR_MUNICIPAL: 'Operador municipal',
@@ -9,6 +15,8 @@ const ETIQUETAS_ROL: Record<string, string> = {
   REPRESENTANTE_ONG: 'Representante de ONG',
   DIRECTOR_AUDITOR: 'Director/Auditor',
 }
+
+const ROL_REPRESENTANTE_ONG = 'REPRESENTANTE_ONG'
 
 const claseCampo =
   'w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none'
@@ -55,12 +63,18 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
   const [password, setPassword] = useState('')
   const [roles, setRoles] = useState<Rol[]>([])
   const [rolId, setRolId] = useState<number | ''>('')
-  const [organizaciones, setOrganizaciones] = useState<Organizacion[]>([])
-  const [organizacionId, setOrganizacionId] = useState<number | ''>('')
-  const [exito, setExito] = useState<string | null>(null)
-  const esRepresentante = roles.find((rol) => rol.id === rolId)?.nombre === 'REPRESENTANTE_ONG'
   const [cargandoRoles, setCargandoRoles] = useState(true)
   const [errorRoles, setErrorRoles] = useState<string | null>(null)
+  const [organizaciones, setOrganizaciones] = useState<OrganizacionRead[]>([])
+  const [organizacionId, setOrganizacionId] = useState<number | ''>('')
+  const [cargandoOrganizaciones, setCargandoOrganizaciones] = useState(true)
+  const [errorOrganizaciones, setErrorOrganizaciones] = useState<string | null>(
+    null,
+  )
+  const [altaDeOng, setAltaDeOng] = useState(false)
+  const [nombreOng, setNombreOng] = useState('')
+  const [emailOng, setEmailOng] = useState('')
+  const [telefonoOng, setTelefonoOng] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
   const formularioVigente = useRef(false)
@@ -106,6 +120,36 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
     }
   }, [])
 
+  useEffect(() => {
+    let vigente = true
+
+    async function cargarOrganizaciones() {
+      setCargandoOrganizaciones(true)
+      setErrorOrganizaciones(null)
+      try {
+        const datos = await listarOrganizaciones()
+        if (!vigente) return
+        setOrganizaciones(datos)
+      } catch (fallo) {
+        if (!vigente) return
+        setOrganizaciones([])
+        setErrorOrganizaciones(
+          fallo instanceof ApiError
+            ? fallo.detail
+            : 'No se pudieron cargar las organizaciones.',
+        )
+      } finally {
+        if (vigente) setCargandoOrganizaciones(false)
+      }
+    }
+
+    void cargarOrganizaciones()
+
+    return () => {
+      vigente = false
+    }
+  }, [])
+
   function manejarNombre(evento: ChangeEvent<HTMLInputElement>) {
     setNombre(evento.target.value)
   }
@@ -126,10 +170,14 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
     setRolId(Number(evento.target.value))
   }
 
+  function manejarOrganizacion(evento: ChangeEvent<HTMLSelectElement>) {
+    const valor = evento.target.value
+    setOrganizacionId(valor === '' ? '' : Number(valor))
+  }
+
   async function manejarEnvio(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault()
     setError(null)
-    setExito(null)
 
     if (nombre.trim().length < 2) {
       setError('Ingresá tu nombre (mínimo 2 caracteres).')
@@ -159,20 +207,42 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
       setError('Seleccioná un rol.')
       return
     }
-    if (esRepresentante && organizacionId === '') {
-      setError('Seleccioná la organización del representante de ONG.')
-      return
+    if (esRepresentanteOng) {
+      if (altaDeOng && nombreOng.trim().length < 2) {
+        setError('Ingresá el nombre de tu organización (mínimo 2 caracteres).')
+        return
+      }
+      if (!altaDeOng && organizacionId === '') {
+        setError('Seleccioná tu organización o registrá una nueva.')
+        return
+      }
     }
 
     setEnviando(true)
     try {
+      let organizacionElegida: number | null = esRepresentanteOng
+        ? organizacionId === ''
+          ? null
+          : organizacionId
+        : null
+
+      if (esRepresentanteOng && altaDeOng) {
+        const creada = await crearOrganizacion({
+          nombre: nombreOng.trim(),
+          tipo: 'ong',
+          email: emailOng.trim() || null,
+          telefono: telefonoOng.trim() || null,
+        })
+        organizacionElegida = creada.id
+      }
+
       const datos: RegistroRequest = {
         email: email.trim(),
         password,
         nombre: nombre.trim(),
         apellido: apellido.trim(),
         rol_id: rolId,
-        organizacion_id: organizacionId === '' ? null : organizacionId,
+        organizacion_id: organizacionElegida,
       }
       await registrar(datos)
       if (!formularioVigente.current) return
@@ -180,7 +250,6 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
       setNombre('')
       setApellido('')
       setEmail('')
-      setExito('Usuario creado. Tu sesión de coordinador sigue activa; podés crear otro usuario o volver a la bandeja.')
     } catch (fallo) {
       setError(describirError(fallo))
     } finally {
@@ -189,6 +258,9 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
   }
 
   const rolesInhabilitados = cargandoRoles || errorRoles !== null
+
+  const esRepresentanteOng =
+    roles.find((rol) => rol.id === rolId)?.nombre === ROL_REPRESENTANTE_ONG
 
   return (
     <section className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
@@ -284,24 +356,108 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
           </select>
         </div>
 
-        <div>
-          <label htmlFor="registro-organizacion" className={claseEtiqueta}>
-            Organización {esRepresentante ? '(obligatoria)' : '(opcional)'}
-          </label>
-          <select id="registro-organizacion" value={organizacionId}
-            onChange={(evento) => setOrganizacionId(evento.target.value === '' ? '' : Number(evento.target.value))}
-            disabled={rolesInhabilitados} className={claseCampo}>
-            <option value="">Sin organización</option>
-            {organizaciones.map((organizacion) => (
-              <option key={organizacion.id} value={organizacion.id}>{organizacion.nombre}</option>
-            ))}
-          </select>
-          {esRepresentante && !cargandoRoles && organizaciones.length === 0 && !errorRoles && (
-            <p className={claseAviso}>No hay organizaciones disponibles para asignar.</p>
-          )}
-        </div>
+        {esRepresentanteOng && (
+          <div className="rounded-lg bg-slate-900 border border-slate-700 p-4 flex flex-col gap-4">
+            <p className="text-xs text-slate-400">
+              Como representante de ONG necesitás estar asociado a una
+              organización para poder postular recursos.
+            </p>
 
-        {exito && <p role="status" className="text-sm text-emerald-300">{exito}</p>}
+            {!altaDeOng && (
+              <div>
+                <label htmlFor="registro-organizacion" className={claseEtiqueta}>
+                  Organización
+                </label>
+                <select
+                  id="registro-organizacion"
+                  value={organizacionId}
+                  onChange={manejarOrganizacion}
+                  disabled={cargandoOrganizaciones}
+                  className={claseCampo}
+                >
+                  <option value="">
+                    {cargandoOrganizaciones
+                      ? 'Cargando organizaciones...'
+                      : 'Elegí tu organización...'}
+                  </option>
+                  {organizaciones.map((organizacion) => (
+                    <option key={organizacion.id} value={organizacion.id}>
+                      {organizacion.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {altaDeOng && (
+              <>
+                <div>
+                  <label htmlFor="registro-ong-nombre" className={claseEtiqueta}>
+                    Nombre de la organización
+                  </label>
+                  <input
+                    id="registro-ong-nombre"
+                    type="text"
+                    value={nombreOng}
+                    onChange={(evento) => setNombreOng(evento.target.value)}
+                    placeholder="Cruz Verde Regional"
+                    maxLength={150}
+                    className={claseCampo}
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="registro-ong-email" className={claseEtiqueta}>
+                    Email de contacto
+                  </label>
+                  <input
+                    id="registro-ong-email"
+                    type="email"
+                    value={emailOng}
+                    onChange={(evento) => setEmailOng(evento.target.value)}
+                    placeholder="contacto@cruzverde.org"
+                    maxLength={150}
+                    className={claseCampo}
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="registro-ong-telefono" className={claseEtiqueta}>
+                    Teléfono
+                  </label>
+                  <input
+                    id="registro-ong-telefono"
+                    type="text"
+                    value={telefonoOng}
+                    onChange={(evento) => setTelefonoOng(evento.target.value)}
+                    placeholder="221 555-0000"
+                    maxLength={50}
+                    className={claseCampo}
+                  />
+                </div>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setAltaDeOng((actual) => !actual)
+                setError(null)
+              }}
+              className="text-left text-sm text-sky-400 hover:underline"
+            >
+              {altaDeOng
+                ? '← Elegir una organización ya registrada'
+                : '¿Tu ONG no está en la lista? Registrala'}
+            </button>
+
+            {errorOrganizaciones && (
+              <p role="alert" className={claseAviso}>
+                {errorOrganizaciones}
+              </p>
+            )}
+          </div>
+        )}
 
         {errorRoles && (
           <p role="alert" className={claseAviso}>

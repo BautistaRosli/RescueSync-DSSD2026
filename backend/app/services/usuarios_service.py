@@ -48,6 +48,12 @@ class OrganizacionService:
         )
         return OrganizacionRespuesta.model_validate(organizacion)
 
+    def obtener_organizacion_entidad(
+        self, db: Session, organizacion_id: int
+    ) -> Organizacion:
+        """Devuelve la entidad para uso de otros services."""
+        return self._obtener_organizacion_entidad(db, organizacion_id)
+
     def crear_organizacion(
         self, db: Session, data: OrganizacionCrear
     ) -> OrganizacionRespuesta:

@@ -12,7 +12,17 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Emergencia, LoteNecesidad, OfertaAyuda, Organizacion, Rol, Usuario
+from app.models import (
+    Emergencia,
+    EstadoEmergencia,
+    LoteNecesidad,
+    OfertaAyuda,
+    OfertaItem,
+    Organizacion,
+    RecursoInventario,
+    Rol,
+    Usuario,
+)
 from app.services.permisos_service import OPERADOR, COORDINADOR, ONG, AUDITOR
 from app.services.security_service import JWT_SECRET, generar_token, hashear_password
 
@@ -22,6 +32,7 @@ ALTA = {"nombre": "Nombre", "apellido": "Apellido", "email": "alta@example.org",
 EMERGENCIA = {"zona_afectada": "Zona", "descripcion_inicial": "Descripción", "nivel_gravedad": "media"}
 LOTE = {"tipo": "agua", "cantidad": 10}
 OFERTA = {"emergencia_id": 2, "organizacion_id": 1, "items": []}
+RECURSO = {"tipo": "agua", "cantidad_total": 10}
 
 # Cada operación tiene datos válidos para que el caso permitido ejecute el servicio real.
 CASOS = [
@@ -42,8 +53,14 @@ CASOS = [
     ("GET", "/ofertas/1", None, [COORDINADOR, ONG, AUDITOR]),
     ("POST", "/ofertas", OFERTA, [ONG]),
     ("PATCH", "/ofertas/1", {"observaciones": "Cambio"}, [ONG]),
+    ("POST", "/ofertas/1/items/1/finalizar", None, [ONG]),
     ("GET", "/emergencias/2/ofertas", None, [COORDINADOR, ONG, AUDITOR]),
     ("GET", "/emergencias/2/ofertas/consolidadas", None, [COORDINADOR, AUDITOR]),
+    ("POST", "/ofertas/1/adjudicar", None, [COORDINADOR, OPERADOR]),
+    ("GET", "/organizaciones/1/inventario", None, [COORDINADOR, ONG, AUDITOR]),
+    ("POST", "/organizaciones/1/inventario", RECURSO, [ONG]),
+    ("PATCH", "/organizaciones/1/inventario/1", RECURSO, [ONG]),
+    ("DELETE", "/organizaciones/1/inventario/1", None, [ONG]),
     ("GET", "/organizaciones", None, [COORDINADOR, ONG, AUDITOR]),
     ("GET", "/organizaciones/1", None, [COORDINADOR, ONG, AUDITOR]),
     ("POST", "/organizaciones", {"nombre": "Nueva"}, [COORDINADOR]),
@@ -65,9 +82,20 @@ def entorno(monkeypatch):
         db.add_all([Usuario(id=i, email=f"usuario{i}@example.org", nombre="Nombre", apellido="Apellido",
                             password_hash="sin-login", rol_id=i, organizacion_id=1 if i == 3 else None)
                     for i in range(1, 5)])
-        db.add_all([Emergencia(id=i, publicada=i == 2, **EMERGENCIA) for i in (1, 2)])
+        # La emergencia publicada queda esperando ofertas: con otro estado la
+        # convocatoria está cerrada y las escrituras de ofertas darían 409.
+        db.add_all([Emergencia(id=i, publicada=i == 2,
+                               estado=EstadoEmergencia.ESPERA_OFERTAS if i == 2
+                               else EstadoEmergencia.ESPERA_LOTES,
+                               **EMERGENCIA) for i in (1, 2)])
         db.add_all([LoteNecesidad(id=i, emergencia_id=i, **LOTE) for i in (1, 2)])
         db.add_all([OfertaAyuda(id=i, emergencia_id=2, organizacion_id=i) for i in (1, 2)])
+        # Ítem de la oferta 1 sobre el lote 2 (emergencia 2): sin ítems la
+        # adjudicación responde 400 y el caso permitido no llegaría a 200.
+        db.add(OfertaItem(id=1, oferta_id=1, lote_necesidad_id=2, cantidad_ofrecida=5))
+        # Recurso de la organización 1, la del usuario con rol ONG (id 3),
+        # para que PATCH y DELETE del inventario fallen por permisos y no por 404.
+        db.add(RecursoInventario(id=1, organizacion_id=1, **RECURSO))
         db.commit()
 
     def obtener_db():
@@ -75,10 +103,12 @@ def entorno(monkeypatch):
             yield db
 
     correo = Mock()
+    adjudicacion = Mock()
     bonita = AsyncMock(return_value=42)
     variables = AsyncMock(return_value=[])
     diagnostico = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr("app.services.emergencias_service.notificar_nueva_emergencia", correo)
+    monkeypatch.setattr("app.services.ofertas_service.notificar_adjudicacion", adjudicacion)
     monkeypatch.setattr("app.services.emergencias_service.bonita_client.start_emergency_process", bonita)
     monkeypatch.setattr("app.services.emergencias_service.bonita_client.set_case_variables", variables)
     monkeypatch.setattr("app.api.routes.bonita_api.verificar_conexion", diagnostico)
@@ -86,7 +116,7 @@ def entorno(monkeypatch):
     app.dependency_overrides[get_db] = obtener_db
     # Sin lifespan: la siembra utiliza exclusivamente nuestra base en memoria.
     cliente = TestClient(app)
-    yield cliente, sesiones, (correo, bonita, variables, diagnostico)
+    yield cliente, sesiones, (correo, adjudicacion, bonita, variables, diagnostico)
     cliente.close()
     app.dependency_overrides.clear()
     motor.dispose()
@@ -166,6 +196,27 @@ def test_ong_no_puede_escribir_ofertas_ajenas_o_no_publicadas(entorno):
     respuesta = cliente.patch("/api/v1/ofertas/1", json={"items": [{"lote_necesidad_id": 1, "cantidad_ofrecida": 1}]}, headers=cabecera(ONG))
     assert respuesta.status_code == 400
     assert estado(sesiones) == anterior
+
+
+def test_convocatoria_cerrada_bloquea_ofertas_pero_no_finalizar(entorno):
+    """Fuera del estado esperando_ofertas no se cargan ni modifican ofertas.
+
+    Cerrar la actividad de un ítem sí sigue permitido: ocurre después del
+    cierre de la convocatoria.
+    """
+    cliente, sesiones, _ = entorno
+    with sesiones() as db:
+        db.get(Emergencia, 2).estado = EstadoEmergencia.RESUELTA
+        db.commit()
+    cerrada = "La convocatoria está cerrada: no se pueden cargar ni modificar ofertas"
+    creacion = cliente.post("/api/v1/ofertas", json=OFERTA, headers=cabecera(ONG))
+    assert creacion.status_code == 409 and creacion.json()["detail"] == cerrada
+    edicion = cliente.patch("/api/v1/ofertas/1", json={"observaciones": "Cambio"},
+                            headers=cabecera(ONG))
+    assert edicion.status_code == 409 and edicion.json()["detail"] == cerrada
+    finalizacion = cliente.post("/api/v1/ofertas/1/items/1/finalizar", headers=cabecera(ONG))
+    assert finalizacion.status_code == 200, finalizacion.text
+    assert finalizacion.json()["finalizado_en"]
 
 
 def test_rol_y_organizacion_se_resuelven_desde_bd(entorno):

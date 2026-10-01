@@ -1,4 +1,5 @@
 from .emergencias_service import EmergenciaService
+from .inventario_service import InventarioService
 from .lotes_service import LoteService
 from .ofertas_service import OfertaService
 from .security_service import (
@@ -16,6 +17,7 @@ from .usuarios_service import (
 __all__ = [
     "AuthService",
     "EmergenciaService",
+    "InventarioService",
     "LoteService",
     "OfertaService",
     "OrganizacionService",

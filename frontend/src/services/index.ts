@@ -1,6 +1,5 @@
 export { ApiError } from './http'
 export { iniciarSesion, registrar, cerrarSesion } from './auth'
-export { listarOrganizaciones } from './organizacion'
 export {
   registrarEmergencia,
   listarEmergencias,
@@ -11,3 +10,20 @@ export {
   publicarEmergencia,
 } from './emergencia'
 export { listarRoles } from './rol'
+export { listarLotes } from './lote'
+export { crearOrganizacion, listarOrganizaciones } from './organizacion'
+export {
+  actualizarOferta,
+  adjudicarOferta,
+  crearOferta,
+  finalizarItemOferta,
+  listarOfertasDeEmergencia,
+  listarOfertasDeOrganizacion,
+  obtenerOfertasConsolidadas,
+} from './oferta'
+export {
+  actualizarRecurso,
+  crearRecurso,
+  eliminarRecurso,
+  listarInventario,
+} from './inventario'
