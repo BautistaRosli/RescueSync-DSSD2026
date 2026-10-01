@@ -207,25 +207,7 @@ class EmergenciaService:
         # persistir `bonita_case_id` a proposito: si falla, la emergencia no
         # queda marcada como instancia y se puede reintentar, en vez de
         # quedar con un caso de Bonita huerfano y variables en null.
-        try:
-            set_names = await bonita_client.set_case_variables(
-                case_id, variables
-            )
-        except BonitaClientError as exc:
-            logger.error(
-                f"Error seteando variables del caso {case_id} en Bonita: {exc}"
-            )
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    "No se pudieron setear las variables del caso "
-                    f"en Bonita: {exc}"
-                ),
-            )
-
-        logger.info(
-            f"Variables seteadas en el caso {case_id} de Bonita: {set_names}"
-        )
+        
 
         emergencia.bonita_case_id = str(case_id)
         emergencia.bonita_variables_json = json.dumps(variables, default=str)
