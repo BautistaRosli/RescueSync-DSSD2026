@@ -10,6 +10,7 @@ class OfertaItemRespuesta(OfertaItemBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    finalizado_en: Optional[datetime] = None
 
 
 class OrganizacionResumen(BaseModel):

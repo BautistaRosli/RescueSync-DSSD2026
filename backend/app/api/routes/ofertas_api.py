@@ -17,6 +17,7 @@ from ...services.permisos_service import (
 from ...database import get_db
 from ...dto.ofertas_dto import (
     AdjudicacionRespuesta,
+    OfertaItemRespuesta,
     OfertaListadoRespuesta,
     OfertaRespuesta,
     OfertasConsolidadas,
@@ -78,6 +79,20 @@ def actualizar_oferta(
 ):
     verificar_oferta(db, usuario, oferta_id)
     return servicio_ofertas.actualizar_oferta(db, oferta_id, data)
+
+
+@router.post(
+    "/ofertas/{oferta_id}/items/{item_id}/finalizar",
+    response_model=OfertaItemRespuesta,
+)
+def finalizar_item(
+    oferta_id: int,
+    item_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(ONG)),
+):
+    verificar_oferta(db, usuario, oferta_id)
+    return servicio_ofertas.finalizar_item(db, oferta_id, item_id)
 
 
 @router.get(

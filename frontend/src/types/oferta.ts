@@ -5,6 +5,7 @@ export interface OfertaItemRead {
   lote_necesidad_id: number
   cantidad_ofrecida: number
   descripcion: string | null
+  finalizado_en: string | null
 }
 
 export interface OfertaItemRequest {

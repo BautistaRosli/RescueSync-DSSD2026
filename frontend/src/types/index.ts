@@ -29,7 +29,6 @@ export type {
   OfertaUpdateRequest,
   OfertasConsolidadas,
 } from './oferta'
-export type { ActividadFinalizada } from './notificacion'
 export type {
   OrganizacionCreateRequest,
   OrganizacionRead,

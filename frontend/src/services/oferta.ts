@@ -2,6 +2,7 @@ import { apiGet, apiPatch, apiPost } from './http'
 import type {
   AdjudicacionRespuesta,
   OfertaCreateRequest,
+  OfertaItemRead,
   OfertaRead,
   OfertaUpdateRequest,
   OfertasConsolidadas,
@@ -47,4 +48,17 @@ export async function adjudicarOferta(
   ofertaId: number,
 ): Promise<AdjudicacionRespuesta> {
   return apiPost<AdjudicacionRespuesta>(`/ofertas/${ofertaId}/adjudicar`, {})
+}
+
+// Finalizar una actividad tampoco declara cuerpo (los ids viajan en la ruta),
+// así que se le pasa un objeto vacío para cumplir con la firma de apiPost.
+// Es idempotente: repetir la llamada devuelve el ítem con la misma fecha.
+export async function finalizarItemOferta(
+  ofertaId: number,
+  itemId: number,
+): Promise<OfertaItemRead> {
+  return apiPost<OfertaItemRead>(
+    `/ofertas/${ofertaId}/items/${itemId}/finalizar`,
+    {},
+  )
 }

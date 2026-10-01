@@ -52,6 +52,7 @@ CASOS = [
     ("GET", "/ofertas/1", None, [COORDINADOR, ONG, AUDITOR]),
     ("POST", "/ofertas", OFERTA, [ONG]),
     ("PATCH", "/ofertas/1", {"observaciones": "Cambio"}, [ONG]),
+    ("POST", "/ofertas/1/items/1/finalizar", None, [ONG]),
     ("GET", "/emergencias/2/ofertas", None, [COORDINADOR, ONG, AUDITOR]),
     ("GET", "/emergencias/2/ofertas/consolidadas", None, [COORDINADOR, AUDITOR]),
     ("POST", "/ofertas/1/adjudicar", None, [COORDINADOR, OPERADOR]),

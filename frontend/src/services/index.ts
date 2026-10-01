@@ -16,6 +16,7 @@ export {
   actualizarOferta,
   adjudicarOferta,
   crearOferta,
+  finalizarItemOferta,
   listarOfertasDeEmergencia,
   listarOfertasDeOrganizacion,
   obtenerOfertasConsolidadas,
@@ -26,4 +27,3 @@ export {
   eliminarRecurso,
   listarInventario,
 } from './inventario'
-export { listarActividades, marcarFinalizada } from './mock/actividades'

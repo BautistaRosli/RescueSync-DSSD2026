@@ -184,6 +184,27 @@ class OfertaService:
             datetime.now(timezone.utc),
         )
 
+    def finalizar_item(
+        self, db: Session, oferta_id: int, item_id: int
+    ) -> OfertaItemRespuesta:
+        """Cierra la actividad del ítem indicado (etapa 7 del flujo).
+
+        Es idempotente: si el ítem ya estaba finalizado se devuelve con la
+        fecha original, sin reescribirla.
+        """
+        oferta = self._obtener_oferta_entidad(db, oferta_id)
+        item = next(
+            (item for item in oferta.items if item.id == item_id), None
+        )
+        if item is None:
+            raise HTTPException(
+                status_code=404, detail="Ítem no encontrado"
+            )
+        if item.finalizado_en is None:
+            item.finalizado_en = datetime.now(timezone.utc)
+            self._repository.actualizar(db, oferta)
+        return OfertaItemRespuesta.model_validate(item)
+
     def existe_referencia_a_lote(self, db: Session, lote_id: int) -> bool:
         """Informa si alguna oferta usa el lote indicado."""
         return self._items.existe_referencia_a_lote(db, lote_id)
@@ -264,6 +285,7 @@ class OfertaService:
                     lote_necesidad_id=item.lote_necesidad_id,
                     cantidad_ofrecida=item.cantidad_ofrecida,
                     descripcion=item.descripcion,
+                    finalizado_en=item.finalizado_en,
                 )
                 for item in oferta.items
             ],

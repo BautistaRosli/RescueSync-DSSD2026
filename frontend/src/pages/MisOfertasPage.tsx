@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
 import {
-  listarActividades,
+  finalizarItemOferta,
   listarEmergencias,
   listarLotes,
   listarOfertasDeOrganizacion,
-  marcarFinalizada,
 } from '../services'
 import {
   claseBadge,
@@ -24,12 +23,7 @@ import {
   formatearFecha,
 } from '../utils/formato'
 import { FormularioOfertaPage } from './FormularioOfertaPage'
-import type {
-  ActividadFinalizada,
-  EmergenciaRead,
-  LoteRead,
-  OfertaRead,
-} from '../types'
+import type { EmergenciaRead, LoteRead, OfertaRead } from '../types'
 
 interface Props {
   organizacionId: number
@@ -43,9 +37,8 @@ export function MisOfertasPage({ organizacionId }: Props) {
   const [ofertas, setOfertas] = useState<OfertaRead[]>([])
   const [emergencias, setEmergencias] = useState<Record<number, EmergenciaRead>>({})
   const [lotes, setLotes] = useState<Record<number, LoteRead>>({})
-  const [actividades, setActividades] = useState<
-    Record<number, ActividadFinalizada[]>
-  >({})
+  const [finalizando, setFinalizando] = useState<number | null>(null)
+  const [errorFinalizar, setErrorFinalizar] = useState<Record<number, string>>({})
   const [desplegadas, setDesplegadas] = useState<Set<number>>(() => new Set())
   const [enEdicion, setEnEdicion] = useState<OfertaRead | null>(null)
   const [cargando, setCargando] = useState(true)
@@ -80,20 +73,11 @@ export function MisOfertasPage({ organizacionId }: Props) {
           }
         }
 
-        const listasDeActividades = await Promise.all(
-          misOfertas.map((oferta) => listarActividades(oferta.id)),
-        )
-        const actividadesPorOferta: Record<number, ActividadFinalizada[]> = {}
-        misOfertas.forEach((oferta, indice) => {
-          actividadesPorOferta[oferta.id] = listasDeActividades[indice]
-        })
-
         if (!vigente) return
         setError(null)
         setOfertas(misOfertas)
         setEmergencias(porId)
         setLotes(lotesPorId)
-        setActividades(actividadesPorOferta)
       } catch (fallo) {
         if (vigente) setError(describirError(fallo))
       } finally {
@@ -120,25 +104,39 @@ export function MisOfertasPage({ organizacionId }: Props) {
     })
   }
 
-  async function finalizarActividad(ofertaId: number, loteId: number) {
-    const actividad = await marcarFinalizada(ofertaId, loteId)
-    setActividades((actuales) => ({
-      ...actuales,
-      [ofertaId]: [...(actuales[ofertaId] ?? []), actividad],
-    }))
+  async function finalizarActividad(ofertaId: number, itemId: number) {
+    setFinalizando(itemId)
+    try {
+      const itemFinalizado = await finalizarItemOferta(ofertaId, itemId)
+      setErrorFinalizar((actuales) => {
+        const siguientes = { ...actuales }
+        delete siguientes[itemId]
+        return siguientes
+      })
+      setOfertas((actuales) =>
+        actuales.map((oferta) =>
+          oferta.id === ofertaId
+            ? {
+                ...oferta,
+                items: oferta.items.map((item) =>
+                  item.id === itemId ? itemFinalizado : item,
+                ),
+              }
+            : oferta,
+        ),
+      )
+    } catch (fallo) {
+      setErrorFinalizar((actuales) => ({
+        ...actuales,
+        [itemId]: describirError(fallo),
+      }))
+    } finally {
+      setFinalizando(null)
+    }
   }
 
   function nombreDeLote(loteId: number): string {
     return lotes[loteId]?.tipo ?? `Lote #${loteId}`
-  }
-
-  function actividadDeLote(
-    ofertaId: number,
-    loteId: number,
-  ): ActividadFinalizada | undefined {
-    return (actividades[ofertaId] ?? []).find(
-      (actividad) => actividad.lote_necesidad_id === loteId,
-    )
   }
 
   function volverDeEdicion(huboCambios: boolean) {
@@ -198,7 +196,9 @@ export function MisOfertasPage({ organizacionId }: Props) {
             const emergencia = emergencias[oferta.emergencia_id]
             const abierta =
               emergencia !== undefined && convocatoriaAbierta(emergencia)
-            const finalizadas = (actividades[oferta.id] ?? []).length
+            const finalizadas = oferta.items.filter(
+              (item) => item.finalizado_en !== null,
+            ).length
             const esLider = oferta.organizacion_id === organizacionId
 
             return (
@@ -279,10 +279,6 @@ export function MisOfertasPage({ organizacionId }: Props) {
 
                       <ul className="mt-2 flex flex-col gap-3">
                         {oferta.items.map((item) => {
-                          const actividad = actividadDeLote(
-                            oferta.id,
-                            item.lote_necesidad_id,
-                          )
                           const lote = lotes[item.lote_necesidad_id]
 
                           return (
@@ -308,11 +304,11 @@ export function MisOfertasPage({ organizacionId }: Props) {
                               )}
 
                               <div className="mt-2">
-                                {actividad !== undefined ? (
+                                {item.finalizado_en !== null ? (
                                   <span className={claseBadgeExito}>
                                     Finalizada el{' '}
                                     {formatearFecha(
-                                      actividad.fecha_hora,
+                                      item.finalizado_en,
                                       'Sin fecha',
                                     )}
                                   </span>
@@ -320,15 +316,21 @@ export function MisOfertasPage({ organizacionId }: Props) {
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      void finalizarActividad(
-                                        oferta.id,
-                                        item.lote_necesidad_id,
-                                      )
+                                      void finalizarActividad(oferta.id, item.id)
                                     }
+                                    disabled={finalizando === item.id}
                                     className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-emerald-400 hover:text-emerald-400"
                                   >
-                                    Marcar actividad como finalizada
+                                    {finalizando === item.id
+                                      ? 'Finalizando...'
+                                      : 'Marcar actividad como finalizada'}
                                   </button>
+                                )}
+
+                                {errorFinalizar[item.id] !== undefined && (
+                                  <p role="alert" className={claseError}>
+                                    {errorFinalizar[item.id]}
+                                  </p>
                                 )}
                               </div>
                             </li>
