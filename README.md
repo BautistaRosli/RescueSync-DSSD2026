@@ -69,3 +69,9 @@ La ausencia de credenciales válidas devuelve `401`; un usuario inactivo, un rol
 no autorizado o el acceso a datos fuera de su alcance devuelve `403`. Los filtros
 de consulta no amplían los permisos. Las reglas de negocio existentes siguen
 aplicándose aunque el usuario tenga el rol requerido.
+
+### Usuarios default
+municipio@municipio.com
+coordinador@coordinador.com
+ong@ong.com
+auditor@auditor.com

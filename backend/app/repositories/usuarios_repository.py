@@ -11,6 +11,11 @@ class OrganizacionRepository:
     ) -> Optional[Organizacion]:
         return db.get(Organizacion, organizacion_id)
 
+    def obtener_por_nombre(
+        self, db: Session, nombre: str
+    ) -> Optional[Organizacion]:
+        return db.query(Organizacion).filter(Organizacion.nombre == nombre).first()
+
     def listar(self, db: Session, organizacion_id: int | None = None) -> list[Organizacion]:
         consulta = db.query(Organizacion)
         if organizacion_id is not None:

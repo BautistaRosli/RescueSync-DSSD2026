@@ -17,7 +17,7 @@ from .api.routes import (
     roles_api,
 )
 from .database import Base, SessionLocal, engine
-from .services.usuarios_service import RolService
+from .services.usuarios_service import AuthService, RolService
 
 with engine.begin() as conexion:
     if conexion.dialect.name == "postgresql":
@@ -26,6 +26,7 @@ with engine.begin() as conexion:
     Base.metadata.create_all(bind=conexion)
 
 rol_service = RolService()
+auth_service = AuthService()
 
 
 @asynccontextmanager
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         rol_service.sembrar_roles(db)
+        auth_service.sembrar_usuarios_iniciales(db)
     finally:
         db.close()
     yield
