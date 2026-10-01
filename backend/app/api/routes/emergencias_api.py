@@ -96,6 +96,9 @@ def publicar_emergencia(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
 ):
+    servicio_emergencias.iniciar_proceso_bonita(
+            db, emergencia_id
+        )
     return servicio_emergencias.publicar_emergencia(db, emergencia_id)
 
 

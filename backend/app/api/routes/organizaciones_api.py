@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ..dependencias import requiere_roles
+from ..dependencias import requiere_roles, usuario_opcional
 from ...models import Usuario
 from ...services.permisos_service import (
     COORDINADOR,
@@ -25,11 +25,10 @@ servicio_organizaciones = OrganizacionService()
 @router.get("", response_model=list[OrganizacionRespuesta])
 def listar_organizaciones(
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR, ONG, AUDITOR)),
+    usuario: Usuario | None = Depends(usuario_opcional),
 ):
-    return servicio_organizaciones.listar_organizaciones(
-        db, organizacion_id=filtrar_organizacion(usuario)
-    )
+    alcance = filtrar_organizacion(usuario) if usuario is not None else None
+    return servicio_organizaciones.listar_organizaciones(db, organizacion_id=alcance)
 
 
 @router.get("/{organizacion_id}", response_model=OrganizacionRespuesta)

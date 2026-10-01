@@ -36,7 +36,6 @@ RECURSO = {"tipo": "agua", "cantidad_total": 10}
 
 # Cada operación tiene datos válidos para que el caso permitido ejecute el servicio real.
 CASOS = [
-    ("POST", "/auth/registro", ALTA, [COORDINADOR]),
     ("GET", "/emergencias", None, ROLES),
     ("GET", "/emergencias/bandeja?publicada=false", None, [OPERADOR, COORDINADOR, AUDITOR]),
     ("GET", "/emergencias/1", None, [OPERADOR, COORDINADOR, AUDITOR]),
@@ -61,7 +60,6 @@ CASOS = [
     ("POST", "/organizaciones/1/inventario", RECURSO, [ONG]),
     ("PATCH", "/organizaciones/1/inventario/1", RECURSO, [ONG]),
     ("DELETE", "/organizaciones/1/inventario/1", None, [ONG]),
-    ("GET", "/organizaciones", None, [COORDINADOR, ONG, AUDITOR]),
     ("GET", "/organizaciones/1", None, [COORDINADOR, ONG, AUDITOR]),
     ("POST", "/organizaciones", {"nombre": "Nueva"}, [COORDINADOR]),
     ("PATCH", "/organizaciones/1", {"nombre": "Modificada"}, [COORDINADOR]),
@@ -253,6 +251,49 @@ def test_registro_ong_exige_organizacion_valida_y_conserva_contrato(entorno):
     respuesta = cliente.post("/api/v1/auth/registro", json={**datos, "organizacion_id": 1}, headers=encabezados)
     assert respuesta.status_code == 201
     assert respuesta.json()["rol"] == ONG and respuesta.json()["access_token"]
+
+
+def test_registro_publico_sin_sesion(entorno):
+    cliente, sesiones, _ = entorno
+    datos = {**ALTA, "email": "alta-publica@example.org"}
+    respuesta = cliente.post("/api/v1/auth/registro", json=datos)
+    assert respuesta.status_code == 201, respuesta.text
+    assert respuesta.json()["rol"] == OPERADOR and respuesta.json()["access_token"]
+    assert cliente.post("/api/v1/auth/registro", json=datos).status_code == 409
+    assert cliente.post("/api/v1/auth/login",
+                        json={"email": datos["email"], "password": datos["password"]}).status_code == 200
+    assert cliente.post("/api/v1/auth/registro", json={**datos, "email": "otro@example.org",
+                                                       "rol_id": 999}).status_code == 404
+    with sesiones() as db:
+        assert db.get(Usuario, 5).email == datos["email"]
+
+
+def test_organizaciones_publicas_sin_sesion_devuelven_todas(entorno):
+    cliente = entorno[0]
+    respuesta = cliente.get("/api/v1/organizaciones")
+    assert respuesta.status_code == 200, respuesta.text
+    assert [o["id"] for o in respuesta.json()] == [1, 2]
+    invalido = {"Authorization": "Bearer no-es-jwt"}
+    assert [o["id"] for o in cliente.get("/api/v1/organizaciones", headers=invalido).json()] == [1, 2]
+
+
+def test_organizaciones_con_sesion_conservan_el_alcance_del_rol(entorno):
+    cliente = entorno[0]
+    assert [o["id"] for o in cliente.get("/api/v1/organizaciones", headers=cabecera(ONG)).json()] == [1]
+    for rol in (COORDINADOR, AUDITOR, OPERADOR):
+        assert [o["id"] for o in cliente.get("/api/v1/organizaciones", headers=cabecera(rol)).json()] == [1, 2]
+
+
+def test_organizaciones_siguen_exigiendo_sesion_y_coordinador(entorno):
+    cliente = entorno[0]
+    assert cliente.post("/api/v1/organizaciones", json={"nombre": "Nueva"}).status_code == 401
+    assert cliente.post("/api/v1/organizaciones", json={"nombre": "Nueva"},
+                        headers=cabecera(ONG)).status_code == 403
+    assert cliente.patch("/api/v1/organizaciones/1", json={"nombre": "Modificada"},
+                         headers=cabecera(AUDITOR)).status_code == 403
+    assert cliente.get("/api/v1/organizaciones/1").status_code == 401
+    assert cliente.post("/api/v1/organizaciones", json={"nombre": "Nueva"},
+                        headers=cabecera(COORDINADOR)).status_code == 201
 
 
 @pytest.mark.parametrize("datos,algoritmo,secreto", [
