@@ -9,7 +9,6 @@ import {
   listarLotes,
 } from '../services'
 import {
-  claseAviso,
   claseBadge,
   claseBadgeAviso,
   claseBotonPrimario,
@@ -203,11 +202,6 @@ export function InventarioPage({ organizacionId }: Props) {
           disponible en cada lote.
         </p>
       </div>
-
-      <p className={claseAviso}>
-        El inventario todavía se guarda solo en este navegador: el módulo del
-        backend está pendiente.
-      </p>
 
       <form
         onSubmit={manejarEnvio}

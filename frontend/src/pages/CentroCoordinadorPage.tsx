@@ -3,17 +3,26 @@ import type { FormEvent } from 'react'
 import {
   ApiError,
   actualizarLote,
+  adjudicarOferta,
   crearLote,
   eliminarLote,
   listarBandejaEmergencias,
+  listarOfertasDeEmergencia,
   publicarEmergencia,
 } from '../services'
+import {
+  claseBadge,
+  claseBotonSecundario,
+  claseExito,
+  claseSubPanel,
+} from '../ui/clases'
 import type {
   BandaEmergencias,
   EstadoEmergencia,
   EmergenciaRead,
   LoteNecesidad,
   NivelGravedad,
+  OfertaRead,
 } from '../types'
 
 type PestaniaBandeja = 'sin_publicar' | 'publicadas'
@@ -402,6 +411,96 @@ function ListaLotes({
   )
 }
 
+function PanelAdjudicacion({
+  ofertas,
+  cargando,
+  errorCarga,
+  adjudicando,
+  errorAdjudicar,
+  exitoAdjudicar,
+  alAdjudicar,
+}: {
+  ofertas: OfertaRead[] | undefined
+  cargando: boolean
+  errorCarga: string | undefined
+  adjudicando: number | null
+  errorAdjudicar: Record<number, string>
+  exitoAdjudicar: Record<number, string>
+  alAdjudicar: (ofertaId: number) => void
+}) {
+  const sinOfertas =
+    !cargando && errorCarga === undefined && (ofertas === undefined || ofertas.length === 0)
+
+  return (
+    <div className={claseSubPanel}>
+      <h4 className="text-sm font-bold text-cyan-400">Ofertas recibidas</h4>
+      <p className="mt-1 text-xs text-slate-400">
+        Al adjudicar una oferta se le avisa a la ONG por mail.
+      </p>
+
+      {cargando && <p className="mt-3 text-sm text-slate-400">Cargando ofertas...</p>}
+
+      {errorCarga !== undefined && (
+        <p role="alert" className={`mt-3 ${claseError}`}>
+          No se pudieron cargar las ofertas. {errorCarga}
+        </p>
+      )}
+
+      {sinOfertas && (
+        <p className="mt-3 text-sm text-slate-400">
+          No hay ofertas para esta emergencia.
+        </p>
+      )}
+
+      {ofertas !== undefined && ofertas.length > 0 && (
+        <ul className="mt-3 flex flex-col gap-2">
+          {ofertas.map((oferta) => (
+            <li
+              key={oferta.id}
+              className="rounded-xl bg-slate-800 border border-slate-700 p-3 flex flex-col gap-2"
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-sm font-semibold text-white">
+                  {oferta.organizaciones[0]?.nombre ?? `ONG #${oferta.organizacion_id}`}
+                </span>
+                <span className="font-mono text-xs text-slate-500">
+                  Oferta #{oferta.id}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <span className={claseBadge}>
+                  {formatearFecha(oferta.fecha_hora_oferta, 'Sin fecha')}
+                </span>
+                <span className={claseBadge}>Ítems: {oferta.items.length}</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => alAdjudicar(oferta.id)}
+                disabled={adjudicando === oferta.id}
+                className={`${claseBotonSecundario} self-start text-sm`}
+              >
+                {adjudicando === oferta.id ? 'Adjudicando...' : 'Adjudicar'}
+              </button>
+
+              {exitoAdjudicar[oferta.id] !== undefined && (
+                <p className={claseExito}>{exitoAdjudicar[oferta.id]}</p>
+              )}
+
+              {errorAdjudicar[oferta.id] !== undefined && (
+                <p role="alert" className={claseError}>
+                  {errorAdjudicar[oferta.id]}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 export function CentroCoordinadorPage() {
   const [pestania, setPestania] = useState<PestaniaBandeja>('sin_publicar')
   const [pagina, setPagina] = useState(1)
@@ -421,6 +520,14 @@ export function CentroCoordinadorPage() {
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
   const [eliminandoLote, setEliminandoLote] = useState<number | null>(null)
   const [avisoLote, setAvisoLote] = useState<string | null>(null)
+  const [ofertasPorEmergencia, setOfertasPorEmergencia] = useState<
+    Record<number, OfertaRead[]>
+  >({})
+  const [cargandoOfertas, setCargandoOfertas] = useState<Record<number, boolean>>({})
+  const [errorOfertas, setErrorOfertas] = useState<Record<number, string>>({})
+  const [adjudicando, setAdjudicando] = useState<number | null>(null)
+  const [errorAdjudicar, setErrorAdjudicar] = useState<Record<number, string>>({})
+  const [exitoAdjudicar, setExitoAdjudicar] = useState<Record<number, string>>({})
 
   useEffect(() => {
     let vigente = true
@@ -464,7 +571,45 @@ export function CentroCoordinadorPage() {
     setPestania(valor)
   }
 
+  async function cargarOfertasDeEmergencia(emergenciaId: number): Promise<void> {
+    setCargandoOfertas((actuales) => ({ ...actuales, [emergenciaId]: true }))
+    try {
+      const ofertas = await listarOfertasDeEmergencia(emergenciaId)
+      setOfertasPorEmergencia((actuales) => ({ ...actuales, [emergenciaId]: ofertas }))
+      setErrorOfertas((actuales) => sinClave(actuales, emergenciaId))
+    } catch (fallo) {
+      setErrorOfertas((actuales) => ({
+        ...actuales,
+        [emergenciaId]: describirError(fallo),
+      }))
+    } finally {
+      setCargandoOfertas((actuales) => ({ ...actuales, [emergenciaId]: false }))
+    }
+  }
+
+  async function manejarAdjudicar(ofertaId: number): Promise<void> {
+    setAdjudicando(ofertaId)
+    setErrorAdjudicar((actuales) => sinClave(actuales, ofertaId))
+    setExitoAdjudicar((actuales) => sinClave(actuales, ofertaId))
+    try {
+      await adjudicarOferta(ofertaId)
+      setExitoAdjudicar((actuales) => ({
+        ...actuales,
+        [ofertaId]: 'Notificación enviada por mail.',
+      }))
+    } catch (fallo) {
+      setErrorAdjudicar((actuales) => ({
+        ...actuales,
+        [ofertaId]: describirError(fallo),
+      }))
+    } finally {
+      setAdjudicando(null)
+    }
+  }
+
   function alternar(emergenciaId: number) {
+    const desplegando = !desplegadas.has(emergenciaId)
+
     setDesplegadas((actuales) => {
       const siguientes = new Set(actuales)
       if (siguientes.has(emergenciaId)) {
@@ -474,6 +619,16 @@ export function CentroCoordinadorPage() {
       }
       return siguientes
     })
+
+    // Las ofertas se piden una sola vez por emergencia, y solo en la pestaña de
+    // publicadas, para no recargarlas en cada despliegue.
+    if (
+      desplegando &&
+      !editable &&
+      ofertasPorEmergencia[emergenciaId] === undefined
+    ) {
+      void cargarOfertasDeEmergencia(emergenciaId)
+    }
   }
 
   function actualizarBorrador(
@@ -813,6 +968,18 @@ export function CentroCoordinadorPage() {
                       }
                       alEliminar={(lote) => void manejarEliminar(lote)}
                     />
+
+                    {!editable && (
+                      <PanelAdjudicacion
+                        ofertas={ofertasPorEmergencia[emergencia.id]}
+                        cargando={cargandoOfertas[emergencia.id] === true}
+                        errorCarga={errorOfertas[emergencia.id]}
+                        adjudicando={adjudicando}
+                        errorAdjudicar={errorAdjudicar}
+                        exitoAdjudicar={exitoAdjudicar}
+                        alAdjudicar={(ofertaId) => void manejarAdjudicar(ofertaId)}
+                      />
+                    )}
 
                     {editable && (
                       <div className="flex flex-col gap-3">

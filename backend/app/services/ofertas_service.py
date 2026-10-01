@@ -1,9 +1,11 @@
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
 
 from ..dto import (
+    AdjudicacionRespuesta,
     OfertaConsolidada,
     OfertaItemConsolidado,
     OfertaItemRespuesta,
@@ -12,11 +14,18 @@ from ..dto import (
     OfertasConsolidadas,
     OrganizacionResumen,
 )
+from ..integrations.email.service import notificar_adjudicacion
 from ..models import OfertaAyuda, OfertaItem, Organizacion
-from ..repositories import OfertaItemRepository, OfertaRepository
+from ..repositories import (
+    OfertaItemRepository,
+    OfertaRepository,
+    UsuarioRepository,
+)
 from ..schemas import OfertaActualizar, OfertaCrear
 from .emergencias_service import EmergenciaService
 from .usuarios_service import OrganizacionService
+
+NOMBRE_ROL_REPRESENTANTE_ONG = "REPRESENTANTE_ONG"
 
 
 class OfertaService:
@@ -25,6 +34,7 @@ class OfertaService:
         self._items = OfertaItemRepository()
         self._emergencias = EmergenciaService()
         self._organizaciones = OrganizacionService()
+        self._usuarios = UsuarioRepository()
 
     def listar_ofertas(
         self,
@@ -115,6 +125,63 @@ class OfertaService:
                 )
                 for oferta in ofertas
             ],
+        )
+
+    def adjudicar_oferta(
+        self,
+        db: Session,
+        oferta_id: int,
+        background_tasks: BackgroundTasks,
+    ) -> AdjudicacionRespuesta:
+        """Adjudica una oferta y agenda el aviso por email a la ONG."""
+        oferta = self._obtener_oferta_entidad(db, oferta_id)
+        if not oferta.items:
+            raise HTTPException(
+                status_code=400,
+                detail="La oferta no tiene ítems cargados",
+            )
+        self._programar_notificacion_adjudicacion(db, oferta, background_tasks)
+        return AdjudicacionRespuesta(
+            oferta_id=oferta_id,
+            mensaje="Notificación de adjudicación enviada",
+        )
+
+    def _programar_notificacion_adjudicacion(
+        self,
+        db: Session,
+        oferta: OfertaAyuda,
+        background_tasks: BackgroundTasks,
+    ) -> None:
+        """Agenda el aviso por email de la adjudicacion a la ONG.
+
+        Los destinatarios y los datos de la oferta se resuelven aca, con la
+        sesion de la request todavia abierta. La background task recibe solo
+        primitivos porque su sesion ya fue cerrada.
+        """
+        organizacion = self._organizaciones.obtener_organizacion_entidad(
+            db, oferta.organizacion_id
+        )
+        representantes = self._usuarios.listar_por_rol_nombre(
+            db,
+            NOMBRE_ROL_REPRESENTANTE_ONG,
+            organizacion_id=oferta.organizacion_id,
+        )
+        destinatarios = set()
+        if organizacion.email:
+            destinatarios.add(organizacion.email)
+        for usuario in representantes:
+            destinatarios.add(usuario.email)
+        lotes_adjudicados = [
+            item.lote_necesidad.tipo for item in oferta.items
+        ]
+        background_tasks.add_task(
+            notificar_adjudicacion,
+            list(destinatarios),
+            oferta.id,
+            oferta.emergencia_id,
+            oferta.emergencia.zona_afectada,
+            lotes_adjudicados,
+            datetime.now(timezone.utc),
         )
 
     def existe_referencia_a_lote(self, db: Session, lote_id: int) -> bool:

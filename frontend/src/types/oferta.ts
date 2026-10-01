@@ -56,3 +56,8 @@ export interface OfertasConsolidadas {
   emergencia_id: number
   ofertas: OfertaConsolidada[]
 }
+
+export interface AdjudicacionRespuesta {
+  oferta_id: number
+  mensaje: string
+}

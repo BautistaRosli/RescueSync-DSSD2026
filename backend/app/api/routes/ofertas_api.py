@@ -1,10 +1,11 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy.orm import Session
 
 from ...database import get_db
 from ...dto.ofertas_dto import (
+    AdjudicacionRespuesta,
     OfertaListadoRespuesta,
     OfertaRespuesta,
     OfertasConsolidadas,
@@ -66,3 +67,12 @@ def obtener_ofertas_consolidadas(
     emergencia_id: int, db: Session = Depends(get_db)
 ):
     return servicio_ofertas.obtener_ofertas_consolidadas(db, emergencia_id)
+
+
+@router.post("/ofertas/{oferta_id}/adjudicar", response_model=AdjudicacionRespuesta)
+def adjudicar_oferta(
+    oferta_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    return servicio_ofertas.adjudicar_oferta(db, oferta_id, background_tasks)

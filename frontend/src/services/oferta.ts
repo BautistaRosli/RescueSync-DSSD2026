@@ -1,5 +1,6 @@
 import { apiGet, apiPatch, apiPost } from './http'
 import type {
+  AdjudicacionRespuesta,
   OfertaCreateRequest,
   OfertaRead,
   OfertaUpdateRequest,
@@ -10,6 +11,12 @@ export async function listarOfertasDeOrganizacion(
   organizacionId: number,
 ): Promise<OfertaRead[]> {
   return apiGet<OfertaRead[]>(`/ofertas?organizacion_id=${organizacionId}`)
+}
+
+export async function listarOfertasDeEmergencia(
+  emergenciaId: number,
+): Promise<OfertaRead[]> {
+  return apiGet<OfertaRead[]>(`/ofertas?emergencia_id=${emergenciaId}`)
 }
 
 export async function crearOferta(
@@ -31,4 +38,13 @@ export async function obtenerOfertasConsolidadas(
   return apiGet<OfertasConsolidadas>(
     `/emergencias/${emergenciaId}/ofertas/consolidadas`,
   )
+}
+
+// El endpoint de adjudicación no declara cuerpo (solo usa el id de la ruta),
+// pero apiPost exige el parámetro cuerpo, así que le mandamos un objeto vacío
+// que FastAPI ignora.
+export async function adjudicarOferta(
+  ofertaId: number,
+): Promise<AdjudicacionRespuesta> {
+  return apiPost<AdjudicacionRespuesta>(`/ofertas/${ofertaId}/adjudicar`, {})
 }

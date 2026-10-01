@@ -69,9 +69,17 @@ class UsuarioRepository:
         return usuario
 
     def listar_por_rol_nombre(
-        self, db: Session, nombre_rol: str, solo_activos: bool = True
+        self,
+        db: Session,
+        nombre_rol: str,
+        solo_activos: bool = True,
+        organizacion_id: Optional[int] = None,
     ) -> list[Usuario]:
-        """Lista usuarios que pertenecen a un rol determinado."""
+        """Lista usuarios que pertenecen a un rol determinado.
+
+        Si se indica `organizacion_id`, acota el resultado a los usuarios de
+        esa organizacion.
+        """
 
         query = (
             db.query(Usuario)
@@ -81,4 +89,6 @@ class UsuarioRepository:
         )
         if solo_activos:
             query = query.filter(Usuario.activo.is_(True))
+        if organizacion_id is not None:
+            query = query.filter(Usuario.organizacion_id == organizacion_id)
         return query.order_by(Usuario.id.asc()).all()

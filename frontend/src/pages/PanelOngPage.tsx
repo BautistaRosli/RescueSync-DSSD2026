@@ -2,17 +2,15 @@ import { useState } from 'react'
 import { ConvocatoriasPage } from './ConvocatoriasPage'
 import { InventarioPage } from './InventarioPage'
 import { MisOfertasPage } from './MisOfertasPage'
-import { NotificacionesPage } from './NotificacionesPage'
 import { claseAviso, claseCard, claseSubtitulo, claseTitulo, clasePestania } from '../ui/clases'
 import type { AuthResponse } from '../types'
 
-type VistaOng = 'convocatorias' | 'ofertas' | 'inventario' | 'notificaciones'
+type VistaOng = 'convocatorias' | 'ofertas' | 'inventario'
 
 const PESTANIAS_ONG: { valor: VistaOng; etiqueta: string }[] = [
   { valor: 'convocatorias', etiqueta: 'Convocatorias' },
   { valor: 'ofertas', etiqueta: 'Mis ofertas' },
   { valor: 'inventario', etiqueta: 'Inventario' },
-  { valor: 'notificaciones', etiqueta: 'Notificaciones' },
 ]
 
 export function PanelOngPage({ sesion }: { sesion: AuthResponse }) {
@@ -58,9 +56,6 @@ export function PanelOngPage({ sesion }: { sesion: AuthResponse }) {
       {vista === 'ofertas' && <MisOfertasPage organizacionId={organizacionId} />}
       {vista === 'inventario' && (
         <InventarioPage organizacionId={organizacionId} />
-      )}
-      {vista === 'notificaciones' && (
-        <NotificacionesPage organizacionId={organizacionId} />
       )}
     </section>
   )

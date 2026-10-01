@@ -19,6 +19,7 @@ export type {
 export type { RecursoInventario, RecursoInventarioRequest } from './inventario'
 export type { LoteRead } from './lote'
 export type {
+  AdjudicacionRespuesta,
   OfertaConsolidada,
   OfertaCreateRequest,
   OfertaItemConsolidado,
@@ -28,7 +29,7 @@ export type {
   OfertaUpdateRequest,
   OfertasConsolidadas,
 } from './oferta'
-export type { ActividadFinalizada, NotificacionAdjudicacion } from './notificacion'
+export type { ActividadFinalizada } from './notificacion'
 export type {
   OrganizacionCreateRequest,
   OrganizacionRead,

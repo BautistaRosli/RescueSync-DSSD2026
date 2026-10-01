@@ -61,3 +61,10 @@ class OfertaConsolidada(BaseModel):
 class OfertasConsolidadas(BaseModel):
     emergencia_id: int
     ofertas: List[OfertaConsolidada]
+
+
+class AdjudicacionRespuesta(BaseModel):
+    """Resultado de adjudicar una oferta a una emergencia."""
+
+    oferta_id: int
+    mensaje: str

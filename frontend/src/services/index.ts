@@ -14,7 +14,9 @@ export { listarLotes } from './lote'
 export { crearOrganizacion, listarOrganizaciones } from './organizacion'
 export {
   actualizarOferta,
+  adjudicarOferta,
   crearOferta,
+  listarOfertasDeEmergencia,
   listarOfertasDeOrganizacion,
   obtenerOfertasConsolidadas,
 } from './oferta'
@@ -23,10 +25,5 @@ export {
   crearRecurso,
   eliminarRecurso,
   listarInventario,
-} from './mock/inventario'
-export {
-  listarNotificaciones,
-  marcarLeida,
-  simularAdjudicacion,
-} from './mock/notificaciones'
+} from './inventario'
 export { listarActividades, marcarFinalizada } from './mock/actividades'
