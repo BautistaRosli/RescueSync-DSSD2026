@@ -36,3 +36,4 @@ export type {
   OrganizacionResumen,
 } from './organizacion'
 export type { Rol } from './rol'
+export type { Organizacion } from './organizacion'

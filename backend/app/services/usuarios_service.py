@@ -1,4 +1,5 @@
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..dto import (
@@ -34,9 +35,9 @@ class OrganizacionService:
         self._repository = OrganizacionRepository()
 
     def listar_organizaciones(
-        self, db: Session
+        self, db: Session, organizacion_id: int | None = None
     ) -> list[OrganizacionRespuesta]:
-        organizaciones = self._repository.listar(db)
+        organizaciones = self._repository.listar(db, organizacion_id)
         return [OrganizacionRespuesta.model_validate(o) for o in organizaciones]
 
     def obtener_organizacion(
@@ -93,7 +94,13 @@ class RolService:
         """Inserta los roles base solo si no existen (idempotente)."""
         for nombre in ROLES_INICIALES:
             if self._repository.obtener_por_nombre(db, nombre) is None:
-                self._repository.agregar(db, Rol(nombre=nombre))
+                try:
+                    self._repository.agregar(db, Rol(nombre=nombre))
+                except IntegrityError:
+                    db.rollback()
+                    # Otro proceso puede haber sembrado el mismo rol al arrancar.
+                    if self._repository.obtener_por_nombre(db, nombre) is None:
+                        raise
 
 
 class AuthService:
@@ -111,6 +118,11 @@ class AuthService:
         if rol is None:
             raise HTTPException(status_code=404, detail="Rol no encontrado")
 
+        if rol.nombre == "REPRESENTANTE_ONG" and data.organizacion_id is None:
+            raise HTTPException(400, "El representante de ONG debe pertenecer a una organización")
+        if data.organizacion_id is not None:
+            OrganizacionService().obtener_organizacion(db, data.organizacion_id)
+
         usuario = Usuario(
             email=data.email,
             password_hash=hashear_password(data.password),
@@ -120,7 +132,15 @@ class AuthService:
             organizacion_id=data.organizacion_id,
             activo=True,
         )
-        return self._usuarios.crear(db, usuario)
+        try:
+            return self._usuarios.crear(db, usuario)
+        except IntegrityError as exc:
+            db.rollback()
+            if self._usuarios.obtener_por_email(db, data.email) is not None:
+                raise HTTPException(
+                    status_code=409, detail="El email ya está registrado"
+                ) from exc
+            raise
 
     def login(self, db: Session, data: LoginSolicitud) -> AuthRespuesta:
         usuario = self._usuarios.obtener_por_email(db, data.email)

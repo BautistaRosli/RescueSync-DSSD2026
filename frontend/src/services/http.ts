@@ -1,5 +1,11 @@
 const API_BASE = 'http://localhost:8000/api/v1'
 
+let tokenSesion: string | null = null
+
+export function establecerTokenSesion(token: string | null): void {
+  tokenSesion = token
+}
+
 export class ApiError extends Error {
   status: number
   detail: string
@@ -59,7 +65,12 @@ async function apiPeticion<T>(
   try {
     respuesta = await fetch(`${API_BASE}${ruta}`, {
       method: metodo,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(tokenSesion && ruta !== '/auth/login'
+          ? { Authorization: `Bearer ${tokenSesion}` }
+          : {}),
+      },
       body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
     })
   } catch {

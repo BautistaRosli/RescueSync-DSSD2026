@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 # importa los modelos de todos los dominios para registrarlos en Base.metadata
 from . import models as modelos
@@ -18,7 +19,11 @@ from .api.routes import (
 from .database import Base, SessionLocal, engine
 from .services.usuarios_service import RolService
 
-Base.metadata.create_all(bind=engine)
+with engine.begin() as conexion:
+    if conexion.dialect.name == "postgresql":
+        # Serializa el check/create de tablas cuando arrancan varios procesos.
+        conexion.execute(text("SELECT pg_advisory_xact_lock(2026, 1)"))
+    Base.metadata.create_all(bind=conexion)
 
 rol_service = RolService()
 

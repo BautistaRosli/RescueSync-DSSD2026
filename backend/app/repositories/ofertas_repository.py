@@ -51,23 +51,26 @@ class OfertaRepository:
         return query.order_by(OfertaAyuda.id.desc()).all()
 
     def listar_de_emergencia(
-        self, db: Session, emergencia_id: int
+        self, db: Session, emergencia_id: int, organizacion_id: int | None = None
     ) -> list[OfertaAyuda]:
-        return (
+        consulta = (
             self._consulta_con_relaciones(db)
             .filter(OfertaAyuda.emergencia_id == emergencia_id)
-            .order_by(OfertaAyuda.id.asc())
-            .all()
         )
+        if organizacion_id is not None:
+            consulta = consulta.filter(OfertaAyuda.organizacion_id == organizacion_id)
+        return consulta.order_by(OfertaAyuda.id.asc()).all()
 
     def obtener_por_id(
-        self, db: Session, oferta_id: int
+        self, db: Session, oferta_id: int, bloquear: bool = False
     ) -> Optional[OfertaAyuda]:
-        return (
+        consulta = (
             self._consulta_con_relaciones(db)
             .filter(OfertaAyuda.id == oferta_id)
-            .scalar()
         )
+        if bloquear:
+            consulta = consulta.populate_existing().with_for_update()
+        return consulta.scalar()
 
     def crear(self, db: Session, oferta: OfertaAyuda) -> OfertaAyuda:
         db.add(oferta)
