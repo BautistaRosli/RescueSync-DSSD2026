@@ -17,3 +17,4 @@ export type {
   NivelGravedad,
 } from './emergencia'
 export type { Rol } from './rol'
+export type { Organizacion } from './organizacion'

@@ -1,4 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from ..dependencias import requiere_roles, solo_development
+from ...services.permisos_service import COORDINADOR
 
 from ...integrations.bonita.schemas import BonitaTestVariablesRequest
 from ...integrations.bonita.service import (
@@ -6,10 +9,12 @@ from ...integrations.bonita.service import (
     verificar_conexion,
 )
 
-router = APIRouter(prefix="/bonita", tags=["Bonita"])
+router = APIRouter(prefix="/bonita", tags=["Bonita"], dependencies=[
+    Depends(requiere_roles(COORDINADOR)), Depends(solo_development)
+])
 
 
-@router.get("/test-login")
+@router.post("/test-login")
 async def test_login():
     return await verificar_conexion()
 

@@ -1,4 +1,4 @@
-import { apiPost } from './http'
+import { apiPost, establecerTokenSesion } from './http'
 import type { AuthResponse, LoginRequest, RegistroRequest } from '../types'
 
 export async function registrar(datos: RegistroRequest): Promise<AuthResponse> {
@@ -6,5 +6,11 @@ export async function registrar(datos: RegistroRequest): Promise<AuthResponse> {
 }
 
 export async function iniciarSesion(datos: LoginRequest): Promise<AuthResponse> {
-  return apiPost<AuthResponse>('/auth/login', datos)
+  const sesion = await apiPost<AuthResponse>('/auth/login', datos)
+  establecerTokenSesion(sesion.access_token)
+  return sesion
+}
+
+export function cerrarSesion(): void {
+  establecerTokenSesion(null)
 }
