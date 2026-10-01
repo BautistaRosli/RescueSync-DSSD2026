@@ -15,6 +15,8 @@ type Vista = 'bandeja' | 'registro'
 
 type VistaOperador = 'registrar' | 'emergencias'
 
+type VistaAcceso = 'login' | 'registro'
+
 const ROL_OPERADOR_MUNICIPAL = 'OPERADOR_MUNICIPAL'
 
 const ROL_REPRESENTANTE_ONG = 'REPRESENTANTE_ONG'
@@ -35,6 +37,7 @@ function App() {
   const [vista, setVista] = useState<Vista>('bandeja')
   const [vistaOperador, setVistaOperador] = useState<VistaOperador>('registrar')
   const [sesion, setSesion] = useState<AuthResponse | null>(null)
+  const [vistaAcceso, setVistaAcceso] = useState<VistaAcceso>('login')
 
   return (
     <div className="min-h-screen bg-slate-900 text-white">
@@ -42,11 +45,19 @@ function App() {
         cerrarSesion()
         setSesion(null)
         setVista('bandeja')
+        setVistaAcceso('login')
       }} />
 
       <main className="mx-auto max-w-3xl px-4 py-8">
         {sesion === null ? (
-          <LoginPage onSesionIniciada={setSesion} />
+          vistaAcceso === 'registro' ? (
+            <RegistroPage onVolver={() => setVistaAcceso('login')} />
+          ) : (
+            <LoginPage
+              onSesionIniciada={setSesion}
+              onIrARegistro={() => setVistaAcceso('registro')}
+            />
+          )
         ) : sesion.rol === ROL_OPERADOR_MUNICIPAL ? (
           <section className="flex flex-col gap-6">
             <div className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">

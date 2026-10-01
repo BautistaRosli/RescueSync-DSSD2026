@@ -8,6 +8,9 @@ const claseCampo =
 
 const claseEtiqueta = 'block text-sm text-slate-300 mb-1'
 
+const claseBotonSecundario =
+  'mt-4 w-full rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-400'
+
 function esEmailValido(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 }
@@ -30,8 +33,10 @@ function describirError(error: unknown): string {
 
 export function LoginPage({
   onSesionIniciada,
+  onIrARegistro,
 }: {
   onSesionIniciada: (sesion: AuthResponse) => void
+  onIrARegistro: () => void
 }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -133,6 +138,13 @@ export function LoginPage({
         </button>
       </form>
 
+      <button
+        type="button"
+        onClick={onIrARegistro}
+        className={claseBotonSecundario}
+      >
+        Crear cuenta
+      </button>
     </section>
   )
 }
