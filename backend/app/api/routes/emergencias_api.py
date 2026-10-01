@@ -1,6 +1,7 @@
+import logging
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..dependencias import requiere_roles
@@ -22,6 +23,8 @@ from ...schemas.emergencias_schema import (
 from ...services.emergencias_service import EmergenciaService
 
 router = APIRouter(prefix="/emergencias", tags=["Emergencias"])
+
+logger = logging.getLogger(__name__)
 
 servicio_emergencias = EmergenciaService()
 
@@ -67,15 +70,25 @@ def obtener_emergencia(
 
 
 @router.post("", response_model=EmergenciaRespuesta, status_code=201)
-def crear_emergencia(
+async def crear_emergencia(
     data: EmergenciaCrear,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(OPERADOR)),
 ):
-    return servicio_emergencias.crear_emergencia(
+    respuesta = servicio_emergencias.crear_emergencia(
         db, data, background_tasks=background_tasks
     )
+
+    try:
+        await servicio_emergencias.iniciar_proceso_bonita(db, respuesta.id)
+    except HTTPException as exc:
+        logger.error(
+            f"No se pudo iniciar el proceso en Bonita para la emergencia "
+            f"{respuesta.id}: {exc.detail}"
+        )
+
+    return servicio_emergencias.obtener_emergencia(db, respuesta.id)
 
 
 @router.patch("/{emergencia_id}", response_model=EmergenciaRespuesta)
@@ -91,14 +104,12 @@ def actualizar_emergencia(
 
 
 @router.post("/{emergencia_id}/publicar", response_model=EmergenciaRespuesta)
-def publicar_emergencia(
+async def publicar_emergencia(
     emergencia_id: int,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
 ):
-    servicio_emergencias.iniciar_proceso_bonita(
-            db, emergencia_id
-        )
+    await servicio_emergencias.iniciar_proceso_bonita(db, emergencia_id)
     return servicio_emergencias.publicar_emergencia(db, emergencia_id)
 
 

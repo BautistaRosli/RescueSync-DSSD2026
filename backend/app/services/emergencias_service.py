@@ -165,11 +165,11 @@ class EmergenciaService:
             return int(emergencia.bonita_case_id)
 
         # Validar que tenga lotes
-        if not emergencia.lotes:
+        """if not emergencia.lotes:
             raise HTTPException(
                 status_code=400,
                 detail="La emergencia no tiene lotes de necesidad cargados",
-            )
+            )"""
 
         # Armar variables (simples, con lotes serializados como JSON string)
         variables = {
