@@ -63,10 +63,6 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
   const [password, setPassword] = useState('')
   const [roles, setRoles] = useState<Rol[]>([])
   const [rolId, setRolId] = useState<number | ''>('')
-  const [organizaciones, setOrganizaciones] = useState<Organizacion[]>([])
-  const [organizacionId, setOrganizacionId] = useState<number | ''>('')
-  const [exito, setExito] = useState<string | null>(null)
-  const esRepresentante = roles.find((rol) => rol.id === rolId)?.nombre === 'REPRESENTANTE_ONG'
   const [cargandoRoles, setCargandoRoles] = useState(true)
   const [errorRoles, setErrorRoles] = useState<string | null>(null)
   const [organizaciones, setOrganizaciones] = useState<OrganizacionRead[]>([])
@@ -182,7 +178,6 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
   async function manejarEnvio(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault()
     setError(null)
-    setExito(null)
 
     if (nombre.trim().length < 2) {
       setError('Ingresá tu nombre (mínimo 2 caracteres).')
@@ -255,7 +250,6 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
       setNombre('')
       setApellido('')
       setEmail('')
-      setExito('Usuario creado. Tu sesión de coordinador sigue activa; podés crear otro usuario o volver a la bandeja.')
     } catch (fallo) {
       setError(describirError(fallo))
     } finally {

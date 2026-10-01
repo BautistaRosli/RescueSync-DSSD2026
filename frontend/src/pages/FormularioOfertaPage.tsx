@@ -3,7 +3,6 @@ import type { ChangeEvent, FormEvent } from 'react'
 import {
   actualizarOferta,
   crearOferta,
-  crearOrganizacion,
   listarInventario,
   listarLotes,
   listarOrganizaciones,
@@ -95,8 +94,6 @@ export function FormularioOfertaPage({
       .map((organizacion) => organizacion.id)
       .filter((id) => id !== organizacionId) ?? [],
   )
-  const [nombreOngNueva, setNombreOngNueva] = useState('')
-  const [creandoOng, setCreandoOng] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
@@ -185,26 +182,6 @@ export function FormularioOfertaPage({
 
   function quitarSocia(id: number) {
     setSociasIds((actuales) => actuales.filter((socia) => socia !== id))
-  }
-
-  async function registrarOngNueva() {
-    const nombre = nombreOngNueva.trim()
-    if (nombre.length < 2) {
-      setError('Ingresá el nombre de la ONG socia (mínimo 2 caracteres).')
-      return
-    }
-    setError(null)
-    setCreandoOng(true)
-    try {
-      const creada = await crearOrganizacion({ nombre, tipo: 'ong' })
-      setOrganizaciones((actuales) => [...actuales, creada])
-      setSociasIds((actuales) => [...actuales, creada.id])
-      setNombreOngNueva('')
-    } catch (fallo) {
-      setError(describirError(fallo))
-    } finally {
-      setCreandoOng(false)
-    }
   }
 
   function construirItems(): OfertaItemRequest[] {
@@ -477,8 +454,8 @@ export function FormularioOfertaPage({
               <span>
                 Esta es una oferta conjunta (consorcio con otras ONGs)
                 <span className="mt-1 block text-xs text-slate-400">
-                  Las organizaciones que agregues quedan registradas como
-                  responsables junto a la tuya y ven la oferta en su propio panel.
+                  Las organizaciones que sumes a la oferta quedan como
+                  responsables junto a la tuya y la ven en su propio panel.
                 </span>
               </span>
             </label>
@@ -523,31 +500,6 @@ export function FormularioOfertaPage({
                       </option>
                     ))}
                   </select>
-                </div>
-
-                <div>
-                  <label htmlFor="oferta-ong-nueva" className={claseEtiqueta}>
-                    ¿La ONG socia no está en la lista? Registrala
-                  </label>
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <input
-                      id="oferta-ong-nueva"
-                      type="text"
-                      value={nombreOngNueva}
-                      onChange={(evento) => setNombreOngNueva(evento.target.value)}
-                      placeholder="Nombre de la organización"
-                      maxLength={150}
-                      className={claseCampo}
-                    />
-                    <button
-                      type="button"
-                      onClick={registrarOngNueva}
-                      disabled={creandoOng}
-                      className={claseBotonSecundario}
-                    >
-                      {creandoOng ? 'Agregando...' : 'Agregar'}
-                    </button>
-                  </div>
                 </div>
               </div>
             )}

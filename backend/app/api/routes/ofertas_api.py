@@ -8,6 +8,7 @@ from ...models import Usuario
 from ...services.permisos_service import (
     COORDINADOR,
     ONG,
+    OPERADOR,
     AUDITOR,
     filtrar_organizacion,
     verificar_emergencia,
@@ -110,5 +111,6 @@ def adjudicar_oferta(
     oferta_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, OPERADOR)),
 ):
     return servicio_ofertas.adjudicar_oferta(db, oferta_id, background_tasks)
