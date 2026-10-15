@@ -3,10 +3,35 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Table,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
+
+oferta_organizaciones = Table(
+    "oferta_organizaciones",
+    Base.metadata,
+    Column(
+        "oferta_id",
+        ForeignKey("ofertas_ayuda.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "organizacion_id",
+        ForeignKey("organizaciones.id"),
+        primary_key=True,
+    ),
+)
 
 
 class OfertaAyuda(Base):
@@ -27,10 +52,21 @@ class OfertaAyuda(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     observaciones: Mapped[Optional[str]] = mapped_column(Text)
+    es_conjunta: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    # Marca el momento en que el municipio adjudicó esta oferta.
+    adjudicada_en: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     emergencia: Mapped["Emergencia"] = relationship(back_populates="ofertas")
     organizacion: Mapped["Organizacion"] = relationship(
         back_populates="ofertas"
+    )
+    organizaciones: Mapped[List["Organizacion"]] = relationship(
+        secondary=oferta_organizaciones,
+        back_populates="ofertas_participadas",
     )
     items: Mapped[List["OfertaItem"]] = relationship(
         back_populates="oferta", cascade="all, delete-orphan"
@@ -56,6 +92,10 @@ class OfertaItem(Base):
     )
     cantidad_ofrecida: Mapped[int] = mapped_column(Integer, nullable=False)
     descripcion: Mapped[Optional[str]] = mapped_column(Text)
+    # Marca el cierre de la actividad de este ítem (etapa 7 del flujo).
+    finalizado_en: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     oferta: Mapped["OfertaAyuda"] = relationship(back_populates="items")
     lote_necesidad: Mapped["LoteNecesidad"] = relationship(

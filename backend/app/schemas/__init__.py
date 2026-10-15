@@ -7,6 +7,11 @@ from .emergencias_schema import (
     validar_estado_emergencia,
     validar_nivel_gravedad,
 )
+from .inventario_schema import (
+    RecursoInventarioActualizar,
+    RecursoInventarioBase,
+    RecursoInventarioCrear,
+)
 from .lotes_schema import (
     LoteNecesidadActualizar,
     LoteNecesidadBase,
@@ -52,6 +57,9 @@ __all__ = [
     "OfertaCrear",
     "OfertaItemBase",
     "PATRON_EMAIL",
+    "RecursoInventarioActualizar",
+    "RecursoInventarioBase",
+    "RecursoInventarioCrear",
     "UsuarioCrear",
     "validar_estado_emergencia",
     "validar_formato_email",

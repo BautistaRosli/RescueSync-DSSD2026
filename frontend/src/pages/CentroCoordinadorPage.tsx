@@ -1,19 +1,28 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   ApiError,
   actualizarLote,
+  adjudicarOferta,
   crearLote,
   eliminarLote,
   listarBandejaEmergencias,
+  listarOfertasDeEmergencia,
   publicarEmergencia,
 } from '../services'
+import {
+  claseBadge,
+  claseBotonSecundario,
+  claseExito,
+  claseSubPanel,
+} from '../ui/clases'
 import type {
   BandaEmergencias,
   EstadoEmergencia,
   EmergenciaRead,
   LoteNecesidad,
   NivelGravedad,
+  OfertaRead,
 } from '../types'
 
 type PestaniaBandeja = 'sin_publicar' | 'publicadas'
@@ -79,6 +88,38 @@ const BORRADOR_VACIO: BorradorLote = {
   cantidad: '',
   unidad: '',
   descripcion: '',
+}
+
+interface DatosLote {
+  tipo: string
+  cantidad: number
+  unidad: string | null
+  descripcion: string | null
+}
+
+type ValidacionBorrador =
+  | { error: string; datos: null }
+  | { error: null; datos: DatosLote }
+
+function validarBorradorLote(borrador: BorradorLote): ValidacionBorrador {
+  const tipo = borrador.tipo.trim()
+  const cantidad = Number(borrador.cantidad)
+
+  if (!tipo) {
+    return { error: 'Ingresá el tipo de lote.', datos: null }
+  }
+  if (!Number.isInteger(cantidad) || cantidad <= 0) {
+    return { error: 'La cantidad debe ser un número entero mayor a 0.', datos: null }
+  }
+  return {
+    error: null,
+    datos: {
+      tipo,
+      cantidad,
+      unidad: borrador.unidad.trim() || null,
+      descripcion: borrador.descripcion.trim() || null,
+    },
+  }
 }
 
 function etiquetaDeGravedad(nivel: NivelGravedad): string {
@@ -190,6 +231,118 @@ function DetalleEmergencia({ emergencia }: { emergencia: EmergenciaRead }) {
   )
 }
 
+function CamposLote({
+  prefijo,
+  borrador,
+  deshabilitado,
+  error,
+  alCambiar,
+}: {
+  prefijo: string
+  borrador: BorradorLote
+  deshabilitado: boolean
+  error: string | undefined
+  alCambiar: (campo: keyof BorradorLote, valor: string) => void
+}) {
+  return (
+    <>
+      <div>
+        <label htmlFor={`${prefijo}-tipo`} className={claseEtiqueta}>
+          Tipo
+        </label>
+        <input
+          id={`${prefijo}-tipo`}
+          disabled={deshabilitado}
+          type="text"
+          value={borrador.tipo}
+          onChange={(evento) => alCambiar('tipo', evento.target.value)}
+          placeholder="Colchones"
+          maxLength={120}
+          required
+          className={claseCampo}
+        />
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <div className="flex-1 min-w-32">
+          <label htmlFor={`${prefijo}-cantidad`} className={claseEtiqueta}>
+            Cantidad
+          </label>
+          <input
+            id={`${prefijo}-cantidad`}
+            disabled={deshabilitado}
+            type="number"
+            min={1}
+            step={1}
+            value={borrador.cantidad}
+            onChange={(evento) => alCambiar('cantidad', evento.target.value)}
+            placeholder="50"
+            required
+            className={claseCampo}
+          />
+        </div>
+
+        <div className="flex-1 min-w-32">
+          <label htmlFor={`${prefijo}-unidad`} className={claseEtiqueta}>
+            Unidad de medida (opcional)
+          </label>
+          <input
+            id={`${prefijo}-unidad`}
+            disabled={deshabilitado}
+            type="text"
+            value={borrador.unidad}
+            onChange={(evento) => alCambiar('unidad', evento.target.value)}
+            placeholder="kg, litros, cajas, bolsas"
+            maxLength={50}
+            className={claseCampo}
+          />
+        </div>
+      </div>
+
+      <div>
+        <label htmlFor={`${prefijo}-descripcion`} className={claseEtiqueta}>
+          Descripción (opcional)
+        </label>
+        <textarea
+          id={`${prefijo}-descripcion`}
+          disabled={deshabilitado}
+          value={borrador.descripcion}
+          onChange={(evento) => alCambiar('descripcion', evento.target.value)}
+          placeholder="Detalle del lote, dónde se entrega, prioridad."
+          rows={2}
+          className={claseCampo}
+        />
+      </div>
+
+      {error !== undefined && (
+        <p role="alert" className={claseError}>
+          {error}
+        </p>
+      )}
+    </>
+  )
+}
+
+function BotonEnviarLote({
+  guardando,
+  texto,
+  textoGuardando,
+}: {
+  guardando: boolean
+  texto: string
+  textoGuardando: string
+}) {
+  return (
+    <button
+      type="submit"
+      disabled={guardando}
+      className="rounded-lg bg-cyan-500 px-4 py-2 font-semibold text-slate-900 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {guardando ? textoGuardando : texto}
+    </button>
+  )
+}
+
 function ListaLotes({
   lotes,
   editable,
@@ -249,104 +402,20 @@ function ListaLotes({
                   Editando lote #{lote.id}
                 </p>
 
-                <div>
-                  <label
-                    htmlFor={`lote-edicion-${lote.id}-tipo`}
-                    className={claseEtiqueta}
-                  >
-                    Tipo
-                  </label>
-                  <input
-                    id={`lote-edicion-${lote.id}-tipo`}
-                    type="text"
-                    value={borradorEdicion.tipo}
-                    onChange={(evento) =>
-                      alCambiarCampoEdicion('tipo', evento.target.value)
-                    }
-                    placeholder="Colchones"
-                    maxLength={120}
-                    required
-                    className={claseCampo}
-                  />
-                </div>
-
-                <div className="flex flex-wrap gap-3">
-                  <div className="flex-1 min-w-32">
-                    <label
-                      htmlFor={`lote-edicion-${lote.id}-cantidad`}
-                      className={claseEtiqueta}
-                    >
-                      Cantidad
-                    </label>
-                    <input
-                      id={`lote-edicion-${lote.id}-cantidad`}
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={borradorEdicion.cantidad}
-                      onChange={(evento) =>
-                        alCambiarCampoEdicion('cantidad', evento.target.value)
-                      }
-                      placeholder="50"
-                      required
-                      className={claseCampo}
-                    />
-                  </div>
-
-                  <div className="flex-1 min-w-32">
-                    <label
-                      htmlFor={`lote-edicion-${lote.id}-unidad`}
-                      className={claseEtiqueta}
-                    >
-                      Unidad (opcional)
-                    </label>
-                    <input
-                      id={`lote-edicion-${lote.id}-unidad`}
-                      type="text"
-                      value={borradorEdicion.unidad}
-                      onChange={(evento) =>
-                        alCambiarCampoEdicion('unidad', evento.target.value)
-                      }
-                      placeholder="unidades"
-                      maxLength={50}
-                      className={claseCampo}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor={`lote-edicion-${lote.id}-descripcion`}
-                    className={claseEtiqueta}
-                  >
-                    Descripción (opcional)
-                  </label>
-                  <textarea
-                    id={`lote-edicion-${lote.id}-descripcion`}
-                    value={borradorEdicion.descripcion}
-                    onChange={(evento) =>
-                      alCambiarCampoEdicion('descripcion', evento.target.value)
-                    }
-                    placeholder="Detalle del lote, dónde se entrega, prioridad."
-                    rows={2}
-                    className={claseCampo}
-                  />
-                </div>
-
-                {errorEdicion !== undefined && (
-                  <p role="alert" className={claseError}>
-                    {errorEdicion}
-                  </p>
-                )}
+                <CamposLote
+                  prefijo={`lote-edicion-${lote.id}`}
+                  borrador={borradorEdicion}
+                  deshabilitado={guardandoEdicion}
+                  error={errorEdicion}
+                  alCambiar={alCambiarCampoEdicion}
+                />
 
                 <div className="flex flex-wrap gap-2">
-                  <button
-                    type="submit"
-                    disabled={guardandoEdicion}
-                    className="rounded-lg bg-cyan-500 px-4 py-2 font-semibold text-slate-900 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {guardandoEdicion ? 'Guardando...' : 'Guardar'}
-                  </button>
+                  <BotonEnviarLote
+                    guardando={guardandoEdicion}
+                    texto="Guardar"
+                    textoGuardando="Guardando..."
+                  />
                   <button
                     type="button"
                     onClick={alCancelarEdicion}
@@ -379,7 +448,7 @@ function ListaLotes({
                   <button
                     type="button"
                     onClick={() => alAbrirEdicion(lote)}
-                    disabled={eliminandoLote !== null}
+                    disabled={eliminandoLote !== null || guardandoEdicion}
                     className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Editar
@@ -387,7 +456,7 @@ function ListaLotes({
                   <button
                     type="button"
                     onClick={() => alEliminar(lote)}
-                    disabled={eliminandoLote !== null}
+                    disabled={eliminandoLote !== null || guardandoEdicion}
                     className="rounded-lg border border-red-500/50 px-3 py-1 text-xs font-semibold text-red-300 transition hover:border-red-400 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {eliminandoLote === lote.id ? 'Eliminando...' : 'Eliminar'}
@@ -402,6 +471,96 @@ function ListaLotes({
   )
 }
 
+function PanelAdjudicacion({
+  ofertas,
+  cargando,
+  errorCarga,
+  adjudicando,
+  errorAdjudicar,
+  exitoAdjudicar,
+  alAdjudicar,
+}: {
+  ofertas: OfertaRead[] | undefined
+  cargando: boolean
+  errorCarga: string | undefined
+  adjudicando: number | null
+  errorAdjudicar: Record<number, string>
+  exitoAdjudicar: Record<number, string>
+  alAdjudicar: (ofertaId: number) => void
+}) {
+  const sinOfertas =
+    !cargando && errorCarga === undefined && (ofertas === undefined || ofertas.length === 0)
+
+  return (
+    <div className={claseSubPanel}>
+      <h4 className="text-sm font-bold text-cyan-400">Ofertas recibidas</h4>
+      <p className="mt-1 text-xs text-slate-400">
+        Al adjudicar una oferta se le avisa a la ONG por mail.
+      </p>
+
+      {cargando && <p className="mt-3 text-sm text-slate-400">Cargando ofertas...</p>}
+
+      {errorCarga !== undefined && (
+        <p role="alert" className={`mt-3 ${claseError}`}>
+          No se pudieron cargar las ofertas. {errorCarga}
+        </p>
+      )}
+
+      {sinOfertas && (
+        <p className="mt-3 text-sm text-slate-400">
+          No hay ofertas para esta emergencia.
+        </p>
+      )}
+
+      {ofertas !== undefined && ofertas.length > 0 && (
+        <ul className="mt-3 flex flex-col gap-2">
+          {ofertas.map((oferta) => (
+            <li
+              key={oferta.id}
+              className="rounded-xl bg-slate-800 border border-slate-700 p-3 flex flex-col gap-2"
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-sm font-semibold text-white">
+                  {oferta.organizaciones[0]?.nombre ?? `ONG #${oferta.organizacion_id}`}
+                </span>
+                <span className="font-mono text-xs text-slate-500">
+                  Oferta #{oferta.id}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <span className={claseBadge}>
+                  {formatearFecha(oferta.fecha_hora_oferta, 'Sin fecha')}
+                </span>
+                <span className={claseBadge}>Ítems: {oferta.items.length}</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => alAdjudicar(oferta.id)}
+                disabled={adjudicando === oferta.id}
+                className={`${claseBotonSecundario} self-start text-sm`}
+              >
+                {adjudicando === oferta.id ? 'Adjudicando...' : 'Adjudicar'}
+              </button>
+
+              {exitoAdjudicar[oferta.id] !== undefined && (
+                <p className={claseExito}>{exitoAdjudicar[oferta.id]}</p>
+              )}
+
+              {errorAdjudicar[oferta.id] !== undefined && (
+                <p role="alert" className={claseError}>
+                  {errorAdjudicar[oferta.id]}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 export function CentroCoordinadorPage() {
   const [pestania, setPestania] = useState<PestaniaBandeja>('sin_publicar')
   const [pagina, setPagina] = useState(1)
@@ -412,8 +571,8 @@ export function CentroCoordinadorPage() {
   const [desplegadas, setDesplegadas] = useState<Set<number>>(() => new Set())
   const [borradores, setBorradores] = useState<Record<number, BorradorLote>>({})
   const [errorBorrador, setErrorBorrador] = useState<Record<number, string>>({})
-  const [enviandoLote, setEnviandoLote] = useState<number | null>(null)
-  const [publicando, setPublicando] = useState<number | null>(null)
+  const [enviandoLote, setEnviandoLote] = useState<Record<number, boolean>>({})
+  const [publicando, setPublicando] = useState<Record<number, boolean>>({})
   const [errorPublicar, setErrorPublicar] = useState<Record<number, string>>({})
   const [loteEnEdicion, setLoteEnEdicion] = useState<number | null>(null)
   const [borradorEdicion, setBorradorEdicion] = useState<BorradorLote>(BORRADOR_VACIO)
@@ -421,11 +580,21 @@ export function CentroCoordinadorPage() {
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
   const [eliminandoLote, setEliminandoLote] = useState<number | null>(null)
   const [avisoLote, setAvisoLote] = useState<string | null>(null)
+  const [ofertasPorEmergencia, setOfertasPorEmergencia] = useState<
+    Record<number, OfertaRead[]>
+  >({})
+  const [cargandoOfertas, setCargandoOfertas] = useState<Record<number, boolean>>({})
+  const [errorOfertas, setErrorOfertas] = useState<Record<number, string>>({})
+  const [adjudicando, setAdjudicando] = useState<number | null>(null)
+  const [errorAdjudicar, setErrorAdjudicar] = useState<Record<number, string>>({})
+  const [exitoAdjudicar, setExitoAdjudicar] = useState<Record<number, string>>({})
+  const revisionLotes = useRef(0)
 
   useEffect(() => {
     let vigente = true
 
     async function cargar() {
+      const revision = revisionLotes.current
       setCargando(true)
       setError(null)
       try {
@@ -435,6 +604,11 @@ export function CentroCoordinadorPage() {
           por_pagina: POR_PAGINA,
         })
         if (!vigente) {
+          return
+        }
+        if (revision !== revisionLotes.current) {
+          // La lectura empezó antes de un cambio confirmado: pedimos datos actuales.
+          setRecargo((actual) => actual + 1)
           return
         }
         setBandeja(datos)
@@ -464,7 +638,45 @@ export function CentroCoordinadorPage() {
     setPestania(valor)
   }
 
+  async function cargarOfertasDeEmergencia(emergenciaId: number): Promise<void> {
+    setCargandoOfertas((actuales) => ({ ...actuales, [emergenciaId]: true }))
+    try {
+      const ofertas = await listarOfertasDeEmergencia(emergenciaId)
+      setOfertasPorEmergencia((actuales) => ({ ...actuales, [emergenciaId]: ofertas }))
+      setErrorOfertas((actuales) => sinClave(actuales, emergenciaId))
+    } catch (fallo) {
+      setErrorOfertas((actuales) => ({
+        ...actuales,
+        [emergenciaId]: describirError(fallo),
+      }))
+    } finally {
+      setCargandoOfertas((actuales) => ({ ...actuales, [emergenciaId]: false }))
+    }
+  }
+
+  async function manejarAdjudicar(ofertaId: number): Promise<void> {
+    setAdjudicando(ofertaId)
+    setErrorAdjudicar((actuales) => sinClave(actuales, ofertaId))
+    setExitoAdjudicar((actuales) => sinClave(actuales, ofertaId))
+    try {
+      await adjudicarOferta(ofertaId)
+      setExitoAdjudicar((actuales) => ({
+        ...actuales,
+        [ofertaId]: 'Notificación enviada por mail.',
+      }))
+    } catch (fallo) {
+      setErrorAdjudicar((actuales) => ({
+        ...actuales,
+        [ofertaId]: describirError(fallo),
+      }))
+    } finally {
+      setAdjudicando(null)
+    }
+  }
+
   function alternar(emergenciaId: number) {
+    const desplegando = !desplegadas.has(emergenciaId)
+
     setDesplegadas((actuales) => {
       const siguientes = new Set(actuales)
       if (siguientes.has(emergenciaId)) {
@@ -474,6 +686,16 @@ export function CentroCoordinadorPage() {
       }
       return siguientes
     })
+
+    // Las ofertas se piden una sola vez por emergencia, y solo en la pestaña de
+    // publicadas, para no recargarlas en cada despliegue.
+    if (
+      desplegando &&
+      !editable &&
+      ofertasPorEmergencia[emergenciaId] === undefined
+    ) {
+      void cargarOfertasDeEmergencia(emergenciaId)
+    }
   }
 
   function actualizarBorrador(
@@ -492,6 +714,7 @@ export function CentroCoordinadorPage() {
     emergenciaId: number,
     transformar: (emergencia: EmergenciaRead) => EmergenciaRead,
   ) {
+    revisionLotes.current += 1
     setBandeja((actual) => {
       if (actual === null) {
         return actual
@@ -511,36 +734,24 @@ export function CentroCoordinadorPage() {
   ) {
     evento.preventDefault()
 
-    const borrador = borradores[emergencia.id] ?? BORRADOR_VACIO
-    const tipo = borrador.tipo.trim()
-    const cantidad = Number(borrador.cantidad)
+    const validacion = validarBorradorLote(borradores[emergencia.id] ?? BORRADOR_VACIO)
 
-    if (!tipo) {
+    if (validacion.error !== null) {
       setErrorBorrador((actuales) => ({
         ...actuales,
-        [emergencia.id]: 'Ingresá el tipo de lote.',
-      }))
-      return
-    }
-    if (!Number.isInteger(cantidad) || cantidad <= 0) {
-      setErrorBorrador((actuales) => ({
-        ...actuales,
-        [emergencia.id]: 'La cantidad debe ser un número entero mayor a 0.',
+        [emergencia.id]: validacion.error,
       }))
       return
     }
 
-    setEnviandoLote(emergencia.id)
+    setEnviandoLote((actuales) => ({ ...actuales, [emergencia.id]: true }))
     try {
-      const creado = await crearLote(emergencia.id, {
-        tipo,
-        cantidad,
-        unidad: borrador.unidad.trim() || null,
-        descripcion: borrador.descripcion.trim() || null,
-      })
+      const creado = await crearLote(emergencia.id, validacion.datos)
       actualizarLotesEnBandeja(emergencia.id, (item) => ({
         ...item,
-        lotes: [...item.lotes, creado],
+        lotes: item.lotes.some((lote) => lote.id === creado.id)
+          ? item.lotes
+          : [...item.lotes, creado],
       }))
       setErrorBorrador((actuales) => sinClave(actuales, emergencia.id))
       setBorradores((actuales) => sinClave(actuales, emergencia.id))
@@ -550,7 +761,7 @@ export function CentroCoordinadorPage() {
         [emergencia.id]: describirError(fallo),
       }))
     } finally {
-      setEnviandoLote(null)
+      setEnviandoLote((actuales) => sinClave(actuales, emergencia.id))
     }
   }
 
@@ -583,26 +794,16 @@ export function CentroCoordinadorPage() {
   ) {
     evento.preventDefault()
 
-    const tipo = borradorEdicion.tipo.trim()
-    const cantidad = Number(borradorEdicion.cantidad)
+    const validacion = validarBorradorLote(borradorEdicion)
 
-    if (!tipo) {
-      setErrorEdicion('Ingresá el tipo de lote.')
-      return
-    }
-    if (!Number.isInteger(cantidad) || cantidad <= 0) {
-      setErrorEdicion('La cantidad debe ser un número entero mayor a 0.')
+    if (validacion.error !== null) {
+      setErrorEdicion(validacion.error)
       return
     }
 
     setGuardandoEdicion(true)
     try {
-      const actualizado = await actualizarLote(lote.id, {
-        tipo,
-        cantidad,
-        unidad: borradorEdicion.unidad.trim() || null,
-        descripcion: borradorEdicion.descripcion.trim() || null,
-      })
+      const actualizado = await actualizarLote(lote.id, validacion.datos)
       actualizarLotesEnBandeja(lote.emergencia_id, (item) => ({
         ...item,
         lotes: item.lotes.map((registro) =>
@@ -656,7 +857,7 @@ export function CentroCoordinadorPage() {
   }
 
   async function manejarPublicar(emergencia: EmergenciaRead) {
-    setPublicando(emergencia.id)
+    setPublicando((actuales) => ({ ...actuales, [emergencia.id]: true }))
     try {
       await publicarEmergencia(emergencia.id)
       setErrorPublicar((actuales) => sinClave(actuales, emergencia.id))
@@ -667,7 +868,7 @@ export function CentroCoordinadorPage() {
         [emergencia.id]: describirError(fallo),
       }))
     } finally {
-      setPublicando(null)
+      setPublicando((actuales) => sinClave(actuales, emergencia.id))
     }
   }
 
@@ -744,7 +945,7 @@ export function CentroCoordinadorPage() {
             const borrador = borradores[emergencia.id] ?? BORRADOR_VACIO
             const errorFormulario = errorBorrador[emergencia.id]
             const errorPublicacion = errorPublicar[emergencia.id]
-            const guardandoLote = enviandoLote === emergencia.id
+            const guardandoLote = enviandoLote[emergencia.id] ?? false
 
             return (
               <li
@@ -814,6 +1015,18 @@ export function CentroCoordinadorPage() {
                       alEliminar={(lote) => void manejarEliminar(lote)}
                     />
 
+                    {!editable && (
+                      <PanelAdjudicacion
+                        ofertas={ofertasPorEmergencia[emergencia.id]}
+                        cargando={cargandoOfertas[emergencia.id] === true}
+                        errorCarga={errorOfertas[emergencia.id]}
+                        adjudicando={adjudicando}
+                        errorAdjudicar={errorAdjudicar}
+                        exitoAdjudicar={exitoAdjudicar}
+                        alAdjudicar={(ofertaId) => void manejarAdjudicar(ofertaId)}
+                      />
+                    )}
+
                     {editable && (
                       <div className="flex flex-col gap-3">
                         <form
@@ -825,119 +1038,21 @@ export function CentroCoordinadorPage() {
                             Agregar lote de necesidad
                           </h4>
 
-                          <div>
-                            <label
-                              htmlFor={`lote-${emergencia.id}-tipo`}
-                              className={claseEtiqueta}
-                            >
-                              Tipo
-                            </label>
-                            <input
-                              id={`lote-${emergencia.id}-tipo`}
-                              type="text"
-                              value={borrador.tipo}
-                              onChange={(evento) =>
-                                actualizarBorrador(
-                                  emergencia.id,
-                                  'tipo',
-                                  evento.target.value,
-                                )
-                              }
-                              placeholder="Colchones"
-                              maxLength={120}
-                              required
-                              className={claseCampo}
-                            />
-                          </div>
+                          <CamposLote
+                            prefijo={`lote-${emergencia.id}`}
+                            borrador={borrador}
+                            deshabilitado={guardandoLote}
+                            error={errorFormulario}
+                            alCambiar={(campo, valor) =>
+                              actualizarBorrador(emergencia.id, campo, valor)
+                            }
+                          />
 
-                          <div className="flex flex-wrap gap-3">
-                            <div className="flex-1 min-w-32">
-                              <label
-                                htmlFor={`lote-${emergencia.id}-cantidad`}
-                                className={claseEtiqueta}
-                              >
-                                Cantidad
-                              </label>
-                              <input
-                                id={`lote-${emergencia.id}-cantidad`}
-                                type="number"
-                                min={1}
-                                step={1}
-                                value={borrador.cantidad}
-                                onChange={(evento) =>
-                                  actualizarBorrador(
-                                    emergencia.id,
-                                    'cantidad',
-                                    evento.target.value,
-                                  )
-                                }
-                                placeholder="50"
-                                required
-                                className={claseCampo}
-                              />
-                            </div>
-
-                            <div className="flex-1 min-w-32">
-                              <label
-                                htmlFor={`lote-${emergencia.id}-unidad`}
-                                className={claseEtiqueta}
-                              >
-                                Unidad (opcional)
-                              </label>
-                              <input
-                                id={`lote-${emergencia.id}-unidad`}
-                                type="text"
-                                value={borrador.unidad}
-                                onChange={(evento) =>
-                                  actualizarBorrador(
-                                    emergencia.id,
-                                    'unidad',
-                                    evento.target.value,
-                                  )
-                                }
-                                placeholder="unidades"
-                                maxLength={50}
-                                className={claseCampo}
-                              />
-                            </div>
-                          </div>
-
-                          <div>
-                            <label
-                              htmlFor={`lote-${emergencia.id}-descripcion`}
-                              className={claseEtiqueta}
-                            >
-                              Descripción (opcional)
-                            </label>
-                            <textarea
-                              id={`lote-${emergencia.id}-descripcion`}
-                              value={borrador.descripcion}
-                              onChange={(evento) =>
-                                actualizarBorrador(
-                                  emergencia.id,
-                                  'descripcion',
-                                  evento.target.value,
-                                )
-                              }
-                              placeholder="Detalle del lote, dónde se entrega, prioridad."
-                              rows={2}
-                              className={claseCampo}
-                            />
-                          </div>
-
-                          {errorFormulario !== undefined && (
-                            <p role="alert" className={claseError}>
-                              {errorFormulario}
-                            </p>
-                          )}
-
-                          <button
-                            type="submit"
-                            disabled={guardandoLote}
-                            className="rounded-lg bg-cyan-500 px-4 py-2 font-semibold text-slate-900 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {guardandoLote ? 'Guardando lote...' : 'Agregar lote'}
-                          </button>
+                          <BotonEnviarLote
+                            guardando={guardandoLote}
+                            texto="Agregar lote"
+                            textoGuardando="Guardando lote..."
+                          />
                         </form>
 
                         <div className="rounded-lg bg-slate-900 border border-slate-700 p-4 flex flex-col gap-3">
@@ -952,11 +1067,11 @@ export function CentroCoordinadorPage() {
                             onClick={() => void manejarPublicar(emergencia)}
                             disabled={
                               emergencia.lotes.length === 0 ||
-                              publicando === emergencia.id
+                              publicando[emergencia.id]
                             }
                             className="rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-slate-900 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {publicando === emergencia.id
+                            {publicando[emergencia.id]
                               ? 'Publicando...'
                               : 'Publicar lotes'}
                           </button>

@@ -36,6 +36,10 @@ class Organizacion(Base):
     ofertas: Mapped[List["OfertaAyuda"]] = relationship(
         back_populates="organizacion"
     )
+    ofertas_participadas: Mapped[List["OfertaAyuda"]] = relationship(
+        secondary="oferta_organizaciones",
+        back_populates="organizaciones",
+    )
     usuarios: Mapped[List["Usuario"]] = relationship(back_populates="organizacion")
 
 

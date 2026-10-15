@@ -56,13 +56,16 @@ class EmergenciaRepository:
         )
 
     def obtener_por_id(
-        self, db: Session, emergencia_id: int
+        self, db: Session, emergencia_id: int, bloquear: bool = False
     ) -> Optional[Emergencia]:
-        return (
+        consulta = (
             self._consulta_con_lotes(db)
             .filter(Emergencia.id == emergencia_id)
-            .scalar()
         )
+        if bloquear:
+            # Recargar también las relaciones después de esperar el bloqueo.
+            consulta = consulta.populate_existing().with_for_update()
+        return consulta.scalar()
 
     def crear(self, db: Session, emergencia: Emergencia) -> Emergencia:
         db.add(emergencia)

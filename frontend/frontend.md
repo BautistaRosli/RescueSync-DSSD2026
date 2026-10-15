@@ -16,6 +16,7 @@
 
 ## 2. Arquitectura de Capas (`frontend/src/`)
 src/
+├── components/ # PIEZAS: Componentes de presentación reutilizables. Sin estado propio ni fetch/http.
 ├── pages/       # VISTAS: Estado de UI local y layouts. Prohibido llamar a fetch/http acá.
 ├── services/    # COMUNICACIÓN: Clientes HTTP por dominio usando http.ts. Sin hooks de React.
 ├── types/       # CONTRATOS: DTOs / Interfaces TypeScript. Espejo de los DTOs del backend.
@@ -23,9 +24,10 @@ src/
 
 ### Reglas de Capas
 1. **Páginas (`pages/`):** Solo consumen servicios importados desde `../services`. Manejan errores vía captura de `ApiError`. Exportadas como *named export* y re-exportadas en `pages/index.ts`.
-2. **Servicios (`services/`):** Un archivo por dominio (`services/<dominio>.ts`). Consumen `http.ts` y usan el prefijo `/api/v1`. Re-exportados en `services/index.ts`.
-3. **Contratos (`types/`):** Interfaces sin lógica (`types/<dominio>.ts`). Re-exportados en `types/index.ts`.
-4. **Barrels obligatorios:** Siempre importar desde `../services` y `../types`. Mantener `index.ts` actualizado.
+2. **Componentes (`components/`):** Piezas de presentación sin estado propio ni comunicación. Reciben datos por props tipadas. Exportadas como *named export* y re-exportadas en `components/index.ts`.
+3. **Servicios (`services/`):** Un archivo por dominio (`services/<dominio>.ts`). Consumen `http.ts` y usan el prefijo `/api/v1`. Re-exportados en `services/index.ts`.
+4. **Contratos (`types/`):** Interfaces sin lógica (`types/<dominio>.ts`). Re-exportados en `types/index.ts`.
+5. **Barrels obligatorios:** Siempre importar desde `../services`, `../types` y `../components`. Mantener `index.ts` actualizado.
 
 ---
 

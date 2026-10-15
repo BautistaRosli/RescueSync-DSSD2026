@@ -1,12 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { ApiError, iniciarSesion } from '../services'
+import { ApiError, iniciarSesion, restaurarSesion } from '../services'
 import type { AuthResponse, LoginRequest } from '../types'
 
 const claseCampo =
   'w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none'
 
 const claseEtiqueta = 'block text-sm text-slate-300 mb-1'
+
+const claseBotonSecundario =
+  'mt-4 w-full rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-400'
 
 function esEmailValido(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
@@ -29,16 +32,30 @@ function describirError(error: unknown): string {
 }
 
 export function LoginPage({
-  onIrARegistro,
   onSesionIniciada,
+  onIrARegistro,
 }: {
-  onIrARegistro: () => void
   onSesionIniciada: (sesion: AuthResponse) => void
+  onIrARegistro: () => void
 }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
+  const vigente = useRef(false)
+
+  useEffect(() => {
+    vigente.current = true
+
+    void restaurarSesion().then((sesionRestaurada) => {
+      if (!vigente.current || sesionRestaurada === null) return
+      onSesionIniciada(sesionRestaurada)
+    })
+
+    return () => {
+      vigente.current = false
+    }
+  }, [onSesionIniciada])
 
   async function manejarEnvio(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault()
@@ -60,7 +77,9 @@ export function LoginPage({
     setEnviando(true)
     try {
       const datos: LoginRequest = { email: email.trim(), password }
-      onSesionIniciada(await iniciarSesion(datos))
+      const sesion = await iniciarSesion(datos)
+      if (!vigente.current) return
+      onSesionIniciada(sesion)
       setPassword('')
     } catch (fallo) {
       setError(describirError(fallo))
@@ -128,9 +147,9 @@ export function LoginPage({
       <button
         type="button"
         onClick={onIrARegistro}
-        className="mt-4 w-full text-sm text-sky-400 hover:underline"
+        className={claseBotonSecundario}
       >
-        ¿No tenés cuenta? Registrate
+        Crear cuenta
       </button>
     </section>
   )

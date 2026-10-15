@@ -1,7 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
-import { ApiError, listarRoles, registrar } from '../services'
-import type { RegistroRequest, Rol } from '../types'
+import {
+  ApiError,
+  crearOrganizacion,
+  listarOrganizaciones,
+  listarRoles,
+  registrar,
+} from '../services'
+import type { OrganizacionRead, RegistroRequest, Rol } from '../types'
 
 const ETIQUETAS_ROL: Record<string, string> = {
   OPERADOR_MUNICIPAL: 'Operador municipal',
@@ -9,6 +15,8 @@ const ETIQUETAS_ROL: Record<string, string> = {
   REPRESENTANTE_ONG: 'Representante de ONG',
   DIRECTOR_AUDITOR: 'Director/Auditor',
 }
+
+const ROL_REPRESENTANTE_ONG = 'REPRESENTANTE_ONG'
 
 const claseCampo =
   'w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none'
@@ -29,26 +37,26 @@ function esEmailValido(email: string): boolean {
 function describirError(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 404) {
-      return 'El rol seleccionado no existe. Recargá la página.'
+      return error.detail
     }
     if (error.status === 409) {
-      return 'Ese email ya está registrado. Probá iniciar sesión.'
+      return 'Ese email ya está registrado.'
     }
     if (error.status === 400) {
-      return `La contraseña es demasiado larga (máximo 72 bytes). ${error.detail}`
+      return error.detail
     }
     if (error.status === 422) {
       return `Revisá los datos enviados. ${error.detail}`
     }
-    if (error.status === 403) {
-      return `Tu usuario está inactivo. ${error.detail}`
+    if (error.status === 401) {
+      return 'Tu sesión no es válida o venció. Cerrá sesión y volvé a ingresar.'
     }
     return error.detail
   }
   return 'Ocurrió un error inesperado. Intentá de nuevo.'
 }
 
-export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
+export function RegistroPage({ onVolver }: { onVolver: () => void }) {
   const [nombre, setNombre] = useState('')
   const [apellido, setApellido] = useState('')
   const [email, setEmail] = useState('')
@@ -57,8 +65,26 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
   const [rolId, setRolId] = useState<number | ''>('')
   const [cargandoRoles, setCargandoRoles] = useState(true)
   const [errorRoles, setErrorRoles] = useState<string | null>(null)
+  const [organizaciones, setOrganizaciones] = useState<OrganizacionRead[]>([])
+  const [organizacionId, setOrganizacionId] = useState<number | ''>('')
+  const [cargandoOrganizaciones, setCargandoOrganizaciones] = useState(true)
+  const [errorOrganizaciones, setErrorOrganizaciones] = useState<string | null>(
+    null,
+  )
+  const [altaDeOng, setAltaDeOng] = useState(false)
+  const [nombreOng, setNombreOng] = useState('')
+  const [emailOng, setEmailOng] = useState('')
+  const [telefonoOng, setTelefonoOng] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
+  const formularioVigente = useRef(false)
+
+  useEffect(() => {
+    formularioVigente.current = true
+    return () => {
+      formularioVigente.current = false
+    }
+  }, [])
 
   useEffect(() => {
     let vigente = true
@@ -67,9 +93,12 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
       setCargandoRoles(true)
       setErrorRoles(null)
       try {
-        const datos = await listarRoles()
+        const [datos, organizacionesDisponibles] = await Promise.all([
+          listarRoles(), listarOrganizaciones(),
+        ])
         if (!vigente) return
         setRoles(datos)
+        setOrganizaciones(organizacionesDisponibles)
         setRolId(datos.length > 0 ? datos[0].id : '')
       } catch (fallo) {
         if (!vigente) return
@@ -77,7 +106,7 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
         setErrorRoles(
           fallo instanceof ApiError
             ? fallo.detail
-            : 'No se pudieron cargar los roles disponibles.',
+            : 'No se pudieron cargar los roles y las organizaciones disponibles.',
         )
       } finally {
         if (vigente) setCargandoRoles(false)
@@ -85,6 +114,36 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
     }
 
     void cargarRoles()
+
+    return () => {
+      vigente = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let vigente = true
+
+    async function cargarOrganizaciones() {
+      setCargandoOrganizaciones(true)
+      setErrorOrganizaciones(null)
+      try {
+        const datos = await listarOrganizaciones()
+        if (!vigente) return
+        setOrganizaciones(datos)
+      } catch (fallo) {
+        if (!vigente) return
+        setOrganizaciones([])
+        setErrorOrganizaciones(
+          fallo instanceof ApiError
+            ? fallo.detail
+            : 'No se pudieron cargar las organizaciones.',
+        )
+      } finally {
+        if (vigente) setCargandoOrganizaciones(false)
+      }
+    }
+
+    void cargarOrganizaciones()
 
     return () => {
       vigente = false
@@ -109,6 +168,11 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
 
   function manejarRol(evento: ChangeEvent<HTMLSelectElement>) {
     setRolId(Number(evento.target.value))
+  }
+
+  function manejarOrganizacion(evento: ChangeEvent<HTMLSelectElement>) {
+    const valor = evento.target.value
+    setOrganizacionId(valor === '' ? '' : Number(valor))
   }
 
   async function manejarEnvio(evento: FormEvent<HTMLFormElement>) {
@@ -143,19 +207,49 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
       setError('Seleccioná un rol.')
       return
     }
+    if (esRepresentanteOng) {
+      if (altaDeOng && nombreOng.trim().length < 2) {
+        setError('Ingresá el nombre de tu organización (mínimo 2 caracteres).')
+        return
+      }
+      if (!altaDeOng && organizacionId === '') {
+        setError('Seleccioná tu organización o registrá una nueva.')
+        return
+      }
+    }
 
     setEnviando(true)
     try {
+      let organizacionElegida: number | null = esRepresentanteOng
+        ? organizacionId === ''
+          ? null
+          : organizacionId
+        : null
+
+      if (esRepresentanteOng && altaDeOng) {
+        const creada = await crearOrganizacion({
+          nombre: nombreOng.trim(),
+          tipo: 'ong',
+          email: emailOng.trim() || null,
+          telefono: telefonoOng.trim() || null,
+        })
+        organizacionElegida = creada.id
+      }
+
       const datos: RegistroRequest = {
         email: email.trim(),
         password,
         nombre: nombre.trim(),
         apellido: apellido.trim(),
         rol_id: rolId,
+        organizacion_id: organizacionElegida,
       }
       await registrar(datos)
+      if (!formularioVigente.current) return
       setPassword('')
-      onIrALogin()
+      setNombre('')
+      setApellido('')
+      setEmail('')
     } catch (fallo) {
       setError(describirError(fallo))
     } finally {
@@ -165,11 +259,14 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
 
   const rolesInhabilitados = cargandoRoles || errorRoles !== null
 
+  const esRepresentanteOng =
+    roles.find((rol) => rol.id === rolId)?.nombre === ROL_REPRESENTANTE_ONG
+
   return (
     <section className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
-      <h2 className="text-xl font-bold text-cyan-400 mb-1">Crear cuenta</h2>
+      <h2 className="text-xl font-bold text-cyan-400 mb-1">Crear usuario</h2>
       <p className="text-sm text-slate-400 mb-5">
-        Registrate para poder coordinar operaciones de rescate.
+        Asigná el rol y la organización de la nueva cuenta.
       </p>
 
       <form onSubmit={manejarEnvio} className="flex flex-col gap-4" noValidate>
@@ -259,6 +356,109 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
           </select>
         </div>
 
+        {esRepresentanteOng && (
+          <div className="rounded-lg bg-slate-900 border border-slate-700 p-4 flex flex-col gap-4">
+            <p className="text-xs text-slate-400">
+              Como representante de ONG necesitás estar asociado a una
+              organización para poder postular recursos.
+            </p>
+
+            {!altaDeOng && (
+              <div>
+                <label htmlFor="registro-organizacion" className={claseEtiqueta}>
+                  Organización
+                </label>
+                <select
+                  id="registro-organizacion"
+                  value={organizacionId}
+                  onChange={manejarOrganizacion}
+                  disabled={cargandoOrganizaciones}
+                  className={claseCampo}
+                >
+                  <option value="">
+                    {cargandoOrganizaciones
+                      ? 'Cargando organizaciones...'
+                      : 'Elegí tu organización...'}
+                  </option>
+                  {organizaciones.map((organizacion) => (
+                    <option key={organizacion.id} value={organizacion.id}>
+                      {organizacion.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {altaDeOng && (
+              <>
+                <div>
+                  <label htmlFor="registro-ong-nombre" className={claseEtiqueta}>
+                    Nombre de la organización
+                  </label>
+                  <input
+                    id="registro-ong-nombre"
+                    type="text"
+                    value={nombreOng}
+                    onChange={(evento) => setNombreOng(evento.target.value)}
+                    placeholder="Cruz Verde Regional"
+                    maxLength={150}
+                    className={claseCampo}
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="registro-ong-email" className={claseEtiqueta}>
+                    Email de contacto
+                  </label>
+                  <input
+                    id="registro-ong-email"
+                    type="email"
+                    value={emailOng}
+                    onChange={(evento) => setEmailOng(evento.target.value)}
+                    placeholder="contacto@cruzverde.org"
+                    maxLength={150}
+                    className={claseCampo}
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="registro-ong-telefono" className={claseEtiqueta}>
+                    Teléfono
+                  </label>
+                  <input
+                    id="registro-ong-telefono"
+                    type="text"
+                    value={telefonoOng}
+                    onChange={(evento) => setTelefonoOng(evento.target.value)}
+                    placeholder="221 555-0000"
+                    maxLength={50}
+                    className={claseCampo}
+                  />
+                </div>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setAltaDeOng((actual) => !actual)
+                setError(null)
+              }}
+              className="text-left text-sm text-sky-400 hover:underline"
+            >
+              {altaDeOng
+                ? '← Elegir una organización ya registrada'
+                : '¿Tu ONG no está en la lista? Registrala'}
+            </button>
+
+            {errorOrganizaciones && (
+              <p role="alert" className={claseAviso}>
+                {errorOrganizaciones}
+              </p>
+            )}
+          </div>
+        )}
+
         {errorRoles && (
           <p role="alert" className={claseAviso}>
             {errorRoles}
@@ -276,19 +476,19 @@ export function RegistroPage({ onIrALogin }: { onIrALogin: () => void }) {
 
         <button
           type="submit"
-          disabled={enviando}
+          disabled={enviando || rolesInhabilitados}
           className="rounded-lg bg-cyan-500 px-4 py-2 font-semibold text-slate-900 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {enviando ? 'Registrando...' : 'Registrarme'}
+          {enviando ? 'Creando usuario...' : 'Crear usuario'}
         </button>
       </form>
 
       <button
         type="button"
-        onClick={onIrALogin}
+        onClick={onVolver}
         className="mt-4 w-full text-sm text-sky-400 hover:underline"
       >
-        ¿Ya tenés cuenta? Iniciá sesión
+        Volver a la bandeja
       </button>
     </section>
   )

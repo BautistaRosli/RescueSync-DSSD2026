@@ -9,7 +9,7 @@ class LoteNecesidadRepository:
     def obtener_por_id(
         self, db: Session, lote_id: int
     ) -> Optional[LoteNecesidad]:
-        return db.get(LoteNecesidad, lote_id)
+        return db.get(LoteNecesidad, lote_id, populate_existing=True)
 
     def listar_de_emergencia(
         self, db: Session, emergencia_id: int

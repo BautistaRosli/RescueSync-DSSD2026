@@ -10,6 +10,16 @@ class OfertaItemRespuesta(OfertaItemBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    finalizado_en: Optional[datetime] = None
+
+
+class OrganizacionResumen(BaseModel):
+    """Datos mínimos de una ONG participante de una oferta."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    nombre: str
 
 
 class OfertaRespuesta(BaseModel):
@@ -20,6 +30,9 @@ class OfertaRespuesta(BaseModel):
     organizacion_id: int
     observaciones: Optional[str] = None
     fecha_hora_oferta: datetime
+    es_conjunta: bool = False
+    adjudicada_en: Optional[datetime] = None
+    organizaciones: List[OrganizacionResumen] = []
     items: List[OfertaItemRespuesta] = []
 
 
@@ -30,6 +43,9 @@ class OfertaListadoRespuesta(BaseModel):
     organizacion_nombre: Optional[str] = None
     observaciones: Optional[str] = None
     fecha_hora_oferta: datetime
+    es_conjunta: bool = False
+    adjudicada_en: Optional[datetime] = None
+    organizaciones: List[OrganizacionResumen] = []
     items: List[OfertaItemRespuesta] = []
 
 
@@ -48,3 +64,10 @@ class OfertaConsolidada(BaseModel):
 class OfertasConsolidadas(BaseModel):
     emergencia_id: int
     ofertas: List[OfertaConsolidada]
+
+
+class AdjudicacionRespuesta(BaseModel):
+    """Resultado de adjudicar una oferta a una emergencia."""
+
+    oferta_id: int
+    mensaje: str

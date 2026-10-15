@@ -5,9 +5,9 @@ import bcrypt
 import jwt
 from fastapi import HTTPException
 
-JWT_SECRET = os.getenv(
-    "JWT_SECRET", "rescuesync-dev-secret-cambiar-en-produccion-2026"
-)
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    raise RuntimeError("Debe configurar JWT_SECRET antes de iniciar la API")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_MINUTES_POR_DEFECTO = 60
 

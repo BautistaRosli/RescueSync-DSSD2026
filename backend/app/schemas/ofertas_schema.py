@@ -14,8 +14,12 @@ class OfertaCrear(BaseModel):
     organizacion_id: int
     observaciones: Optional[str] = None
     items: List[OfertaItemBase] = []
+    organizaciones_ids: List[int] = []
+    es_conjunta: bool = False
 
 
 class OfertaActualizar(BaseModel):
     observaciones: Optional[str] = None
     items: Optional[List[OfertaItemBase]] = None
+    organizaciones_ids: Optional[List[int]] = None
+    es_conjunta: Optional[bool] = None

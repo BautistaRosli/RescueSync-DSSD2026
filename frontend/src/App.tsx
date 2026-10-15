@@ -1,19 +1,25 @@
 import { useState } from 'react'
+import { Navbar } from './components'
 import {
   CentroCoordinadorPage,
   EmergenciasPage,
   LoginPage,
+  PanelOngPage,
   RegistroPage,
   RegistrarEmergenciaPage,
 } from './pages'
 import type { AuthResponse } from './types'
+import { cerrarSesion } from './services'
 
-type Vista = 'login' | 'registro'
+type Vista = 'bandeja' | 'registro'
 
 type VistaOperador = 'registrar' | 'emergencias'
 
+type VistaAcceso = 'login' | 'registro'
+
 const ROL_OPERADOR_MUNICIPAL = 'OPERADOR_MUNICIPAL'
 
+const ROL_REPRESENTANTE_ONG = 'REPRESENTANTE_ONG'
 const ROL_CENTRO_COORDINADOR = 'CENTRO_COORDINADOR'
 
 const PESTANIAS_OPERADOR: { valor: VistaOperador; etiqueta: string }[] = [
@@ -28,51 +34,29 @@ function clasePestania(activa: boolean): string {
 }
 
 function App() {
-  const [vista, setVista] = useState<Vista>('login')
+  const [vista, setVista] = useState<Vista>('bandeja')
   const [vistaOperador, setVistaOperador] = useState<VistaOperador>('registrar')
   const [sesion, setSesion] = useState<AuthResponse | null>(null)
+  const [vistaAcceso, setVistaAcceso] = useState<VistaAcceso>('login')
 
   return (
     <div className="min-h-screen bg-slate-900 text-white">
-      <header className="border-b border-slate-700 bg-slate-800/60">
-        <div className="mx-auto max-w-3xl px-4 py-6 flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight text-cyan-400">
-              RescueSync
-            </h1>
-            <p className="mt-1 text-sm text-slate-400">
-              Coordinación de rescates en emergencias.
-            </p>
-          </div>
-
-          {sesion !== null && (
-            <div className="flex flex-col items-end gap-2">
-              <p className="text-sm text-slate-300">
-                {[sesion.usuario.nombre, sesion.usuario.apellido]
-                  .filter(Boolean)
-                  .join(' ')}
-              </p>
-              <button
-                type="button"
-                onClick={() => setSesion(null)}
-                className="rounded-lg border border-slate-700 px-4 py-2 font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-400"
-              >
-                Cerrar sesión
-              </button>
-            </div>
-          )}
-        </div>
-      </header>
+      <Navbar sesion={sesion} onCerrarSesion={() => {
+        cerrarSesion()
+        setSesion(null)
+        setVista('bandeja')
+        setVistaAcceso('login')
+      }} />
 
       <main className="mx-auto max-w-3xl px-4 py-8">
         {sesion === null ? (
-          vista === 'login' ? (
-            <LoginPage
-              onIrARegistro={() => setVista('registro')}
-              onSesionIniciada={setSesion}
-            />
+          vistaAcceso === 'registro' ? (
+            <RegistroPage onVolver={() => setVistaAcceso('login')} />
           ) : (
-            <RegistroPage onIrALogin={() => setVista('login')} />
+            <LoginPage
+              onSesionIniciada={setSesion}
+              onIrARegistro={() => setVistaAcceso('registro')}
+            />
           )
         ) : sesion.rol === ROL_OPERADOR_MUNICIPAL ? (
           <section className="flex flex-col gap-6">
@@ -109,15 +93,27 @@ function App() {
               <EmergenciasPage />
             )}
           </section>
+        ) : sesion.rol === ROL_REPRESENTANTE_ONG ? (
+          <PanelOngPage sesion={sesion} />
         ) : sesion.rol === ROL_CENTRO_COORDINADOR ? (
-          <CentroCoordinadorPage />
+          vista === 'registro' ? (
+            <RegistroPage onVolver={() => setVista('bandeja')} />
+          ) : (
+            <section className="flex flex-col gap-4">
+              {/* <button type="button" onClick={() => setVista('registro')}
+                className={clasePestania(false)}>
+                Crear usuario
+              </button> */}
+              <CentroCoordinadorPage />
+            </section>
+          )
         ) : (
           <section className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
             <h2 className="text-xl font-bold text-amber-400 mb-1">
               Sección no disponible
             </h2>
             <p className="text-sm text-slate-400">
-              Esta sección es exclusiva para operadores municipales. Tu rol actual es{' '}
+              Todavía no hay una sección para tu rol. Tu rol actual es{' '}
               <span className="font-mono text-cyan-400">{sesion.rol}</span>.
             </p>
           </section>

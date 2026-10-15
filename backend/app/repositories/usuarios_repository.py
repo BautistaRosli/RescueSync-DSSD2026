@@ -11,8 +11,16 @@ class OrganizacionRepository:
     ) -> Optional[Organizacion]:
         return db.get(Organizacion, organizacion_id)
 
-    def listar(self, db: Session) -> list[Organizacion]:
-        return db.query(Organizacion).order_by(Organizacion.id.asc()).all()
+    def obtener_por_nombre(
+        self, db: Session, nombre: str
+    ) -> Optional[Organizacion]:
+        return db.query(Organizacion).filter(Organizacion.nombre == nombre).first()
+
+    def listar(self, db: Session, organizacion_id: int | None = None) -> list[Organizacion]:
+        consulta = db.query(Organizacion)
+        if organizacion_id is not None:
+            consulta = consulta.filter(Organizacion.id == organizacion_id)
+        return consulta.order_by(Organizacion.id.asc()).all()
 
     def crear(self, db: Session, organizacion: Organizacion) -> Organizacion:
         db.add(organizacion)
@@ -69,9 +77,17 @@ class UsuarioRepository:
         return usuario
 
     def listar_por_rol_nombre(
-        self, db: Session, nombre_rol: str, solo_activos: bool = True
+        self,
+        db: Session,
+        nombre_rol: str,
+        solo_activos: bool = True,
+        organizacion_id: Optional[int] = None,
     ) -> list[Usuario]:
-        """Lista usuarios que pertenecen a un rol determinado."""
+        """Lista usuarios que pertenecen a un rol determinado.
+
+        Si se indica `organizacion_id`, acota el resultado a los usuarios de
+        esa organizacion.
+        """
 
         query = (
             db.query(Usuario)
@@ -81,4 +97,6 @@ class UsuarioRepository:
         )
         if solo_activos:
             query = query.filter(Usuario.activo.is_(True))
+        if organizacion_id is not None:
+            query = query.filter(Usuario.organizacion_id == organizacion_id)
         return query.order_by(Usuario.id.asc()).all()
