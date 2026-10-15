@@ -62,6 +62,20 @@ services:
     networks:
       - app-network
 
+  api-sistema-nacional:
+    build:
+      context: ./api-sistema-nacional
+      dockerfile: Dockerfile
+    container_name: api_sistema_nacional
+    restart: always
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./api-sistema-nacional:/app
+      - /app/__pycache__
+    networks:
+      - app-network
+
 volumes:
   postgres_data:
 

@@ -32,6 +32,7 @@ Solo se necesita tener instalado Docker (con Docker Desktop o Docker Engine en W
    * Frontend: [http://localhost:5173](http://localhost:5173)
    * Backend / Swagger Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
    * Base de datos: `localhost:5432`
+   * Api sistema nacional / Swagger Docs [http://localhost:8001/docs]
 
 4. **Apagar los servicios:**
    ```bash 
