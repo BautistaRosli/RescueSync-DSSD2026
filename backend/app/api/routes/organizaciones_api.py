@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from ..dependencias import requiere_roles, usuario_opcional
+from ..dependencias import portador, requiere_roles, usuario_opcional
 from ...models import Usuario
 from ...services.permisos_service import (
     COORDINADOR,
@@ -47,8 +48,9 @@ def crear_organizacion(
     data: OrganizacionCrear,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+    credenciales: HTTPAuthorizationCredentials = Depends(portador),
 ):
-    return servicio_organizaciones.crear_organizacion(db, data)
+    return servicio_organizaciones.crear_organizacion(db, data, credenciales.credentials)
 
 
 @router.patch("/{organizacion_id}", response_model=OrganizacionRespuesta)

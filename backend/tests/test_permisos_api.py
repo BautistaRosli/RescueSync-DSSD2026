@@ -63,7 +63,8 @@ CASOS = [
     ("PATCH", "/organizaciones/1/inventario/1", RECURSO, [ONG]),
     ("DELETE", "/organizaciones/1/inventario/1", None, [ONG]),
     ("GET", "/organizaciones/1", None, [COORDINADOR, ONG, AUDITOR]),
-    ("POST", "/organizaciones", {"nombre": "Nueva"}, [COORDINADOR]),
+    ("POST", "/organizaciones", {"nombre": "Nueva", "cuit": "30-12345678-9",
+                               "email": "contacto@example.org"}, [COORDINADOR]),
     ("PATCH", "/organizaciones/1", {"nombre": "Modificada"}, [COORDINADOR]),
     ("POST", "/bonita/test-login", None, [COORDINADOR]),
     ("POST", "/bonita/test-variables", {"case_id": 10, "variables": {}}, [COORDINADOR]),
@@ -114,7 +115,9 @@ def entorno(monkeypatch):
     monkeypatch.setattr("app.api.routes.bonita_api.verificar_conexion", diagnostico)
     monkeypatch.setattr("app.api.routes.bonita_api.setear_variables_prueba", variables)
 
-    def cloud_simulado(url, *, json, timeout):
+    def cloud_simulado(url, *, json, timeout, headers=None):
+        if url.endswith("/ongs/registro"):
+            return httpx.Response(201, json={"id": 900, **json})
         if url.endswith("/auth/registro"):
             return httpx.Response(201, json={"id": 900, "usuario": json["usuario"]})
         if json["password"] != ALTA["password"]:
@@ -318,7 +321,8 @@ def test_organizaciones_siguen_exigiendo_sesion_y_coordinador(entorno):
     assert cliente.patch("/api/v1/organizaciones/1", json={"nombre": "Modificada"},
                          headers=cabecera(AUDITOR)).status_code == 403
     assert cliente.get("/api/v1/organizaciones/1").status_code == 401
-    assert cliente.post("/api/v1/organizaciones", json={"nombre": "Nueva"},
+    assert cliente.post("/api/v1/organizaciones", json={"nombre": "Nueva", "cuit": "30-12345678-9",
+                                                      "email": "contacto@example.org"},
                         headers=cabecera(COORDINADOR)).status_code == 201
 
 

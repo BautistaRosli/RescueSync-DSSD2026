@@ -98,10 +98,39 @@ class OrganizacionService:
         return self._obtener_organizacion_entidad(db, organizacion_id)
 
     def crear_organizacion(
-        self, db: Session, data: OrganizacionCrear
+        self, db: Session, data: OrganizacionCrear, token: str
     ) -> OrganizacionRespuesta:
-        creada = self._repository.crear(db, Organizacion(**data.model_dump()))
+        if data.tipo == "ong":
+            self._registrar_ong_cloud(data, token)
+        try:
+            creada = self._repository.crear(
+                db, Organizacion(**data.model_dump(exclude={"cuit"}))
+            )
+        except SQLAlchemyError:
+            db.rollback()
+            raise HTTPException(503, "No se pudo completar el registro de la organización") from None
         return OrganizacionRespuesta.model_validate(creada)
+
+    def _registrar_ong_cloud(self, data: OrganizacionCrear, token: str) -> None:
+        try:
+            respuesta = cloud_client.registrar_ong(data.cuit, data.nombre, data.email, token)
+        except (httpx.RequestError, httpx.InvalidURL, ValueError):
+            raise HTTPException(503, "Registro de ONG en Cloud no disponible") from None
+        if respuesta.status_code == 409:
+            raise HTTPException(409, "El CUIT ya está registrado en Cloud")
+        if respuesta.status_code in (401, 403):
+            raise HTTPException(respuesta.status_code, "Cloud no autorizó el registro de la ONG")
+        try:
+            if respuesta.status_code != 201:
+                raise ValueError()
+            datos = respuesta.json()
+            identidad = {"cuit": data.cuit, "razon_social": data.nombre.strip(), "email": data.email}
+            if (not isinstance(datos, dict) or type(datos.get("id")) is not int
+                    or datos["id"] <= 0
+                    or any(datos.get(campo) != valor for campo, valor in identidad.items())):
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise HTTPException(503, "Registro de ONG en Cloud no disponible") from None
 
     def actualizar_organizacion(
         self, db: Session, organizacion_id: int, data: OrganizacionActualizar

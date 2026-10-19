@@ -1,7 +1,7 @@
 import re
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 PATRON_EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
@@ -61,7 +61,20 @@ class OrganizacionBase(BaseModel):
 
 
 class OrganizacionCrear(OrganizacionBase):
-    pass
+    cuit: Optional[str] = Field(
+        default=None, description="Obligatorio para registrar una ONG en Cloud"
+    )
+
+    @model_validator(mode="after")
+    def validar_datos_ong(self) -> "OrganizacionCrear":
+        if self.tipo == "ong":
+            if self.cuit is None or not self.cuit.strip():
+                raise ValueError("El CUIT es obligatorio para registrar una ONG")
+            if self.email is None:
+                raise ValueError("El email de contacto es obligatorio para registrar una ONG")
+            self.cuit = self.cuit.strip()
+            self.email = validar_formato_email(self.email.strip())
+        return self
 
 
 class OrganizacionActualizar(BaseModel):

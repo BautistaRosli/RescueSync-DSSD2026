@@ -10,6 +10,7 @@ export interface OrganizacionRead {
 export interface OrganizacionCreateRequest {
   nombre: string
   tipo: string
+  cuit?: string
   email?: string | null
   telefono?: string | null
 }

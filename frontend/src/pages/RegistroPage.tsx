@@ -79,6 +79,7 @@ export function RegistroPage({
   )
   const [altaDeOng, setAltaDeOng] = useState(false)
   const [nombreOng, setNombreOng] = useState('')
+  const [cuitOng, setCuitOng] = useState('')
   const [emailOng, setEmailOng] = useState('')
   const [telefonoOng, setTelefonoOng] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -218,6 +219,18 @@ export function RegistroPage({
         setError('Ingresá el nombre de tu organización (mínimo 2 caracteres).')
         return
       }
+      if (registrarNuevaOng && !cuitOng.trim()) {
+        setError('El CUIT de la organización es obligatorio.')
+        return
+      }
+      if (registrarNuevaOng && !emailOng.trim()) {
+        setError('El email de contacto de la organización es obligatorio.')
+        return
+      }
+      if (registrarNuevaOng && !esEmailValido(emailOng.trim())) {
+        setError('El email de contacto de la organización debe ser válido.')
+        return
+      }
       if (!registrarNuevaOng && organizacionId === '') {
         setError(
           permitirAltaOng
@@ -237,13 +250,22 @@ export function RegistroPage({
         : null
 
       if (esRepresentanteOng && registrarNuevaOng) {
-        const creada = await crearOrganizacion({
-          nombre: nombreOng.trim(),
-          tipo: 'ong',
-          email: emailOng.trim() || null,
-          telefono: telefonoOng.trim() || null,
-        })
-        organizacionElegida = creada.id
+        try {
+          const creada = await crearOrganizacion({
+            nombre: nombreOng.trim(),
+            tipo: 'ong',
+            cuit: cuitOng.trim(),
+            email: emailOng.trim(),
+            telefono: telefonoOng.trim() || null,
+          })
+          organizacionElegida = creada.id
+        } catch (fallo) {
+          if (fallo instanceof ApiError && fallo.status === 409) {
+            setError(fallo.detail)
+            return
+          }
+          throw fallo
+        }
       }
 
       const datos: RegistroRequest = {
@@ -418,6 +440,20 @@ export function RegistroPage({
                 </div>
 
                 <div>
+                  <label htmlFor="registro-ong-cuit" className={claseEtiqueta}>
+                    CUIT
+                  </label>
+                  <input
+                    id="registro-ong-cuit"
+                    type="text"
+                    value={cuitOng}
+                    onChange={(evento) => setCuitOng(evento.target.value)}
+                    required
+                    className={claseCampo}
+                  />
+                </div>
+
+                <div>
                   <label htmlFor="registro-ong-email" className={claseEtiqueta}>
                     Email de contacto
                   </label>
@@ -428,6 +464,7 @@ export function RegistroPage({
                     onChange={(evento) => setEmailOng(evento.target.value)}
                     placeholder="contacto@cruzverde.org"
                     maxLength={150}
+                    required
                     className={claseCampo}
                   />
                 </div>
