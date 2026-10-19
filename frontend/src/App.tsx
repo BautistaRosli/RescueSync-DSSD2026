@@ -5,13 +5,14 @@ import {
   EmergenciasPage,
   LoginPage,
   PanelOngPage,
-  RegistroPage,
+  RegistroUsuarioPage,
+  RegistroOngPage,
   RegistrarEmergenciaPage,
 } from './pages'
 import type { AuthResponse } from './types'
 import { cerrarSesion } from './services'
 
-type Vista = 'bandeja' | 'registro'
+type Vista = 'bandeja' | 'registro' | 'registro-ong'
 
 type VistaOperador = 'registrar' | 'emergencias'
 
@@ -35,6 +36,7 @@ function clasePestania(activa: boolean): string {
 
 function App() {
   const [vista, setVista] = useState<Vista>('bandeja')
+  const [origenRegistroOng, setOrigenRegistroOng] = useState<'bandeja' | 'registro'>('bandeja')
   const [vistaOperador, setVistaOperador] = useState<VistaOperador>('registrar')
   const [sesion, setSesion] = useState<AuthResponse | null>(null)
   const [vistaAcceso, setVistaAcceso] = useState<VistaAcceso>('login')
@@ -51,7 +53,7 @@ function App() {
       <main className="mx-auto max-w-3xl px-4 py-8">
         {sesion === null ? (
           vistaAcceso === 'registro' ? (
-            <RegistroPage onVolver={() => setVistaAcceso('login')} />
+            <RegistroUsuarioPage onVolver={() => setVistaAcceso('login')} />
           ) : (
             <LoginPage
               onSesionIniciada={setSesion}
@@ -96,14 +98,30 @@ function App() {
         ) : sesion.rol === ROL_REPRESENTANTE_ONG ? (
           <PanelOngPage sesion={sesion} />
         ) : sesion.rol === ROL_CENTRO_COORDINADOR ? (
-          vista === 'registro' ? (
-            <RegistroPage permitirAltaOng onVolver={() => setVista('bandeja')} />
+          vista === 'registro-ong' ? (
+            <RegistroOngPage onVolver={() => setVista(origenRegistroOng)} />
+          ) : vista === 'registro' ? (
+            <RegistroUsuarioPage
+              onVolver={() => setVista('bandeja')}
+              onCrearOng={() => {
+                setOrigenRegistroOng('registro')
+                setVista('registro-ong')
+              }}
+            />
           ) : (
             <section className="flex flex-col gap-4">
-              <button type="button" onClick={() => setVista('registro')}
-                className={clasePestania(false)}>
-                Crear usuario
-              </button>
+              <div className="flex gap-2 w-full">
+                <button type="button" onClick={() => setVista('registro')}
+                  className={`flex-1 ${clasePestania(false)}`}>
+                  Crear usuario
+                </button>
+                <button type="button" onClick={() => {
+                  setOrigenRegistroOng('bandeja')
+                  setVista('registro-ong')
+                }} className={`flex-1 ${clasePestania(false)}`}>
+                  Crear ONG
+                </button>
+              </div>
               <CentroCoordinadorPage />
             </section>
           )

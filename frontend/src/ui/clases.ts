@@ -1,5 +1,5 @@
 // Clases de Tailwind compartidas por las pantallas del representante de ONG.
-// Los valores se toman tal cual de las páginas existentes (RegistroPage,
+// Los valores se toman tal cual de las páginas existentes (RegistroUsuarioPage,
 // RegistrarEmergenciaPage, EmergenciasPage y App) para mantener un único
 // look & feel en toda la aplicación.
 

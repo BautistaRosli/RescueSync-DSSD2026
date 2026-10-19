@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import {
   ApiError,
-  crearOrganizacion,
   listarOrganizaciones,
   listarRoles,
   registrar,
@@ -56,12 +55,12 @@ function describirError(error: unknown): string {
   return 'Ocurrió un error inesperado. Intentá de nuevo.'
 }
 
-export function RegistroPage({
+export function RegistroUsuarioPage({
   onVolver,
-  permitirAltaOng = false,
+  onCrearOng,
 }: {
   onVolver: () => void
-  permitirAltaOng?: boolean
+  onCrearOng?: () => void
 }) {
   const [nombre, setNombre] = useState('')
   const [apellido, setApellido] = useState('')
@@ -77,11 +76,6 @@ export function RegistroPage({
   const [errorOrganizaciones, setErrorOrganizaciones] = useState<string | null>(
     null,
   )
-  const [altaDeOng, setAltaDeOng] = useState(false)
-  const [nombreOng, setNombreOng] = useState('')
-  const [cuitOng, setCuitOng] = useState('')
-  const [emailOng, setEmailOng] = useState('')
-  const [telefonoOng, setTelefonoOng] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
   const formularioVigente = useRef(false)
@@ -214,59 +208,18 @@ export function RegistroPage({
       setError('Seleccioná un rol.')
       return
     }
-    if (esRepresentanteOng) {
-      if (registrarNuevaOng && nombreOng.trim().length < 2) {
-        setError('Ingresá el nombre de tu organización (mínimo 2 caracteres).')
-        return
-      }
-      if (registrarNuevaOng && !cuitOng.trim()) {
-        setError('El CUIT de la organización es obligatorio.')
-        return
-      }
-      if (registrarNuevaOng && !emailOng.trim()) {
-        setError('El email de contacto de la organización es obligatorio.')
-        return
-      }
-      if (registrarNuevaOng && !esEmailValido(emailOng.trim())) {
-        setError('El email de contacto de la organización debe ser válido.')
-        return
-      }
-      if (!registrarNuevaOng && organizacionId === '') {
-        setError(
-          permitirAltaOng
-            ? 'Seleccioná tu organización o registrá una nueva.'
-            : 'Seleccioná tu organización.',
-        )
-        return
-      }
+    if (esRepresentanteOng && organizacionId === '') {
+      setError('Seleccioná tu organización.')
+      return
     }
 
     setEnviando(true)
     try {
-      let organizacionElegida: number | null = esRepresentanteOng
+      const organizacionElegida: number | null = esRepresentanteOng
         ? organizacionId === ''
           ? null
           : organizacionId
         : null
-
-      if (esRepresentanteOng && registrarNuevaOng) {
-        try {
-          const creada = await crearOrganizacion({
-            nombre: nombreOng.trim(),
-            tipo: 'ong',
-            cuit: cuitOng.trim(),
-            email: emailOng.trim(),
-            telefono: telefonoOng.trim() || null,
-          })
-          organizacionElegida = creada.id
-        } catch (fallo) {
-          if (fallo instanceof ApiError && fallo.status === 409) {
-            setError(fallo.detail)
-            return
-          }
-          throw fallo
-        }
-      }
 
       const datos: RegistroRequest = {
         email: email.trim(),
@@ -293,7 +246,6 @@ export function RegistroPage({
 
   const esRepresentanteOng =
     roles.find((rol) => rol.id === rolId)?.nombre === ROL_REPRESENTANTE_ONG
-  const registrarNuevaOng = permitirAltaOng && altaDeOng
 
   return (
     <section className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
@@ -396,108 +348,37 @@ export function RegistroPage({
               organización para poder postular recursos.
             </p>
 
-            {!registrarNuevaOng && (
-              <div>
-                <label htmlFor="registro-organizacion" className={claseEtiqueta}>
-                  Organización
-                </label>
-                <select
-                  id="registro-organizacion"
-                  value={organizacionId}
-                  onChange={manejarOrganizacion}
-                  disabled={cargandoOrganizaciones}
-                  className={claseCampo}
-                >
-                  <option value="">
-                    {cargandoOrganizaciones
-                      ? 'Cargando organizaciones...'
-                      : 'Elegí tu organización...'}
+            <div>
+              <label htmlFor="registro-organizacion" className={claseEtiqueta}>
+                Organización
+              </label>
+              <select
+                id="registro-organizacion"
+                value={organizacionId}
+                onChange={manejarOrganizacion}
+                disabled={cargandoOrganizaciones}
+                className={claseCampo}
+              >
+                <option value="">
+                  {cargandoOrganizaciones
+                    ? 'Cargando organizaciones...'
+                    : 'Elegí tu organización...'}
+                </option>
+                {organizaciones.map((organizacion) => (
+                  <option key={organizacion.id} value={organizacion.id}>
+                    {organizacion.nombre}
                   </option>
-                  {organizaciones.map((organizacion) => (
-                    <option key={organizacion.id} value={organizacion.id}>
-                      {organizacion.nombre}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+                ))}
+              </select>
+            </div>
 
-            {registrarNuevaOng && (
-              <>
-                <div>
-                  <label htmlFor="registro-ong-nombre" className={claseEtiqueta}>
-                    Nombre de la organización
-                  </label>
-                  <input
-                    id="registro-ong-nombre"
-                    type="text"
-                    value={nombreOng}
-                    onChange={(evento) => setNombreOng(evento.target.value)}
-                    placeholder="Cruz Verde Regional"
-                    maxLength={150}
-                    className={claseCampo}
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="registro-ong-cuit" className={claseEtiqueta}>
-                    CUIT
-                  </label>
-                  <input
-                    id="registro-ong-cuit"
-                    type="text"
-                    value={cuitOng}
-                    onChange={(evento) => setCuitOng(evento.target.value)}
-                    required
-                    className={claseCampo}
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="registro-ong-email" className={claseEtiqueta}>
-                    Email de contacto
-                  </label>
-                  <input
-                    id="registro-ong-email"
-                    type="email"
-                    value={emailOng}
-                    onChange={(evento) => setEmailOng(evento.target.value)}
-                    placeholder="contacto@cruzverde.org"
-                    maxLength={150}
-                    required
-                    className={claseCampo}
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="registro-ong-telefono" className={claseEtiqueta}>
-                    Teléfono
-                  </label>
-                  <input
-                    id="registro-ong-telefono"
-                    type="text"
-                    value={telefonoOng}
-                    onChange={(evento) => setTelefonoOng(evento.target.value)}
-                    placeholder="221 555-0000"
-                    maxLength={50}
-                    className={claseCampo}
-                  />
-                </div>
-              </>
-            )}
-
-            {permitirAltaOng && (
+            {onCrearOng && (
               <button
                 type="button"
-                onClick={() => {
-                  setAltaDeOng((actual) => !actual)
-                  setError(null)
-                }}
+                onClick={onCrearOng}
                 className="text-left text-sm text-sky-400 hover:underline"
               >
-                {registrarNuevaOng
-                  ? '← Elegir una organización ya registrada'
-                  : '¿Tu ONG no está en la lista? Registrala'}
+                ¿Tu ONG no está en la lista? Registrala
               </button>
             )}
 
