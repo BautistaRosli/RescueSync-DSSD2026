@@ -56,7 +56,13 @@ function describirError(error: unknown): string {
   return 'Ocurrió un error inesperado. Intentá de nuevo.'
 }
 
-export function RegistroPage({ onVolver }: { onVolver: () => void }) {
+export function RegistroPage({
+  onVolver,
+  permitirAltaOng = false,
+}: {
+  onVolver: () => void
+  permitirAltaOng?: boolean
+}) {
   const [nombre, setNombre] = useState('')
   const [apellido, setApellido] = useState('')
   const [email, setEmail] = useState('')
@@ -208,12 +214,16 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
       return
     }
     if (esRepresentanteOng) {
-      if (altaDeOng && nombreOng.trim().length < 2) {
+      if (registrarNuevaOng && nombreOng.trim().length < 2) {
         setError('Ingresá el nombre de tu organización (mínimo 2 caracteres).')
         return
       }
-      if (!altaDeOng && organizacionId === '') {
-        setError('Seleccioná tu organización o registrá una nueva.')
+      if (!registrarNuevaOng && organizacionId === '') {
+        setError(
+          permitirAltaOng
+            ? 'Seleccioná tu organización o registrá una nueva.'
+            : 'Seleccioná tu organización.',
+        )
         return
       }
     }
@@ -226,7 +236,7 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
           : organizacionId
         : null
 
-      if (esRepresentanteOng && altaDeOng) {
+      if (esRepresentanteOng && registrarNuevaOng) {
         const creada = await crearOrganizacion({
           nombre: nombreOng.trim(),
           tipo: 'ong',
@@ -261,6 +271,7 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
 
   const esRepresentanteOng =
     roles.find((rol) => rol.id === rolId)?.nombre === ROL_REPRESENTANTE_ONG
+  const registrarNuevaOng = permitirAltaOng && altaDeOng
 
   return (
     <section className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
@@ -363,7 +374,7 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
               organización para poder postular recursos.
             </p>
 
-            {!altaDeOng && (
+            {!registrarNuevaOng && (
               <div>
                 <label htmlFor="registro-organizacion" className={claseEtiqueta}>
                   Organización
@@ -389,7 +400,7 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
               </div>
             )}
 
-            {altaDeOng && (
+            {registrarNuevaOng && (
               <>
                 <div>
                   <label htmlFor="registro-ong-nombre" className={claseEtiqueta}>
@@ -438,18 +449,20 @@ export function RegistroPage({ onVolver }: { onVolver: () => void }) {
               </>
             )}
 
-            <button
-              type="button"
-              onClick={() => {
-                setAltaDeOng((actual) => !actual)
-                setError(null)
-              }}
-              className="text-left text-sm text-sky-400 hover:underline"
-            >
-              {altaDeOng
-                ? '← Elegir una organización ya registrada'
-                : '¿Tu ONG no está en la lista? Registrala'}
-            </button>
+            {permitirAltaOng && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAltaDeOng((actual) => !actual)
+                  setError(null)
+                }}
+                className="text-left text-sm text-sky-400 hover:underline"
+              >
+                {registrarNuevaOng
+                  ? '← Elegir una organización ya registrada'
+                  : '¿Tu ONG no está en la lista? Registrala'}
+              </button>
+            )}
 
             {errorOrganizaciones && (
               <p role="alert" className={claseAviso}>

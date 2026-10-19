@@ -97,13 +97,13 @@ function App() {
           <PanelOngPage sesion={sesion} />
         ) : sesion.rol === ROL_CENTRO_COORDINADOR ? (
           vista === 'registro' ? (
-            <RegistroPage onVolver={() => setVista('bandeja')} />
+            <RegistroPage permitirAltaOng onVolver={() => setVista('bandeja')} />
           ) : (
             <section className="flex flex-col gap-4">
-              {/* <button type="button" onClick={() => setVista('registro')}
+              <button type="button" onClick={() => setVista('registro')}
                 className={clasePestania(false)}>
                 Crear usuario
-              </button> */}
+              </button>
               <CentroCoordinadorPage />
             </section>
           )
