@@ -198,6 +198,40 @@ def test_publicacion_espera_una_escritura_de_lotes_ya_validada(sesiones_pg, monk
         assert db.query(LoteNecesidad).count() == 3
 
 
+def test_creaciones_de_lotes_no_bloquean_bonita_en_el_mismo_loop(sesiones_pg, monkeypatch):
+    with sesiones_pg() as db:
+        emergencia = EmergenciaRepository().obtener_por_id(db, 1)
+        emergencia.bonita_case_id = "42"
+        db.commit()
+
+    async def ejecutar():
+        consultando_bonita = asyncio.Event()
+
+        async def obtener_tarea(*_):
+            consultando_bonita.set()
+            # La primera creación mantiene el bloqueo mientras espera Bonita.
+            await asyncio.sleep(0.1)
+            return None
+
+        monkeypatch.setattr(
+            "app.services.lotes_service.bonita_client.obtener_tarea_pendiente",
+            obtener_tarea,
+        )
+
+        async def crear():
+            with sesiones_pg() as db:
+                return await LoteService().crear_lote(
+                    db, 1, LoteNecesidadCrear(tipo="Agua", cantidad=3))
+
+        primera = asyncio.create_task(crear())
+        await asyncio.wait_for(consultando_bonita.wait(), timeout=5)
+        return await asyncio.wait_for(asyncio.gather(primera, crear()), timeout=10)
+
+    assert [lote.cantidad for lote in asyncio.run(ejecutar())] == [3, 3]
+    with sesiones_pg() as db:
+        assert db.query(LoteNecesidad).count() == 4
+
+
 def test_oferta_no_usa_lote_eliminado_desde_lectura_anterior(sesiones_pg):
     with sesiones_pg() as db:
         anterior = EmergenciaRepository().obtener_por_id(db, 1)
