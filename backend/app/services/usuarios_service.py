@@ -1,5 +1,7 @@
+import httpx
+import jwt
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..dto import (
@@ -9,6 +11,7 @@ from ..dto import (
     UsuarioRespuesta,
 )
 from ..models import Organizacion, Rol, Usuario
+from ..integrations import cloud_client
 from ..repositories import (
     OrganizacionRepository,
     RolRepository,
@@ -20,7 +23,7 @@ from ..schemas import (
     OrganizacionCrear,
     UsuarioCrear,
 )
-from .security_service import generar_token, hashear_password, verificar_password
+from .security_service import validar_token_cloud
 
 ROLES_INICIALES = [
     "OPERADOR_MUNICIPAL",
@@ -37,7 +40,7 @@ ORGANIZACION_ONU = {
     "activa": True,
 }
 
-# La contraseña de cada usuario inicial es su propio email.
+# Los perfiles iniciales requieren credenciales creadas por separado en Cloud.
 USUARIOS_INICIALES = [
     {
         "email": "municipio@municipio.com",
@@ -170,7 +173,7 @@ class AuthService:
 
             usuario = Usuario(
                 email=datos["email"],
-                password_hash=hashear_password(datos["email"]),
+                password_hash="!cloud",
                 nombre=datos["nombre"],
                 apellido=datos["apellido"],
                 rol_id=rol.id,
@@ -202,7 +205,7 @@ class AuthService:
                 raise
             return organizacion
 
-    def registrar_usuario(self, db: Session, data: UsuarioCrear) -> Usuario:
+    def registrar_usuario(self, db: Session, data: UsuarioCrear) -> AuthRespuesta:
         if self._usuarios.obtener_por_email(db, data.email) is not None:
             raise HTTPException(
                 status_code=409, detail="El email ya está registrado"
@@ -217,9 +220,11 @@ class AuthService:
         if data.organizacion_id is not None:
             OrganizacionService().obtener_organizacion(db, data.organizacion_id)
 
+        self._registrar_credenciales_cloud(data.email, data.password)
+        token = self._login_cloud(data.email, data.password)
         usuario = Usuario(
             email=data.email,
-            password_hash=hashear_password(data.password),
+            password_hash="!cloud",
             nombre=data.nombre,
             apellido=data.apellido,
             rol_id=rol.id,
@@ -227,7 +232,7 @@ class AuthService:
             activo=True,
         )
         try:
-            return self._usuarios.crear(db, usuario)
+            creado = self._usuarios.crear(db, usuario)
         except IntegrityError as exc:
             db.rollback()
             if self._usuarios.obtener_por_email(db, data.email) is not None:
@@ -235,13 +240,16 @@ class AuthService:
                     status_code=409, detail="El email ya está registrado"
                 ) from exc
             raise
+        except SQLAlchemyError:
+            db.rollback()
+            raise HTTPException(503, "No se pudo completar el registro") from None
+        return self.construir_auth_response(creado, token)
 
     def login(self, db: Session, data: LoginSolicitud) -> AuthRespuesta:
+        token = self._login_cloud(data.email, data.password)
         usuario = self._usuarios.obtener_por_email(db, data.email)
 
-        if usuario is None or not verificar_password(
-            data.password, usuario.password_hash
-        ):
+        if usuario is None:
             raise HTTPException(
                 status_code=401, detail="Credenciales inválidas"
             )
@@ -251,15 +259,57 @@ class AuthService:
                 status_code=403, detail="El usuario está inactivo"
             )
 
-        return self.construir_auth_response(usuario)
+        return self.construir_auth_response(usuario, token)
+
+    def _solicitar_cloud(self, ruta: str, email: str, password: str) -> httpx.Response:
+        try:
+            respuesta = cloud_client.solicitar(ruta, email, password)
+        except (httpx.RequestError, httpx.InvalidURL, ValueError):
+            raise HTTPException(503, "Autenticación Cloud no disponible") from None
+        if respuesta.status_code == 401:
+            raise HTTPException(401, "Credenciales inválidas")
+        return respuesta
+
+    def _registrar_credenciales_cloud(self, email: str, password: str) -> None:
+        respuesta = self._solicitar_cloud("registro", email, password)
+        # Un reintento tras fallo local solo se completa probando la contraseña.
+        if respuesta.status_code == 409:
+            return
+        try:
+            if respuesta.status_code != 201:
+                raise ValueError()
+            datos = respuesta.json()
+            if (not isinstance(datos, dict) or datos.get("usuario") != email
+                    or type(datos.get("id")) is not int or datos["id"] <= 0):
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise HTTPException(503, "Autenticación Cloud no disponible") from None
+
+    def _login_cloud(self, email: str, password: str) -> str:
+        respuesta = self._solicitar_cloud("login", email, password)
+        try:
+            if respuesta.status_code != 200:
+                raise ValueError()
+            datos = respuesta.json()
+            if (not isinstance(datos, dict) or datos.get("token_type") != "bearer"
+                    or not isinstance(datos.get("access_token"), str)
+                    or type(datos.get("expires_in")) is not int or datos["expires_in"] <= 0):
+                raise ValueError()
+            token = datos["access_token"]
+            identidad = validar_token_cloud(token)
+            if identidad["usuario"] != email:
+                raise ValueError()
+        except (jwt.InvalidTokenError, ValueError, TypeError, OverflowError):
+            raise HTTPException(503, "Autenticación Cloud no disponible") from None
+        return token
 
     def usuario_actual(self, usuario: Usuario) -> UsuarioRespuesta:
         """Proyecta el usuario autenticado al DTO de salida sin datos sensibles."""
         return UsuarioRespuesta.model_validate(usuario)
 
-    def construir_auth_response(self, usuario: Usuario) -> AuthRespuesta:
+    def construir_auth_response(self, usuario: Usuario, token: str) -> AuthRespuesta:
         return AuthRespuesta(
-            access_token=generar_token(usuario.id, usuario.rol_id, usuario.rol.nombre),
+            access_token=token,
             token_type="bearer",
             rol=usuario.rol.nombre,
             usuario=UsuarioRespuesta.model_validate(usuario),

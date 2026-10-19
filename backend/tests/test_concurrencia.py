@@ -46,7 +46,8 @@ def test_registros_simultaneos_devuelven_conflicto(sesiones, monkeypatch):
         return usuario
 
     monkeypatch.setattr(servicio._usuarios, "obtener_por_email", consultar)
-    monkeypatch.setattr("app.services.usuarios_service.hashear_password", lambda _: "hash")
+    monkeypatch.setattr(servicio, "_registrar_credenciales_cloud", lambda *_: None)
+    monkeypatch.setattr(servicio, "_login_cloud", lambda *_: "token-cloud-simulado")
     datos = UsuarioCrear(email="igual@ejemplo.com", password="password",
                          nombre="Ana", apellido="Perez", rol_id=1)
 
@@ -113,8 +114,8 @@ def sesiones_pg():
                               estado=EstadoEmergencia.ESPERA_OFERTAS))
             db.add(Organizacion(id=1, nombre="ONG"))
             db.flush()
-            db.add_all([LoteNecesidad(id=n, emergencia_id=1, tipo="Agua", cantidad=10)
-                        for n in (1, 2)])
+            db.add_all([LoteNecesidad(emergencia_id=1, tipo="Agua", cantidad=10)
+                        for _ in range(2)])
             db.add(OfertaAyuda(id=1, emergencia_id=1, organizacion_id=1))
             db.commit()
         yield fabrica
@@ -137,7 +138,8 @@ def test_publicacion_impide_escritura_que_leyo_estado_anterior(sesiones_pg):
             leida.set()
             assert continuar.wait(5)
             with pytest.raises(HTTPException) as error:
-                LoteService().crear_lote(db, 1, LoteNecesidadCrear(tipo="Agua", cantidad=1))
+                asyncio.run(LoteService().crear_lote(
+                    db, 1, LoteNecesidadCrear(tipo="Agua", cantidad=1)))
             assert error.value.status_code == 409
 
     with ThreadPoolExecutor(max_workers=1) as ejecutor:
@@ -173,7 +175,8 @@ def test_publicacion_espera_una_escritura_de_lotes_ya_validada(sesiones_pg, monk
 
     def agregar():
         with sesiones_pg() as db:
-            return lotes.crear_lote(db, 1, LoteNecesidadCrear(tipo="Agua", cantidad=3))
+            return asyncio.run(lotes.crear_lote(
+                db, 1, LoteNecesidadCrear(tipo="Agua", cantidad=3)))
 
     def publicar():
         with sesiones_pg() as db:

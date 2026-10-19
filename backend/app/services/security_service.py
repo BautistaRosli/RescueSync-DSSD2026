@@ -1,5 +1,4 @@
 import os
-from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
@@ -9,14 +8,8 @@ JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET:
     raise RuntimeError("Debe configurar JWT_SECRET antes de iniciar la API")
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_MINUTES_POR_DEFECTO = 60
-
-
-def expiracion_minutes() -> int:
-    try:
-        return int(os.getenv("JWT_EXPIRATION_MINUTES", "60"))
-    except ValueError:
-        return JWT_EXPIRATION_MINUTES_POR_DEFECTO
+JWT_ISSUER = os.getenv("JWT_ISSUER", "rescuesync-cloud")
+JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "rescuesync-backend")
 
 
 def hashear_password(password: str) -> str:
@@ -41,13 +34,15 @@ def verificar_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def generar_token(usuario_id: int, rol_id: int, rol_nombre: str) -> str:
-    emitido = datetime.now(timezone.utc)
-    payload = {
-        "sub": str(usuario_id),
-        "rol": rol_nombre,
-        "rol_id": rol_id,
-        "iat": emitido,
-        "exp": emitido + timedelta(minutes=expiracion_minutes()),
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+def validar_token_cloud(token: str) -> dict:
+    """Valida la identidad remota; los permisos siempre salen de la base local."""
+    datos = jwt.decode(
+        token, JWT_SECRET, algorithms=[JWT_ALGORITHM],
+        issuer=JWT_ISSUER, audience=JWT_AUDIENCE,
+        options={"require": ["exp", "iat", "sub", "usuario", "iss", "aud"]},
+    )
+    if (not isinstance(datos["sub"], str) or not datos["sub"].strip()
+            or not isinstance(datos["usuario"], str) or not datos["usuario"].strip()
+            or type(datos["iat"]) is not int or type(datos["exp"]) is not int):
+        raise jwt.InvalidTokenError("Identidad Cloud inválida")
+    return datos

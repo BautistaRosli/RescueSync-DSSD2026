@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Usuario
 from ..repositories import UsuarioRepository
-from ..services.security_service import JWT_ALGORITHM, JWT_SECRET
+from ..services.security_service import validar_token_cloud
 from ..services.permisos_service import denegar
 
 portador = HTTPBearer(auto_error=False)
@@ -26,18 +26,10 @@ def usuario_actual(
     if credenciales is None:
         raise error
     try:
-        datos = jwt.decode(
-            credenciales.credentials,
-            JWT_SECRET,
-            algorithms=[JWT_ALGORITHM],
-            options={"require": ["exp", "sub"]},
-        )
-        identificador = int(datos["sub"])
-        if identificador <= 0:
-            raise ValueError()
+        datos = validar_token_cloud(credenciales.credentials)
     except (jwt.InvalidTokenError, ValueError, TypeError, OverflowError):
         raise error from None
-    usuario = UsuarioRepository().obtener_por_id(db, identificador)
+    usuario = UsuarioRepository().obtener_por_email(db, datos["usuario"])
     if usuario is None:
         raise error
     if not usuario.activo:

@@ -36,6 +36,7 @@ services:
       - BONITA_URL=http://host.docker.internal:8080/bonita
       - BONITA_USER=install
       - BONITA_PASSWORD=install
+      - CLOUD_API_URL=${CLOUD_API_URL:-http://host.docker.internal:8002}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -59,20 +60,6 @@ services:
       - /app/node_modules
     depends_on:
       - backend
-    networks:
-      - app-network
-
-  api-sistema-nacional:
-    build:
-      context: ./api-sistema-nacional
-      dockerfile: Dockerfile
-    container_name: api_sistema_nacional
-    restart: always
-    ports:
-      - "8001:8001"
-    volumes:
-      - ./api-sistema-nacional:/app
-      - /app/__pycache__
     networks:
       - app-network
 

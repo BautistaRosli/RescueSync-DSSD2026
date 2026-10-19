@@ -18,8 +18,7 @@ auth_service = AuthService()
 
 @router.post("/registro", response_model=AuthRespuesta, status_code=201)
 def registrar_usuario(data: UsuarioCrear, db: Session = Depends(get_db)):
-    nuevo_usuario = auth_service.registrar_usuario(db, data)
-    return auth_service.construir_auth_response(nuevo_usuario)
+    return auth_service.registrar_usuario(db, data)
 
 
 @router.post("/login", response_model=AuthRespuesta)
