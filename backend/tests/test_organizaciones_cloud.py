@@ -6,6 +6,7 @@ import httpx
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.integrations import cloud_client
 from app.models import Organizacion
 from app.services.permisos_service import COORDINADOR, ONG
 from test_permisos_api import cabecera, entorno, estado
@@ -19,6 +20,7 @@ IDENTIDAD_CLOUD = {"id": 900, "cuit": ALTA_ONG["cuit"],
 
 @pytest.fixture
 def entorno_ong(entorno, monkeypatch):
+    monkeypatch.setattr(cloud_client, "_sesion_aplicacion", None, raising=False)
     remoto = Mock(return_value=httpx.Response(201, json=IDENTIDAD_CLOUD))
 
     def solicitar(url, *, json, timeout, headers=None):
