@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Usuario
 from ..repositories import UsuarioRepository
-from ..services.security_service import validar_token_cloud
+from ..services.security_service import validar_token_local
 from ..services.permisos_service import denegar
 
 portador = HTTPBearer(auto_error=False)
@@ -26,10 +26,10 @@ def usuario_actual(
     if credenciales is None:
         raise error
     try:
-        datos = validar_token_cloud(credenciales.credentials)
+        datos = validar_token_local(credenciales.credentials)
     except (jwt.InvalidTokenError, ValueError, TypeError, OverflowError):
         raise error from None
-    usuario = UsuarioRepository().obtener_por_email(db, datos["usuario"])
+    usuario = UsuarioRepository().obtener_por_id(db, int(datos["sub"]))
     if usuario is None:
         raise error
     if not usuario.activo:

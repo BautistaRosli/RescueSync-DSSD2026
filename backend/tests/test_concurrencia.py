@@ -46,8 +46,6 @@ def test_registros_simultaneos_devuelven_conflicto(sesiones, monkeypatch):
         return usuario
 
     monkeypatch.setattr(servicio._usuarios, "obtener_por_email", consultar)
-    monkeypatch.setattr(servicio, "_registrar_credenciales_cloud", lambda *_: None)
-    monkeypatch.setattr(servicio, "_login_cloud", lambda *_: "token-cloud-simulado")
     datos = UsuarioCrear(email="igual@ejemplo.com", password="password",
                          nombre="Ana", apellido="Perez", rol_id=1)
 

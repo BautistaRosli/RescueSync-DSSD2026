@@ -20,12 +20,20 @@ IDENTIDAD_CLOUD = {"id": 900, "cuit": ALTA_ONG["cuit"],
 @pytest.fixture
 def entorno_ong(entorno, monkeypatch):
     remoto = Mock(return_value=httpx.Response(201, json=IDENTIDAD_CLOUD))
-    monkeypatch.setattr(httpx, "post", remoto)
+
+    def solicitar(url, *, json, timeout, headers=None):
+        if url.endswith("/auth/login"):
+            assert json == {"usuario": "aplicacion-prueba", "password": "credencial-aplicacion-prueba"}
+            assert timeout == 10.0
+            return httpx.Response(200, json={"access_token": "token-app-ong", "token_type": "bearer", "expires_in": 3600})
+        return remoto(url, json=json, timeout=timeout, headers=headers)
+
+    monkeypatch.setattr(httpx, "post", solicitar)
     monkeypatch.setenv("CLOUD_API_URL", "https://cloud.example.test/base/")
     return entorno[0], entorno[1], remoto
 
 
-def test_registra_ong_cloud_antes_de_guardar_y_reenvia_token(entorno_ong):
+def test_registra_ong_cloud_antes_de_guardar_con_token_app(entorno_ong):
     cliente, sesiones, remoto = entorno_ong
     encabezados = cabecera(COORDINADOR)
 
@@ -42,7 +50,7 @@ def test_registra_ong_cloud_antes_de_guardar_y_reenvia_token(entorno_ong):
         "https://cloud.example.test/base/ongs/registro",
         json={"cuit": ALTA_ONG["cuit"], "razon_social": ALTA_ONG["nombre"],
               "email": ALTA_ONG["email"]},
-        headers=encabezados, timeout=10.0)
+        headers={"Authorization": "Bearer token-app-ong"}, timeout=10.0)
     with sesiones() as db:
         creada = db.query(Organizacion).filter_by(nombre=ALTA_ONG["nombre"]).one()
         assert creada.email == ALTA_ONG["email"] and creada.id != 900
@@ -67,7 +75,7 @@ def test_ong_requiere_cuit_y_email_antes_de_cloud(entorno_ong, campo, valor):
     remoto.assert_not_called()
 
 
-@pytest.mark.parametrize("estado_cloud,esperado", [(409, 409), (401, 401), (403, 403),
+@pytest.mark.parametrize("estado_cloud,esperado", [(409, 409), (401, 503), (403, 503),
                                                      (500, 503), (503, 503), (302, 503)])
 def test_rechazo_cloud_no_crea_local_ni_filtra_detalles(entorno_ong, estado_cloud, esperado):
     cliente, sesiones, remoto = entorno_ong

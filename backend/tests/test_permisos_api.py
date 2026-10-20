@@ -74,6 +74,8 @@ CASOS = [
 @pytest.fixture
 def entorno(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-aplicacion-prueba")
     motor = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(motor)
     sesiones = sessionmaker(motor, expire_on_commit=False)
@@ -118,11 +120,9 @@ def entorno(monkeypatch):
     def cloud_simulado(url, *, json, timeout, headers=None):
         if url.endswith("/ongs/registro"):
             return httpx.Response(201, json={"id": 900, **json})
-        if url.endswith("/auth/registro"):
-            return httpx.Response(201, json={"id": 900, "usuario": json["usuario"]})
-        if json["password"] != ALTA["password"]:
-            return httpx.Response(401)
-        return httpx.Response(200, json={"access_token": token_cloud(json["usuario"]),
+        assert url.endswith("/auth/login")
+        assert json == {"usuario": "aplicacion-prueba", "password": "credencial-aplicacion-prueba"}
+        return httpx.Response(200, json={"access_token": "token-opaco-app",
                                        "token_type": "bearer", "expires_in": 3600})
 
     monkeypatch.setattr(httpx, "post", cloud_simulado)
@@ -135,20 +135,21 @@ def entorno(monkeypatch):
     motor.dispose()
 
 
-def datos_token_cloud(email):
+def datos_token_local(email):
     ahora = datetime.now(timezone.utc)
-    return {"sub": "900", "usuario": email, "iat": ahora,
+    identificador = next((i for i in range(1, 5) if email == f"usuario{i}@example.org"), 999)
+    return {"sub": str(identificador), "iat": ahora,
             "exp": ahora + timedelta(hours=1), "iss": JWT_ISSUER,
             "aud": [JWT_AUDIENCE]}
 
 
-def token_cloud(email):
-    return jwt.encode(datos_token_cloud(email), JWT_SECRET, algorithm="HS256")
+def token_local(email):
+    return jwt.encode(datos_token_local(email), JWT_SECRET, algorithm="HS256")
 
 
 def cabecera(rol, email=None):
     identificador = ROLES.index(rol) + 1
-    return {"Authorization": f"Bearer {token_cloud(email or f'usuario{identificador}@example.org')}"}
+    return {"Authorization": f"Bearer {token_local(email or f'usuario{identificador}@example.org')}"}
 
 
 def estado(sesiones):
@@ -178,7 +179,7 @@ def test_autenticacion_todas_las_rutas(entorno, metodo, ruta, cuerpo, permitidos
     if tipo == "invalido":
         encabezados = {"Authorization": "Bearer no-es-jwt"}
     elif tipo == "vencido":
-        datos = datos_token_cloud("usuario2@example.org")
+        datos = datos_token_local("usuario2@example.org")
         datos.update(iat=datetime.now(timezone.utc) - timedelta(hours=1),
                      exp=datetime.now(timezone.utc) - timedelta(seconds=1))
         token = jwt.encode(datos, JWT_SECRET, algorithm="HS256")
@@ -331,13 +332,13 @@ def test_organizaciones_siguen_exigiendo_sesion_y_coordinador(entorno):
     ({}, "sub", "HS256", JWT_SECRET),
     ({}, None, "HS384", JWT_SECRET),
     ({}, None, "HS256", "otra-clave-de-prueba-de-al-menos-32-bytes"),
-    ({"usuario": "ausente@example.org"}, None, "HS256", JWT_SECRET),
+    ({"sub": "999"}, None, "HS256", JWT_SECRET),
     ({"exp": None}, None, "HS256", JWT_SECRET),
     ({"exp": "incorrecta"}, None, "HS256", JWT_SECRET),
     ({"exp": []}, None, "HS256", JWT_SECRET),
 ])
 def test_claims_firma_algoritmo_y_usuario(entorno, cambios, omitido, algoritmo, secreto):
-    datos = datos_token_cloud("usuario2@example.org")
+    datos = datos_token_local("usuario2@example.org")
     datos.update(cambios)
     if omitido is not None:
         del datos[omitido]
@@ -383,9 +384,8 @@ def test_auth_me_devuelve_el_usuario_que_pertenece_al_token(entorno):
         db.get(Usuario, 2).email = "renombrado@example.org"
         db.get(Usuario, 2).activo = True
         db.commit()
-    # El email firmado identifica el perfil: un token previo al cambio ya no coincide.
-    assert cliente.get("/api/v1/auth/me", headers=cabecera(COORDINADOR)).status_code == 401
-    cuerpo = cliente.get("/api/v1/auth/me", headers=cabecera(COORDINADOR, "renombrado@example.org")).json()
+    # La identidad estable es el id local, incluso cuando cambia el email.
+    cuerpo = cliente.get("/api/v1/auth/me", headers=cabecera(COORDINADOR)).json()
     assert cuerpo["id"] == 2 and cuerpo["email"] == "renombrado@example.org"
 
 

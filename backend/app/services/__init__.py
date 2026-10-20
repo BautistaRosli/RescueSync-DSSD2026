@@ -3,6 +3,7 @@ from .inventario_service import InventarioService
 from .lotes_service import LoteService
 from .ofertas_service import OfertaService
 from .security_service import (
+    generar_token,
     hashear_password,
     verificar_password,
 )
@@ -23,5 +24,6 @@ __all__ = [
     "ROLES_INICIALES",
     "RolService",
     "hashear_password",
+    "generar_token",
     "verificar_password",
 ]

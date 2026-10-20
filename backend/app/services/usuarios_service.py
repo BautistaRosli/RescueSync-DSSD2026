@@ -1,5 +1,6 @@
+import os
+
 import httpx
-import jwt
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -23,7 +24,7 @@ from ..schemas import (
     OrganizacionCrear,
     UsuarioCrear,
 )
-from .security_service import validar_token_cloud
+from .security_service import generar_token, hashear_password, verificar_password
 
 ROLES_INICIALES = [
     "OPERADOR_MUNICIPAL",
@@ -40,7 +41,7 @@ ORGANIZACION_ONU = {
     "activa": True,
 }
 
-# Los perfiles iniciales requieren credenciales creadas por separado en Cloud.
+# Sólo en development: cada cuenta de demostración usa su email como contraseña.
 USUARIOS_INICIALES = [
     {
         "email": "municipio@municipio.com",
@@ -98,10 +99,10 @@ class OrganizacionService:
         return self._obtener_organizacion_entidad(db, organizacion_id)
 
     def crear_organizacion(
-        self, db: Session, data: OrganizacionCrear, token: str
+        self, db: Session, data: OrganizacionCrear
     ) -> OrganizacionRespuesta:
         if data.tipo == "ong":
-            self._registrar_ong_cloud(data, token)
+            self._registrar_ong_cloud(data)
         try:
             creada = self._repository.crear(
                 db, Organizacion(**data.model_dump(exclude={"cuit"}))
@@ -111,15 +112,14 @@ class OrganizacionService:
             raise HTTPException(503, "No se pudo completar el registro de la organización") from None
         return OrganizacionRespuesta.model_validate(creada)
 
-    def _registrar_ong_cloud(self, data: OrganizacionCrear, token: str) -> None:
+    def _registrar_ong_cloud(self, data: OrganizacionCrear) -> None:
         try:
+            token = cloud_client.obtener_token_aplicacion()
             respuesta = cloud_client.registrar_ong(data.cuit, data.nombre, data.email, token)
-        except (httpx.RequestError, httpx.InvalidURL, ValueError):
+        except (cloud_client.AutenticacionAplicacionError, httpx.RequestError, httpx.InvalidURL, ValueError):
             raise HTTPException(503, "Registro de ONG en Cloud no disponible") from None
         if respuesta.status_code == 409:
             raise HTTPException(409, "El CUIT ya está registrado en Cloud")
-        if respuesta.status_code in (401, 403):
-            raise HTTPException(respuesta.status_code, "Cloud no autorizó el registro de la ONG")
         try:
             if respuesta.status_code != 201:
                 raise ValueError()
@@ -183,6 +183,8 @@ class AuthService:
 
     def sembrar_usuarios_iniciales(self, db: Session) -> None:
         """Inserta los usuarios base de prueba solo si no existen (idempotente)."""
+        if os.getenv("APP_ENV") != "development":
+            return
         for datos in USUARIOS_INICIALES:
             if self._usuarios.obtener_por_email(db, datos["email"]) is not None:
                 continue
@@ -202,7 +204,7 @@ class AuthService:
 
             usuario = Usuario(
                 email=datos["email"],
-                password_hash="!cloud",
+                password_hash=hashear_password(datos["email"]),
                 nombre=datos["nombre"],
                 apellido=datos["apellido"],
                 rol_id=rol.id,
@@ -249,11 +251,9 @@ class AuthService:
         if data.organizacion_id is not None:
             OrganizacionService().obtener_organizacion(db, data.organizacion_id)
 
-        self._registrar_credenciales_cloud(data.email, data.password)
-        token = self._login_cloud(data.email, data.password)
         usuario = Usuario(
             email=data.email,
-            password_hash="!cloud",
+            password_hash=hashear_password(data.password),
             nombre=data.nombre,
             apellido=data.apellido,
             rol_id=rol.id,
@@ -272,13 +272,12 @@ class AuthService:
         except SQLAlchemyError:
             db.rollback()
             raise HTTPException(503, "No se pudo completar el registro") from None
-        return self.construir_auth_response(creado, token)
+        return self.construir_auth_response(creado)
 
     def login(self, db: Session, data: LoginSolicitud) -> AuthRespuesta:
-        token = self._login_cloud(data.email, data.password)
         usuario = self._usuarios.obtener_por_email(db, data.email)
 
-        if usuario is None:
+        if usuario is None or not verificar_password(data.password, usuario.password_hash):
             raise HTTPException(
                 status_code=401, detail="Credenciales inválidas"
             )
@@ -288,57 +287,15 @@ class AuthService:
                 status_code=403, detail="El usuario está inactivo"
             )
 
-        return self.construir_auth_response(usuario, token)
-
-    def _solicitar_cloud(self, ruta: str, email: str, password: str) -> httpx.Response:
-        try:
-            respuesta = cloud_client.solicitar(ruta, email, password)
-        except (httpx.RequestError, httpx.InvalidURL, ValueError):
-            raise HTTPException(503, "Autenticación Cloud no disponible") from None
-        if respuesta.status_code == 401:
-            raise HTTPException(401, "Credenciales inválidas")
-        return respuesta
-
-    def _registrar_credenciales_cloud(self, email: str, password: str) -> None:
-        respuesta = self._solicitar_cloud("registro", email, password)
-        # Un reintento tras fallo local solo se completa probando la contraseña.
-        if respuesta.status_code == 409:
-            return
-        try:
-            if respuesta.status_code != 201:
-                raise ValueError()
-            datos = respuesta.json()
-            if (not isinstance(datos, dict) or datos.get("usuario") != email
-                    or type(datos.get("id")) is not int or datos["id"] <= 0):
-                raise ValueError()
-        except (ValueError, TypeError):
-            raise HTTPException(503, "Autenticación Cloud no disponible") from None
-
-    def _login_cloud(self, email: str, password: str) -> str:
-        respuesta = self._solicitar_cloud("login", email, password)
-        try:
-            if respuesta.status_code != 200:
-                raise ValueError()
-            datos = respuesta.json()
-            if (not isinstance(datos, dict) or datos.get("token_type") != "bearer"
-                    or not isinstance(datos.get("access_token"), str)
-                    or type(datos.get("expires_in")) is not int or datos["expires_in"] <= 0):
-                raise ValueError()
-            token = datos["access_token"]
-            identidad = validar_token_cloud(token)
-            if identidad["usuario"] != email:
-                raise ValueError()
-        except (jwt.InvalidTokenError, ValueError, TypeError, OverflowError):
-            raise HTTPException(503, "Autenticación Cloud no disponible") from None
-        return token
+        return self.construir_auth_response(usuario)
 
     def usuario_actual(self, usuario: Usuario) -> UsuarioRespuesta:
         """Proyecta el usuario autenticado al DTO de salida sin datos sensibles."""
         return UsuarioRespuesta.model_validate(usuario)
 
-    def construir_auth_response(self, usuario: Usuario, token: str) -> AuthRespuesta:
+    def construir_auth_response(self, usuario: Usuario) -> AuthRespuesta:
         return AuthRespuesta(
-            access_token=token,
+            access_token=generar_token(usuario.id, usuario.rol_id, usuario.rol.nombre),
             token_type="bearer",
             rol=usuario.rol.nombre,
             usuario=UsuarioRespuesta.model_validate(usuario),
