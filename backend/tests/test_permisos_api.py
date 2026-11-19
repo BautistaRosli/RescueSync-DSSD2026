@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock
 
 import jwt
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -25,7 +26,7 @@ from app.models import (
     Usuario,
 )
 from app.services.permisos_service import OPERADOR, COORDINADOR, ONG, AUDITOR
-from app.services.security_service import JWT_SECRET, generar_token, hashear_password
+from app.services.security_service import JWT_AUDIENCE, JWT_ISSUER, JWT_SECRET, hashear_password
 
 ROLES = [OPERADOR, COORDINADOR, ONG, AUDITOR]
 ALTA = {"nombre": "Nombre", "apellido": "Apellido", "email": "alta@example.org",
@@ -62,7 +63,8 @@ CASOS = [
     ("PATCH", "/organizaciones/1/inventario/1", RECURSO, [ONG]),
     ("DELETE", "/organizaciones/1/inventario/1", None, [ONG]),
     ("GET", "/organizaciones/1", None, [COORDINADOR, ONG, AUDITOR]),
-    ("POST", "/organizaciones", {"nombre": "Nueva"}, [COORDINADOR]),
+    ("POST", "/organizaciones", {"nombre": "Nueva", "cuit": "30-12345678-9",
+                               "email": "contacto@example.org"}, [COORDINADOR]),
     ("PATCH", "/organizaciones/1", {"nombre": "Modificada"}, [COORDINADOR]),
     ("POST", "/bonita/test-login", None, [COORDINADOR]),
     ("POST", "/bonita/test-variables", {"case_id": 10, "variables": {}}, [COORDINADOR]),
@@ -72,6 +74,8 @@ CASOS = [
 @pytest.fixture
 def entorno(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-aplicacion-prueba")
     motor = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(motor)
     sesiones = sessionmaker(motor, expire_on_commit=False)
@@ -112,6 +116,16 @@ def entorno(monkeypatch):
     monkeypatch.setattr("app.services.emergencias_service.bonita_client.set_case_variables", variables)
     monkeypatch.setattr("app.api.routes.bonita_api.verificar_conexion", diagnostico)
     monkeypatch.setattr("app.api.routes.bonita_api.setear_variables_prueba", variables)
+
+    def cloud_simulado(url, *, json, timeout, headers=None):
+        if url.endswith("/ongs/registro"):
+            return httpx.Response(201, json={"id": 900, **json})
+        assert url.endswith("/auth/login")
+        assert json == {"usuario": "aplicacion-prueba", "password": "credencial-aplicacion-prueba"}
+        return httpx.Response(200, json={"access_token": "token-opaco-app",
+                                       "token_type": "bearer", "expires_in": 3600})
+
+    monkeypatch.setattr(httpx, "post", cloud_simulado)
     app.dependency_overrides[get_db] = obtener_db
     # Sin lifespan: la siembra utiliza exclusivamente nuestra base en memoria.
     cliente = TestClient(app)
@@ -121,9 +135,21 @@ def entorno(monkeypatch):
     motor.dispose()
 
 
-def cabecera(rol):
+def datos_token_local(email):
+    ahora = datetime.now(timezone.utc)
+    identificador = next((i for i in range(1, 5) if email == f"usuario{i}@example.org"), 999)
+    return {"sub": str(identificador), "iat": ahora,
+            "exp": ahora + timedelta(hours=1), "iss": JWT_ISSUER,
+            "aud": [JWT_AUDIENCE]}
+
+
+def token_local(email):
+    return jwt.encode(datos_token_local(email), JWT_SECRET, algorithm="HS256")
+
+
+def cabecera(rol, email=None):
     identificador = ROLES.index(rol) + 1
-    return {"Authorization": f"Bearer {generar_token(identificador, identificador, rol)}"}
+    return {"Authorization": f"Bearer {token_local(email or f'usuario{identificador}@example.org')}"}
 
 
 def estado(sesiones):
@@ -153,7 +179,10 @@ def test_autenticacion_todas_las_rutas(entorno, metodo, ruta, cuerpo, permitidos
     if tipo == "invalido":
         encabezados = {"Authorization": "Bearer no-es-jwt"}
     elif tipo == "vencido":
-        token = jwt.encode({"sub": "2", "exp": datetime.now(timezone.utc) - timedelta(seconds=1)}, JWT_SECRET, algorithm="HS256")
+        datos = datos_token_local("usuario2@example.org")
+        datos.update(iat=datetime.now(timezone.utc) - timedelta(hours=1),
+                     exp=datetime.now(timezone.utc) - timedelta(seconds=1))
+        token = jwt.encode(datos, JWT_SECRET, algorithm="HS256")
         encabezados = {"Authorization": f"Bearer {token}"}
     elif tipo == "inactivo":
         with sesiones() as db:
@@ -293,23 +322,30 @@ def test_organizaciones_siguen_exigiendo_sesion_y_coordinador(entorno):
     assert cliente.patch("/api/v1/organizaciones/1", json={"nombre": "Modificada"},
                          headers=cabecera(AUDITOR)).status_code == 403
     assert cliente.get("/api/v1/organizaciones/1").status_code == 401
-    assert cliente.post("/api/v1/organizaciones", json={"nombre": "Nueva"},
+    assert cliente.post("/api/v1/organizaciones", json={"nombre": "Nueva", "cuit": "30-12345678-9",
+                                                      "email": "contacto@example.org"},
                         headers=cabecera(COORDINADOR)).status_code == 201
 
 
-@pytest.mark.parametrize("datos,algoritmo,secreto", [
-    ({"sub": "2"}, "HS256", JWT_SECRET),
-    ({"exp": 9999999999}, "HS256", JWT_SECRET),
-    ({"sub": "2", "exp": 9999999999}, "HS384", JWT_SECRET),
-    ({"sub": "2", "exp": 9999999999}, "HS256", "otra-clave-de-prueba-de-al-menos-32-bytes"),
-    ({"sub": "999", "exp": 9999999999}, "HS256", JWT_SECRET),
-    ({"sub": "2", "exp": None}, "HS256", JWT_SECRET),
-    ({"sub": "2", "exp": "incorrecta"}, "HS256", JWT_SECRET),
-    ({"sub": "2", "exp": []}, "HS256", JWT_SECRET),
+@pytest.mark.parametrize("cambios,omitido,algoritmo,secreto", [
+    ({}, "exp", "HS256", JWT_SECRET),
+    ({}, "sub", "HS256", JWT_SECRET),
+    ({}, None, "HS384", JWT_SECRET),
+    ({}, None, "HS256", "otra-clave-de-prueba-de-al-menos-32-bytes"),
+    ({"sub": "999"}, None, "HS256", JWT_SECRET),
+    ({"exp": None}, None, "HS256", JWT_SECRET),
+    ({"exp": "incorrecta"}, None, "HS256", JWT_SECRET),
+    ({"exp": []}, None, "HS256", JWT_SECRET),
 ])
-def test_claims_firma_algoritmo_y_usuario(entorno, datos, algoritmo, secreto):
+def test_claims_firma_algoritmo_y_usuario(entorno, cambios, omitido, algoritmo, secreto):
+    datos = datos_token_local("usuario2@example.org")
+    datos.update(cambios)
+    if omitido is not None:
+        del datos[omitido]
     token = jwt.encode(datos, secreto, algorithm=algoritmo)
-    assert entorno[0].get("/api/v1/emergencias", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+    respuesta = entorno[0].get("/api/v1/emergencias", headers={"Authorization": f"Bearer {token}"})
+    assert respuesta.status_code == 401
+    assert respuesta.headers["WWW-Authenticate"] == "Bearer"
 
 
 def test_endpoints_publicos_y_login(entorno):
@@ -348,6 +384,7 @@ def test_auth_me_devuelve_el_usuario_que_pertenece_al_token(entorno):
         db.get(Usuario, 2).email = "renombrado@example.org"
         db.get(Usuario, 2).activo = True
         db.commit()
+    # La identidad estable es el id local, incluso cuando cambia el email.
     cuerpo = cliente.get("/api/v1/auth/me", headers=cabecera(COORDINADOR)).json()
     assert cuerpo["id"] == 2 and cuerpo["email"] == "renombrado@example.org"
 

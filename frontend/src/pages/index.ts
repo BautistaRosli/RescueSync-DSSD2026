@@ -1,5 +1,6 @@
 export { LoginPage } from './LoginPage'
-export { RegistroPage } from './RegistroPage'
+export { RegistroUsuarioPage } from './RegistroUsuarioPage'
+export { RegistroOngPage } from './RegistroOngPage'
 export { RegistrarEmergenciaPage } from './RegistrarEmergenciaPage'
 export { EmergenciasPage } from './EmergenciasPage'
 export { PanelOngPage } from './PanelOngPage'

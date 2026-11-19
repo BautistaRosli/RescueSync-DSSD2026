@@ -1,5 +1,6 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from ..dto import LoteNecesidadRespuesta
 from ..integrations.bonita.client import BonitaClientError, bonita_client
@@ -32,8 +33,9 @@ class LoteService:
     async def crear_lote(
         self, db: Session, emergencia_id: int, data: LoteNecesidadCrear
     ) -> LoteNecesidadRespuesta:
-        emergencia = self._emergencias.obtener_emergencia_entidad(
-            db, emergencia_id
+        emergencia = await run_in_threadpool(
+            self._emergencias.obtener_emergencia_entidad,
+            db, emergencia_id, bloquear=True,
         )
         if emergencia.publicada:
             raise HTTPException(

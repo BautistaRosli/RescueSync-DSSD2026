@@ -1,5 +1,8 @@
+import os
+
+import httpx
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..dto import (
@@ -9,6 +12,7 @@ from ..dto import (
     UsuarioRespuesta,
 )
 from ..models import Organizacion, Rol, Usuario
+from ..integrations import cloud_client
 from ..repositories import (
     OrganizacionRepository,
     RolRepository,
@@ -37,7 +41,7 @@ ORGANIZACION_ONU = {
     "activa": True,
 }
 
-# La contraseña de cada usuario inicial es su propio email.
+# Sólo en development: cada cuenta de demostración usa su email como contraseña.
 USUARIOS_INICIALES = [
     {
         "email": "municipio@municipio.com",
@@ -97,8 +101,36 @@ class OrganizacionService:
     def crear_organizacion(
         self, db: Session, data: OrganizacionCrear
     ) -> OrganizacionRespuesta:
-        creada = self._repository.crear(db, Organizacion(**data.model_dump()))
+        if data.tipo == "ong":
+            self._registrar_ong_cloud(data)
+        try:
+            creada = self._repository.crear(
+                db, Organizacion(**data.model_dump(exclude={"cuit"}))
+            )
+        except SQLAlchemyError:
+            db.rollback()
+            raise HTTPException(503, "No se pudo completar el registro de la organización") from None
         return OrganizacionRespuesta.model_validate(creada)
+
+    def _registrar_ong_cloud(self, data: OrganizacionCrear) -> None:
+        try:
+            token = cloud_client.obtener_token_aplicacion()
+            respuesta = cloud_client.registrar_ong(data.cuit, data.nombre, data.email, token)
+        except (cloud_client.AutenticacionAplicacionError, httpx.RequestError, httpx.InvalidURL, ValueError):
+            raise HTTPException(503, "Registro de ONG en Cloud no disponible") from None
+        if respuesta.status_code == 409:
+            raise HTTPException(409, "El CUIT ya está registrado en Cloud")
+        try:
+            if respuesta.status_code != 201:
+                raise ValueError()
+            datos = respuesta.json()
+            identidad = {"cuit": data.cuit, "razon_social": data.nombre.strip(), "email": data.email}
+            if (not isinstance(datos, dict) or type(datos.get("id")) is not int
+                    or datos["id"] <= 0
+                    or any(datos.get(campo) != valor for campo, valor in identidad.items())):
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise HTTPException(503, "Registro de ONG en Cloud no disponible") from None
 
     def actualizar_organizacion(
         self, db: Session, organizacion_id: int, data: OrganizacionActualizar
@@ -151,6 +183,8 @@ class AuthService:
 
     def sembrar_usuarios_iniciales(self, db: Session) -> None:
         """Inserta los usuarios base de prueba solo si no existen (idempotente)."""
+        if os.getenv("APP_ENV") != "development":
+            return
         for datos in USUARIOS_INICIALES:
             if self._usuarios.obtener_por_email(db, datos["email"]) is not None:
                 continue
@@ -202,7 +236,7 @@ class AuthService:
                 raise
             return organizacion
 
-    def registrar_usuario(self, db: Session, data: UsuarioCrear) -> Usuario:
+    def registrar_usuario(self, db: Session, data: UsuarioCrear) -> AuthRespuesta:
         if self._usuarios.obtener_por_email(db, data.email) is not None:
             raise HTTPException(
                 status_code=409, detail="El email ya está registrado"
@@ -227,7 +261,7 @@ class AuthService:
             activo=True,
         )
         try:
-            return self._usuarios.crear(db, usuario)
+            creado = self._usuarios.crear(db, usuario)
         except IntegrityError as exc:
             db.rollback()
             if self._usuarios.obtener_por_email(db, data.email) is not None:
@@ -235,13 +269,15 @@ class AuthService:
                     status_code=409, detail="El email ya está registrado"
                 ) from exc
             raise
+        except SQLAlchemyError:
+            db.rollback()
+            raise HTTPException(503, "No se pudo completar el registro") from None
+        return self.construir_auth_response(creado)
 
     def login(self, db: Session, data: LoginSolicitud) -> AuthRespuesta:
         usuario = self._usuarios.obtener_por_email(db, data.email)
 
-        if usuario is None or not verificar_password(
-            data.password, usuario.password_hash
-        ):
+        if usuario is None or not verificar_password(data.password, usuario.password_hash):
             raise HTTPException(
                 status_code=401, detail="Credenciales inválidas"
             )
