@@ -40,6 +40,21 @@ Solo se necesita tener instalado Docker (con Docker Desktop o Docker Engine en W
    ```
    *(Si además querés borrar la persistencia de la BD, agregá `-v`)*
 
+### Servicio de prioridad en Kubernetes
+
+El microservicio `rescuesync-prioridad` (stateless, `POST /prioridad`, HPA de 1 a 5
+réplicas) se despliega con los manifiestos de `k8s/`. Los pasos completos
+(prerrequisitos, Metrics Server, despliegue, pruebas y escalado) están en
+[`DEPLOY.md`](DEPLOY.md).
+
+```bash
+kubectl apply -f k8s/
+kubectl get pods,hpa -n rescuesync
+```
+
+El `docker-compose.yml` es únicamente para desarrollo local y no forma parte del
+entregable de Kubernetes.
+
 ### Autenticación y permisos de la API
 
 Las operaciones de negocio requieren `Authorization: Bearer <token>`. El login
