@@ -20,6 +20,7 @@ export interface EmergenciaCreada {
   descripcion_inicial: string
   fecha_hora_registro: string
   publicada: boolean
+  prioridad?: number | null
 }
 
 export interface LoteNecesidad {

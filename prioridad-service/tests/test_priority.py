@@ -23,6 +23,12 @@ def test_alta_norte_mayor_que_baja_centro() -> None:
     assert calcular_prioridad("alta", "norte") > calcular_prioridad("baja", "centro")
 
 
+def test_extremos_del_rango() -> None:
+    """El rango 1-10 es alcanzable en ambos extremos."""
+    assert calcular_prioridad("baja", "centro") == 1
+    assert calcular_prioridad("alta", "norte") == 10
+
+
 def test_determinismo() -> None:
     """La misma entrada produce siempre la misma salida."""
     for gravedad, zona in itertools.product(GRAVEDADES, ZONAS):

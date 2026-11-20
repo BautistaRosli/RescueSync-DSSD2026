@@ -76,7 +76,7 @@ async def crear_emergencia(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(OPERADOR)),
 ):
-    respuesta = servicio_emergencias.crear_emergencia(
+    respuesta = await servicio_emergencias.crear_emergencia(
         db, data, background_tasks=background_tasks
     )
 
@@ -88,7 +88,9 @@ async def crear_emergencia(
             f"{respuesta.id}: {exc.detail}"
         )
 
-    return servicio_emergencias.obtener_emergencia(db, respuesta.id)
+    resultado = servicio_emergencias.obtener_emergencia(db, respuesta.id)
+    resultado.prioridad = respuesta.prioridad
+    return resultado
 
 
 @router.patch("/{emergencia_id}", response_model=EmergenciaRespuesta)

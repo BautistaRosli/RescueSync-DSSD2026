@@ -110,10 +110,12 @@ def entorno(monkeypatch):
     bonita = AsyncMock(return_value=42)
     variables = AsyncMock(return_value=[])
     diagnostico = AsyncMock(return_value={"ok": True})
+    prioridad = AsyncMock(return_value=7)
     monkeypatch.setattr("app.services.emergencias_service.notificar_nueva_emergencia", correo)
     monkeypatch.setattr("app.services.ofertas_service.notificar_adjudicacion", adjudicacion)
     monkeypatch.setattr("app.services.emergencias_service.bonita_client.start_emergency_process", bonita)
     monkeypatch.setattr("app.services.emergencias_service.bonita_client.set_case_variables", variables)
+    monkeypatch.setattr("app.services.emergencias_service.prioridad_client.obtener_prioridad", prioridad)
     monkeypatch.setattr("app.api.routes.bonita_api.verificar_conexion", diagnostico)
     monkeypatch.setattr("app.api.routes.bonita_api.setear_variables_prueba", variables)
 
@@ -129,7 +131,7 @@ def entorno(monkeypatch):
     app.dependency_overrides[get_db] = obtener_db
     # Sin lifespan: la siembra utiliza exclusivamente nuestra base en memoria.
     cliente = TestClient(app)
-    yield cliente, sesiones, (correo, adjudicacion, bonita, variables, diagnostico)
+    yield cliente, sesiones, (correo, adjudicacion, bonita, variables, diagnostico, prioridad)
     cliente.close()
     app.dependency_overrides.clear()
     motor.dispose()

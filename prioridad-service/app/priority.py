@@ -7,7 +7,7 @@ El módulo no mantiene estado global mutable, no escribe en disco y no accede
 a bases de datos.
 """
 
-GRAVEDAD_SCORE = {"baja": 2, "media": 5, "alta": 8}
+GRAVEDAD_SCORE = {"baja": 1, "media": 5, "alta": 8}
 ZONA_SCORE = {"norte": 2, "sur": 2, "este": 1, "oeste": 1, "centro": 0, "periferia": 1}
 
 

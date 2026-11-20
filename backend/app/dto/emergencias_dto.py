@@ -17,6 +17,7 @@ class EmergenciaRespuesta(EmergenciaBase):
     estado: Optional[str] = None
     bonita_case_id: Optional[str] = None
     bonita_variables_json: Optional[str] = None
+    prioridad: Optional[int] = None
     lotes: list[LoteNecesidadRespuesta] = []
 
 

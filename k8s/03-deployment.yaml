@@ -30,7 +30,8 @@ spec:
       containers:
         - name: rescuesync-prioridad
           image: emiliano754/rescuesync-prioridad:1.0.0
-          imagePullPolicy: IfNotPresent
+          # Always para que el nodo tome la imagen re-publicada con el mismo tag.
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8080

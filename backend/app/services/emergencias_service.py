@@ -11,6 +11,10 @@ from sqlalchemy.orm import Session
 from ..dto import EmergenciaRespuesta, EmergenciasPaginadas
 from ..integrations.bonita.client import BonitaClientError, bonita_client
 from ..integrations.email.service import notificar_nueva_emergencia
+from ..integrations.prioridad.client import (
+    PrioridadClientError,
+    prioridad_client,
+)
 from ..models import EstadoEmergencia, Emergencia
 from ..repositories import EmergenciaRepository, UsuarioRepository
 from ..schemas import (
@@ -68,15 +72,29 @@ class EmergenciaService:
         emergencia = self._obtener_emergencia_entidad(db, emergencia_id)
         return EmergenciaRespuesta.model_validate(emergencia)
 
-    def crear_emergencia(
+    async def crear_emergencia(
         self,
         db: Session,
         data: EmergenciaCrear,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> EmergenciaRespuesta:
+        try:
+            prioridad = await prioridad_client.obtener_prioridad(
+                data.nivel_gravedad, data.zona_afectada
+            )
+        except PrioridadClientError as exc:
+            logger.error(
+                "No se pudo obtener la prioridad de la emergencia: %s", exc
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo obtener la prioridad de la emergencia",
+            )
+
         emergencia = Emergencia(**data.model_dump())
         creada = self._repository.crear(db, emergencia)
         respuesta = EmergenciaRespuesta.model_validate(creada)
+        respuesta.prioridad = prioridad
         if background_tasks is not None:
             self._programar_notificacion(db, creada, background_tasks)
         return respuesta
