@@ -11,6 +11,7 @@ class Gravedad(str, Enum):
     alta = "alta"
     media = "media"
     baja = "baja"
+    critica = "critica"
 
 
 class PrioridadRequest(BaseModel):

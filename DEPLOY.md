@@ -29,7 +29,7 @@ Imagen publicada: `emiliano754/rescuesync-prioridad:1.0.0`.
 docker build -t emiliano754/rescuesync-prioridad:1.0.0 ./prioridad-service
 docker push emiliano754/rescuesync-prioridad:1.0.0
 ```
-
+saca el mapeo de gravedad crítica del backend, y que el microservicio acepte gravedad crítica
 ## 3. Despliegue y verificación
 
 ```bash

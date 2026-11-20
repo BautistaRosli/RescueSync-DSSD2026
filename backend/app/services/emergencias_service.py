@@ -91,10 +91,9 @@ class EmergenciaService:
                 detail="No se pudo obtener la prioridad de la emergencia",
             )
 
-        emergencia = Emergencia(**data.model_dump())
+        emergencia = Emergencia(**data.model_dump(), prioridad=prioridad)
         creada = self._repository.crear(db, emergencia)
         respuesta = EmergenciaRespuesta.model_validate(creada)
-        respuesta.prioridad = prioridad
         if background_tasks is not None:
             self._programar_notificacion(db, creada, background_tasks)
         return respuesta

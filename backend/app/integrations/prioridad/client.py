@@ -24,13 +24,13 @@ class PrioridadClient:
         `alta`, `media` y `baja`: se mapea antes de enviar.
         """
         url = os.getenv("PRIORIDAD_SERVICE_URL", URL_POR_DEFECTO).rstrip("/")
-        gravedad_servicio = "alta" if gravedad == "critica" else gravedad
+
 
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT_SEGUNDOS) as client:
                 respuesta = await client.post(
                     f"{url}/prioridad",
-                    json={"gravedad": gravedad_servicio, "zona": zona},
+                    json={"gravedad": gravedad, "zona": zona},
                 )
         except httpx.HTTPError as exc:
             logger.error("Error de conexión con el servicio de prioridad: %s", exc)
