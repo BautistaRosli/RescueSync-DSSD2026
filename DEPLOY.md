@@ -40,6 +40,13 @@ kubectl get hpa -n rescuesync           # MINPODS=1  MAXPODS=5
 kubectl describe hpa -n rescuesync rescuesync-prioridad-hpa   # cpu: X%/70%
 ```
 
+En Docker Desktop Windows, el wrapper aplica los manifiestos, espera el rollout y deja el puente
+activo **24 h** en un solo paso:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-prioridad.ps1
+```
+
 > El `Secret` versionado contiene solo un placeholder. En producción:
 > `kubectl create secret generic rescuesync-prioridad-secret -n rescuesync --from-literal=API_KEY_INTERNA='<valor-real>'`
 
@@ -48,11 +55,16 @@ kubectl describe hpa -n rescuesync rescuesync-prioridad-hpa   # cpu: X%/70%
 **Kind / Minikube / cloud:** `http://<IP-del-nodo>:30080`.
 
 **Docker Desktop en Windows:** el NodePort no se publica automáticamente en `localhost`; usar el
-puente (dejar la terminal abierta):
+script, que lanza el puente desacoplado **24 h por defecto** y lo reinicia si `kubectl` se cae:
 
-```bash
-kubectl port-forward --address 0.0.0.0 -n rescuesync svc/rescuesync-prioridad-svc 30080:80
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\port-forward-prioridad.ps1          # 24 h
+powershell -ExecutionPolicy Bypass -File .\scripts\port-forward-prioridad.ps1 -Status
+powershell -ExecutionPolicy Bypass -File .\scripts\port-forward-prioridad.ps1 -Stop
 ```
+
+`-Hours 72` cambia el plazo. Alternativa manual (queda atada a esa terminal):
+`kubectl port-forward --address 0.0.0.0 -n rescuesync svc/rescuesync-prioridad-svc 30080:80`.
 
 En otra terminal:
 

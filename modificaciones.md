@@ -299,6 +299,26 @@ rescuesync-prioridad-svc   NodePort   10.96.209.195   80:30080/TCP
 pod/rescuesync-prioridad-...   1/1   Running   0 restarts
 ```
 
+### 5.4 Puente persistente (24 h por defecto)
+
+El corte a los 10 minutos no era de Kubernetes ni del deploy: era el límite del proceso en segundo
+plano del agente. `kubectl port-forward` no tiene TTL propio, así que para que el deploy lo deje
+funcionando se agregó `scripts/port-forward-prioridad.ps1`:
+
+- Lanza `kubectl port-forward` **desacoplado** de la terminal (sobrevive al cierre de la sesión).
+- Duración por defecto: **24 h** (`-Hours 72` para otro plazo).
+- Si `kubectl` termina de forma inesperada, lo **reinicia automáticamente** a los 5 s.
+- Guarda PID y log en `%TEMP%\rescuesync-prioridad\`.
+- Comandos: sin parámetros lanza el puente; `-Status` consulta el estado; `-Stop` lo detiene.
+- El wrapper `scripts/deploy-prioridad.ps1` hace todo el deploy en un paso: aplica `k8s/`, espera
+  el rollout y lanza el puente 24 h.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-prioridad.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\port-forward-prioridad.ps1 -Status
+powershell -ExecutionPolicy Bypass -File .\scripts\port-forward-prioridad.ps1 -Stop
+```
+
 ---
 
 ## Inventario de archivos
@@ -328,6 +348,8 @@ pod/rescuesync-prioridad-...   1/1   Running   0 restarts
 | :--- | :--- | :--- |
 | `backend/app/integrations/prioridad/__init__.py` | 4 | Paquete de integración. |
 | `backend/app/integrations/prioridad/client.py` | 4 | Cliente HTTP con timeout, mapeo y validación 1–10. |
+| `scripts/port-forward-prioridad.ps1` | 5 | Puente persistente con 24 h por defecto y auto-reinicio. |
+| `scripts/deploy-prioridad.ps1` | 5 | Deploy en un paso: aplica `k8s/`, espera rollout y lanza el puente 24 h. |
 | `modificaciones.md` | 5 | Este documento. |
 
 > Los artefactos de las Fases 1–3 (`prioridad-service/`, `k8s/`, imagen) ya están versionados en git.
@@ -344,7 +366,7 @@ pod/rescuesync-prioridad-...   1/1   Running   0 restarts
 | Prioridad solo en la respuesta | Nueva columna/tabla de auditoría | El requisito pedía la solución más simple y sin auditoría histórica. |
 | `critica → alta` en el backend | Agregar `critica` al servicio | Evita romper el contrato del microservicio y mantiene la escala existente. |
 | Timeout 3 s + 503 | Reintentos o fallback local | Fallo cerrado: es preferible no registrar una emergencia sin prioridad antes que inventarla. |
-| Port-forward como puente | Publicar el NodePort en `localhost` | Docker Desktop Windows no lo publica; el port-forward es el mecanismo documentado y confiable. |
+| Port-forward automatizado | Publicar el NodePort en `localhost` | Docker Desktop Windows no lo publica; el script lo lanza desacoplado (24 h) y lo reinicia si se cae. |
 | `imagePullPolicy: Always` | Nuevo tag `1.0.1` | Se pidió mantener la versión `1.0.0`; `Always` fuerza el pull del digest nuevo. |
 
 ---
@@ -352,23 +374,19 @@ pod/rescuesync-prioridad-...   1/1   Running   0 restarts
 ## Reproducción rápida
 
 ```bash
-# 1. Clúster e imagen
-kubectl apply -f k8s/
-kubectl rollout status deployment/rescuesync-prioridad -n rescuesync
+# 1. Deploy completo: manifiestos + rollout + puente 24 h
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-prioridad.ps1
 
-# 2. Puente local
-kubectl port-forward --address 0.0.0.0 -n rescuesync svc/rescuesync-prioridad-svc 30080:80
-
-# 3. Backend con la variable de entorno
+# 2. Backend con la variable de entorno
 docker compose up -d backend
 
-# 4. Verificación directa
+# 3. Verificación directa
 curl -X POST http://localhost:30080/prioridad \
   -H "Content-Type: application/json" -d '{"gravedad":"baja","zona":"centro"}'   # 1
 curl -X POST http://localhost:30080/prioridad \
   -H "Content-Type: application/json" -d '{"gravedad":"alta","zona":"norte"}'    # 10
 
-# 5. Tests
+# 4. Tests
 pytest -q prioridad-service      # 28 passed
 ```
 
@@ -388,8 +406,8 @@ pytest -q prioridad-service      # 28 passed
 
 ### Límites conocidos
 
-- El `port-forward` debe permanecer activo para la demo; si se corta, el backend responde 503
-  (comportamiento intencional).
+- El puente se lanza con `scripts/port-forward-prioridad.ps1` (24 h por defecto y auto-reinicio);
+  si se detiene, el backend responde 503 (comportamiento intencional).
 - El `Secret` versionado contiene solo un placeholder.
 - La prioridad no queda auditada en la base de datos; solo se ve en la respuesta y en la UI.
 
