@@ -11,7 +11,8 @@ import type {
 export async function listarOfertasDeOrganizacion(
   organizacionId: number,
 ): Promise<OfertaRead[]> {
-  return apiGet<OfertaRead[]>(`/ofertas?organizacion_id=${organizacionId}`)
+  void organizacionId
+  return apiGet<OfertaRead[]>('/ofertas')
 }
 
 export async function listarOfertasDeEmergencia(

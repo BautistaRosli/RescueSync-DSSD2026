@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import {
   actualizarRecurso,
@@ -36,6 +36,7 @@ const VALORES_INICIALES = {
 }
 
 export function InventarioPage({ organizacionId }: Props) {
+  const formularioRef = useRef<HTMLFormElement>(null)
   const [recursos, setRecursos] = useState<RecursoInventario[]>([])
   const [comprometido, setComprometido] = useState<Record<string, number>>({})
   const [tipo, setTipo] = useState(VALORES_INICIALES.tipo)
@@ -136,6 +137,7 @@ export function InventarioPage({ organizacionId }: Props) {
     setUnidad(recurso.unidad ?? '')
     setDescripcion(recurso.descripcion ?? '')
     setError(null)
+    formularioRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
   async function manejarEnvio(evento: FormEvent<HTMLFormElement>) {
@@ -152,9 +154,16 @@ export function InventarioPage({ organizacionId }: Props) {
       return
     }
 
+    const cantidadTotal = Math.floor(cantidadNumero)
+    const cantidadMinima = minimoDeCantidad()
+    if (cantidadTotal < cantidadMinima) {
+      setError(`La cantidad total no puede ser menor que la cantidad comprometida (${cantidadMinima}).`)
+      return
+    }
+
     const datos = {
       tipo: tipo.trim(),
-      cantidad_total: Math.floor(cantidadNumero),
+      cantidad_total: cantidadTotal,
       unidad: unidad.trim() || null,
       descripcion: descripcion.trim() || null,
     }
@@ -176,6 +185,11 @@ export function InventarioPage({ organizacionId }: Props) {
   }
 
   async function borrar(recursoId: number) {
+    const confirmar = window.confirm(
+      '¿Querés eliminar este recurso? La acción no se puede deshacer.',
+    )
+    if (!confirmar) return
+
     setError(null)
     try {
       await eliminarRecurso(organizacionId, recursoId)
@@ -192,6 +206,16 @@ export function InventarioPage({ organizacionId }: Props) {
     return comprometido[recurso.tipo.trim().toLowerCase()] ?? 0
   }
 
+  function minimoDeCantidad(): number {
+    return Math.max(1, comprometidoEnEdicion())
+  }
+
+  function comprometidoEnEdicion(): number {
+    if (enEdicion === null) return 0
+    const recurso = recursos.find((item) => item.id === enEdicion)
+    return recurso === undefined ? 0 : comprometidoDe(recurso)
+  }
+
   return (
     <section className="flex flex-col gap-4">
       <div className={claseCard}>
@@ -204,6 +228,7 @@ export function InventarioPage({ organizacionId }: Props) {
       </div>
 
       <form
+        ref={formularioRef}
         onSubmit={manejarEnvio}
         className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl flex flex-col gap-4"
         noValidate
@@ -236,13 +261,18 @@ export function InventarioPage({ organizacionId }: Props) {
             <input
               id="inventario-cantidad"
               type="number"
-              min={1}
+              min={minimoDeCantidad()}
               value={cantidad}
               onChange={manejarCantidad}
               placeholder="5"
               required
               className={claseCampo}
             />
+            {enEdicion !== null && comprometidoEnEdicion() > 0 && (
+              <p className="mt-1 text-xs text-slate-400">
+                Mínimo comprometido: {minimoDeCantidad()}
+              </p>
+            )}
           </div>
 
           <div className="flex-1">
@@ -321,7 +351,7 @@ export function InventarioPage({ organizacionId }: Props) {
         <ul className="flex flex-col gap-3">
           {recursos.map((recurso) => {
             const usado = comprometidoDe(recurso)
-            const disponible = recurso.cantidad_total - usado
+            const disponible = Math.max(0, recurso.cantidad_total - usado)
 
             return (
               <li

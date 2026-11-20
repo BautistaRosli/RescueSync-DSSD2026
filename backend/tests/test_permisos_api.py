@@ -312,6 +312,22 @@ def test_convocatoria_cerrada_bloquea_ofertas_pero_no_finalizar(entorno):
     assert finalizacion.json()["finalizado_en"]
 
 
+def test_oferta_adjudicada_no_se_puede_editar_con_convocatoria_abierta(entorno):
+    cliente, sesiones, _ = entorno
+    with sesiones() as db:
+        db.get(Emergencia, 2).estado = EstadoEmergencia.ESPERA_OFERTAS
+        db.get(OfertaAyuda, 1).adjudicada_en = datetime.now(timezone.utc)
+        db.commit()
+
+    respuesta = cliente.patch(
+        "/api/v1/ofertas/1",
+        json={"observaciones": "Cambio no permitido"},
+        headers=cabecera(ONG),
+    )
+    assert respuesta.status_code == 409
+    assert respuesta.json()["detail"] == "La oferta adjudicada no se puede modificar"
+
+
 def test_rol_y_organizacion_se_resuelven_desde_bd(entorno):
     cliente, sesiones, _ = entorno
     encabezados = cabecera(COORDINADOR)
