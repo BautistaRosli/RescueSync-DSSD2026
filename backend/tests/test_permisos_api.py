@@ -40,6 +40,7 @@ RECURSO = {"tipo": "agua", "cantidad_total": 10}
 CASOS = [
     ("GET", "/emergencias", None, ROLES),
     ("GET", "/emergencias/bandeja?publicada=false", None, [OPERADOR, COORDINADOR, AUDITOR]),
+    ("GET", "/emergencias/dashboard", None, [AUDITOR]),
     ("GET", "/emergencias/1", None, [OPERADOR, COORDINADOR, AUDITOR]),
     ("POST", "/emergencias", EMERGENCIA, [OPERADOR]),
     ("PATCH", "/emergencias/1", {"zona_afectada": "Otra"}, [COORDINADOR]),
@@ -110,10 +111,12 @@ def entorno(monkeypatch):
     bonita = AsyncMock(return_value=42)
     variables = AsyncMock(return_value=[])
     diagnostico = AsyncMock(return_value={"ok": True})
+    prioridad = AsyncMock(return_value=7)
     monkeypatch.setattr("app.services.emergencias_service.notificar_nueva_emergencia", correo)
     monkeypatch.setattr("app.services.ofertas_service.notificar_adjudicacion", adjudicacion)
     monkeypatch.setattr("app.services.emergencias_service.bonita_client.start_emergency_process", bonita)
     monkeypatch.setattr("app.services.emergencias_service.bonita_client.set_case_variables", variables)
+    monkeypatch.setattr("app.services.emergencias_service.prioridad_client.obtener_prioridad", prioridad)
     monkeypatch.setattr("app.api.routes.bonita_api.verificar_conexion", diagnostico)
     monkeypatch.setattr("app.api.routes.bonita_api.setear_variables_prueba", variables)
 
@@ -129,7 +132,7 @@ def entorno(monkeypatch):
     app.dependency_overrides[get_db] = obtener_db
     # Sin lifespan: la siembra utiliza exclusivamente nuestra base en memoria.
     cliente = TestClient(app)
-    yield cliente, sesiones, (correo, adjudicacion, bonita, variables, diagnostico)
+    yield cliente, sesiones, (correo, adjudicacion, bonita, variables, diagnostico, prioridad)
     cliente.close()
     app.dependency_overrides.clear()
     motor.dispose()
@@ -212,6 +215,68 @@ def test_listados_filtran_antes_de_devolver_y_contar(entorno):
         assert datos["total"] == 1 and datos["paginas"] == 1 and datos["items"][0]["id"] == identificador
     for ruta in ("/ofertas", "/emergencias/2/ofertas", "/organizaciones"):
         assert [d["id"] for d in cliente.get("/api/v1" + ruta, headers=cabecera(ONG)).json()] == [1]
+
+
+def test_dashboard_de_emergencias_devuelve_resumen_solo_para_auditor(entorno):
+    cliente = entorno[0]
+    respuesta = cliente.get("/api/v1/emergencias/dashboard", headers=cabecera(AUDITOR))
+
+    assert respuesta.status_code == 200, respuesta.text
+    cuerpo = respuesta.json()
+    assert set(cuerpo) == {
+        "total", "conteos_por_estado", "emergencias_activas",
+        "emergencias_resueltas", "evolucion_abiertas_resueltas", "ranking_ongs",
+        "cantidad_total_necesidades", "tiempo_medio_vida_horas", "emergencias",
+    }
+    assert cuerpo["total"] == 2
+    assert cuerpo["conteos_por_estado"] == {
+        EstadoEmergencia.ESPERA_LOTES: 1,
+        EstadoEmergencia.ESPERA_OFERTAS: 1,
+    }
+    assert cuerpo["emergencias_activas"] == 2
+    assert cuerpo["emergencias_resueltas"] == 0
+    assert len(cuerpo["evolucion_abiertas_resueltas"]) == 1
+    assert cuerpo["evolucion_abiertas_resueltas"][0]["abiertas"] == 2
+    assert cuerpo["evolucion_abiertas_resueltas"][0]["resueltas"] == 0
+    assert cuerpo["ranking_ongs"] == []
+    assert cuerpo["cantidad_total_necesidades"] == 20
+    assert cuerpo["tiempo_medio_vida_horas"] >= 0
+    assert [emergencia["id"] for emergencia in cuerpo["emergencias"]] == [2, 1]
+    for rol in (OPERADOR, COORDINADOR, ONG):
+        assert cliente.get(
+            "/api/v1/emergencias/dashboard", headers=cabecera(rol)
+        ).status_code == 403
+
+
+def test_dashboard_calcula_metricas_de_resolucion_necesidades_y_ongs(entorno):
+    cliente, sesiones, _ = entorno
+    ahora = datetime.now(timezone.utc)
+    with sesiones() as db:
+        db.get(Emergencia, 1).estado = EstadoEmergencia.RESUELTA
+        db.get(Emergencia, 1).prioridad = None
+        db.get(Emergencia, 1).fecha_hora_registro = ahora - timedelta(hours=4)
+        db.get(Emergencia, 2).prioridad = 3
+        db.get(Emergencia, 2).fecha_hora_registro = ahora - timedelta(hours=2)
+        db.get(OfertaAyuda, 1).adjudicada_en = ahora
+        db.commit()
+
+    cuerpo = cliente.get(
+        "/api/v1/emergencias/dashboard", headers=cabecera(AUDITOR)
+    ).json()
+
+    assert cuerpo["emergencias_activas"] == 1
+    assert cuerpo["emergencias_resueltas"] == 1
+    assert len(cuerpo["evolucion_abiertas_resueltas"]) == 2
+    assert sum(
+        punto["resueltas"] for punto in cuerpo["evolucion_abiertas_resueltas"]
+    ) == 1
+    assert cuerpo["cantidad_total_necesidades"] == 20
+    assert cuerpo["ranking_ongs"] == [{
+        "organizacion_id": 1,
+        "organizacion_nombre": "Propia",
+        "cantidad_capacidades_asignadas": 5,
+    }]
+    assert cuerpo["tiempo_medio_vida_horas"] == pytest.approx(3, abs=0.01)
 
 
 def test_ong_no_puede_escribir_ofertas_ajenas_o_no_publicadas(entorno):

@@ -15,7 +15,11 @@ from ...services.permisos_service import (
     verificar_emergencia,
 )
 from ...database import get_db
-from ...dto.emergencias_dto import EmergenciaRespuesta, EmergenciasPaginadas
+from ...dto.emergencias_dto import (
+    EmergenciaRespuesta,
+    EmergenciasDashboard,
+    EmergenciasPaginadas,
+)
 from ...schemas.emergencias_schema import (
     EmergenciaActualizar,
     EmergenciaCrear,
@@ -59,6 +63,14 @@ def listar_bandeja_emergencias(
     )
 
 
+@router.get("/dashboard", response_model=EmergenciasDashboard)
+def obtener_dashboard_emergencias(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(AUDITOR)),
+):
+    return servicio_emergencias.obtener_dashboard(db)
+
+
 @router.get("/{emergencia_id}", response_model=EmergenciaRespuesta)
 def obtener_emergencia(
     emergencia_id: int,
@@ -76,7 +88,7 @@ async def crear_emergencia(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(OPERADOR)),
 ):
-    respuesta = servicio_emergencias.crear_emergencia(
+    respuesta = await servicio_emergencias.crear_emergencia(
         db, data, background_tasks=background_tasks
     )
 
@@ -88,7 +100,9 @@ async def crear_emergencia(
             f"{respuesta.id}: {exc.detail}"
         )
 
-    return servicio_emergencias.obtener_emergencia(db, respuesta.id)
+    resultado = servicio_emergencias.obtener_emergencia(db, respuesta.id)
+    resultado.prioridad = respuesta.prioridad
+    return resultado
 
 
 @router.patch("/{emergencia_id}", response_model=EmergenciaRespuesta)

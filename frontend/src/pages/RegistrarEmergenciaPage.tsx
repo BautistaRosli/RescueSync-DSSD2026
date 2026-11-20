@@ -131,6 +131,12 @@ export function RegistrarEmergenciaPage() {
               </dd>
             </div>
             <div className="flex justify-between gap-4 py-1">
+              <dt className="text-slate-400">Prioridad</dt>
+              <dd className="font-mono text-cyan-400">
+                {creada.prioridad != null ? `${creada.prioridad}/10` : '—'}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4 py-1">
               <dt className="text-slate-400">Zona afectada</dt>
               <dd className="font-mono text-cyan-400 break-all">{creada.zona_afectada}</dd>
             </div>

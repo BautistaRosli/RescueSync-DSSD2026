@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, String, Text, func
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
@@ -48,6 +48,8 @@ class Emergencia(Base):
     estado: Mapped[Optional[str]] = mapped_column(
         String(50), default=EstadoEmergencia.ESPERA_LOTES, nullable=False
     )
+    # Prioridad calculada por el servicio de prioridad (valor de 1 a 10).
+    prioridad: Mapped[Optional[int]] = mapped_column(Integer)
 
     lotes: Mapped[List["LoteNecesidad"]] = relationship(
         back_populates="emergencia", cascade="all, delete-orphan"
