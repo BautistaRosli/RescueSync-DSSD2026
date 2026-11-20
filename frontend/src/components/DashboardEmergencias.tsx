@@ -120,7 +120,7 @@ function ComparativaActividad({ datos }: { datos: DashboardEmergencias }) {
 
   return (
     <section className="rounded-xl border border-slate-700 bg-slate-800 p-5 shadow-2xl" aria-labelledby="titulo-actividad">
-      <h2 id="titulo-actividad" className="text-lg font-bold text-cyan-400">Activas frente a resueltas</h2>
+      <h2 id="titulo-actividad" className="text-lg font-bold text-cyan-400">Activas vs. Resueltas</h2>
       <ul className="mt-5 flex flex-col gap-4" aria-label="Comparativa de emergencias activas y resueltas">
         {valores.map((item) => (
           <BarraHorizontal key={item.etiqueta} {...item} maximo={maximo} />
@@ -303,7 +303,7 @@ export function DashboardEmergencias({ datos }: DashboardEmergenciasProps) {
     <section className="flex flex-col gap-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-slate-700 bg-slate-800 p-5 shadow-2xl">
-          <p className="text-sm text-slate-400">Total registrado</p>
+          <p className="text-sm text-slate-400">Emergencias totales</p>
           <p className="mt-1 text-3xl font-bold text-cyan-400">{datos.total}</p>
         </div>
         <div className="rounded-xl border border-slate-700 bg-slate-800 p-5 shadow-2xl">
