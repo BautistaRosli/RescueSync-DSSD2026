@@ -77,7 +77,7 @@ class OfertaService:
         self, db: Session, oferta_id: int, data: OfertaActualizar
     ) -> OfertaRespuesta:
         oferta = self._obtener_oferta_entidad(db, oferta_id, bloquear=True)
-        self._verificar_convocatoria_abierta(db, oferta.emergencia_id)
+        self._verificar_convocatoria_abierta(db, oferta.emergencia_id, oferta)
         if data.observaciones is not None:
             oferta.observaciones = data.observaciones
         if data.items is not None:
@@ -224,7 +224,10 @@ class OfertaService:
         return oferta
 
     def _verificar_convocatoria_abierta(
-        self, db: Session, emergencia_id: int
+        self,
+        db: Session,
+        emergencia_id: int,
+        oferta: OfertaAyuda | None = None,
     ) -> None:
         """Implementa la ventana de tiempo de la convocatoria del enunciado.
 
@@ -232,6 +235,12 @@ class OfertaService:
         esperando ofertas; en cualquier otro estado la convocatoria está
         cerrada.
         """
+        if oferta is not None and oferta.adjudicada_en is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="La oferta adjudicada no se puede modificar",
+            )
+
         emergencia = self._emergencias.obtener_emergencia_entidad(
             db, emergencia_id
         )

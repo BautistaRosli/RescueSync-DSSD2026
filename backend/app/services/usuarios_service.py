@@ -41,6 +41,14 @@ ORGANIZACION_ONU = {
     "activa": True,
 }
 
+ORGANIZACION_UNICEF = {
+    "nombre": "UNICEF",
+    "tipo": "ong",
+    "email": "unicef@unicef.org",
+    "telefono": "754 1201",
+    "activa": True,
+}
+
 # Sólo en development: cada cuenta de demostración usa su email como contraseña.
 USUARIOS_INICIALES = [
     {
@@ -63,6 +71,13 @@ USUARIOS_INICIALES = [
         "apellido": "Rodríguez",
         "rol": "REPRESENTANTE_ONG",
         "organizacion": ORGANIZACION_ONU,
+    },
+    {
+        "email": "unicef@unicef.org",
+        "nombre": "Ana",
+        "apellido": "Pérez",
+        "rol": "REPRESENTANTE_ONG",
+        "organizacion": ORGANIZACION_UNICEF,
     },
     {
         "email": "auditor@auditor.com",
@@ -186,7 +201,17 @@ class AuthService:
         if os.getenv("APP_ENV") != "development":
             return
         for datos in USUARIOS_INICIALES:
-            if self._usuarios.obtener_por_email(db, datos["email"]) is not None:
+            usuario_existente = self._usuarios.obtener_por_email(
+                db, datos["email"]
+            )
+            if usuario_existente is not None:
+                if datos["organizacion"] is not None:
+                    organizacion = self._sembrar_organizacion(
+                        db, datos["organizacion"]
+                    )
+                    if usuario_existente.organizacion_id != organizacion.id:
+                        usuario_existente.organizacion_id = organizacion.id
+                        db.commit()
                 continue
 
             rol = self._roles.obtener_por_nombre(db, datos["rol"])

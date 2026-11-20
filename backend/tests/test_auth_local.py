@@ -14,8 +14,16 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Rol, Usuario
+from app.models import (
+    Emergencia,
+    EstadoEmergencia,
+    OfertaAyuda,
+    Organizacion,
+    Rol,
+    Usuario,
+)
 from app.services.security_service import JWT_SECRET, hashear_password, verificar_password
+from app.services.datos_demo_service import sembrar_datos_demo
 from app.services.usuarios_service import AuthService, RolService, USUARIOS_INICIALES
 
 ALTA = {"email": "alta@example.org", "password": "clave-prueba-123",
@@ -208,4 +216,158 @@ def test_seed_demo_solo_development_idempotente(entorno_local, monkeypatch, ambi
                 assert usuario is not None and verificar_password(datos["email"], usuario.password_hash)
             else:
                 assert usuario is None
+    remoto.assert_not_called()
+
+
+def test_seed_repara_organizacion_del_usuario_demo_sin_cambiar_password(
+    entorno_local, monkeypatch
+):
+    _, sesiones, remoto = entorno_local
+    monkeypatch.setenv("APP_ENV", "development")
+    password_existente = "clave-existente-no-demo"
+    with sesiones() as db:
+        RolService().sembrar_roles(db)
+        rol = db.query(Rol).filter_by(nombre="REPRESENTANTE_ONG").one()
+        usuario = Usuario(
+            email="unicef@unicef.org",
+            nombre="Ana existente",
+            apellido="Pérez",
+            password_hash=hashear_password(password_existente),
+            rol_id=rol.id,
+            organizacion_id=None,
+            activo=True,
+        )
+        db.add(usuario)
+        db.commit()
+        hash_original = usuario.password_hash
+
+        servicio = AuthService()
+        servicio.sembrar_usuarios_iniciales(db)
+        servicio.sembrar_usuarios_iniciales(db)
+
+        organizacion = db.query(Organizacion).filter_by(nombre="UNICEF").one()
+        reparado = db.query(Usuario).filter_by(email="unicef@unicef.org").one()
+        assert reparado.organizacion_id == organizacion.id
+        assert reparado.password_hash == hash_original
+        assert verificar_password(password_existente, reparado.password_hash)
+        assert db.query(Organizacion).filter_by(nombre="UNICEF").count() == 1
+    remoto.assert_not_called()
+
+
+def test_usuario_unicef_demo_autentica_y_accede_a_sus_rutas(
+    entorno_local, monkeypatch
+):
+    cliente, sesiones, remoto = entorno_local
+    monkeypatch.setenv("APP_ENV", "development")
+    with sesiones() as db:
+        RolService().sembrar_roles(db)
+        AuthService().sembrar_usuarios_iniciales(db)
+        sembrar_datos_demo(db)
+        representantes = []
+        for email in ("ong@ong.com", "unicef@unicef.org"):
+            usuario = db.query(Usuario).filter_by(email=email).one()
+            assert usuario.rol.nombre == "REPRESENTANTE_ONG"
+            assert usuario.organizacion_id is not None
+            representantes.append((email, usuario.organizacion_id))
+        emergencia_publicada = (
+            db.query(Emergencia)
+            .filter(
+                Emergencia.descripcion_inicial.like("[DEMO DASHBOARD]%"),
+                Emergencia.publicada.is_(True),
+            )
+            .order_by(Emergencia.id.asc())
+            .first()
+        )
+        assert emergencia_publicada is not None
+        assert not db.query(OfertaAyuda).join(Emergencia).filter(
+            OfertaAyuda.observaciones
+            == "Oferta adjudicada de demostración para el dashboard",
+            Emergencia.descripcion_inicial.like("[DEMO DASHBOARD]%"),
+            Emergencia.publicada.is_(False),
+        ).count()
+
+    for email, organizacion_id in representantes:
+        login = cliente.post(
+            "/api/v1/auth/login",
+            json={"email": email, "password": email},
+        )
+        assert login.status_code == 200, login.text
+        encabezados = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        ofertas = cliente.get(
+            f"/api/v1/ofertas?organizacion_id={organizacion_id}",
+            headers=encabezados,
+        )
+        inventario = cliente.get(
+            f"/api/v1/organizaciones/{organizacion_id}/inventario",
+            headers=encabezados,
+        )
+        lotes = cliente.get(
+            f"/api/v1/emergencias/{emergencia_publicada.id}/lotes",
+            headers=encabezados,
+        )
+        assert ofertas.status_code != 403, ofertas.text
+        assert inventario.status_code != 403, inventario.text
+        assert lotes.status_code != 403, lotes.text
+    remoto.assert_not_called()
+
+
+def test_seed_ofertas_demo_solo_para_estados_adjudicables(
+    entorno_local, monkeypatch
+):
+    _, sesiones, remoto = entorno_local
+    monkeypatch.setenv("APP_ENV", "development")
+    with sesiones() as db:
+        RolService().sembrar_roles(db)
+        AuthService().sembrar_usuarios_iniciales(db)
+        sembrar_datos_demo(db)
+        emergencias = (
+            db.query(Emergencia)
+            .filter(Emergencia.descripcion_inicial.like("[DEMO DASHBOARD]%"))
+            .order_by(Emergencia.id.asc())
+            .all()
+        )
+        convocatoria_abierta = next(
+            emergencia
+            for emergencia in emergencias
+            if emergencia.publicada
+            and emergencia.estado == EstadoEmergencia.ESPERA_OFERTAS
+        )
+        for emergencia in emergencias:
+            ofertas_demo = db.query(OfertaAyuda).filter(
+                OfertaAyuda.emergencia_id == emergencia.id,
+                OfertaAyuda.observaciones
+                == "Oferta adjudicada de demostración para el dashboard",
+            ).all()
+            if emergencia is convocatoria_abierta:
+                assert len(ofertas_demo) == 1
+                oferta_abierta = ofertas_demo[0]
+                assert oferta_abierta.adjudicada_en is None
+                assert oferta_abierta.es_conjunta is False
+                assert oferta_abierta.organizacion.nombre == (
+                    "Organización de las Naciones Unidas"
+                )
+                assert oferta_abierta.organizaciones == [oferta_abierta.organizacion]
+                assert oferta_abierta.items
+                assert all(
+                    item.lote_necesidad.emergencia_id == emergencia.id
+                    for item in oferta_abierta.items
+                )
+                continue
+            cantidad_ofertas = (
+                db.query(OfertaAyuda)
+                .filter(
+                    OfertaAyuda.emergencia_id == emergencia.id,
+                    OfertaAyuda.observaciones
+                    == "Oferta adjudicada de demostración para el dashboard",
+                )
+                .count()
+            )
+            if emergencia.estado in (
+                EstadoEmergencia.EN_PROCESO,
+                EstadoEmergencia.RESUELTA,
+            ):
+                assert len(ofertas_demo) == 1
+            else:
+                assert cantidad_ofertas == 0
     remoto.assert_not_called()
