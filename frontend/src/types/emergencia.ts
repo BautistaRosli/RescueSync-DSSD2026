@@ -71,6 +71,14 @@ export interface EmergenciaRead {
   lotes: LoteNecesidad[]
 }
 
+export type EmergenciaRespuesta = EmergenciaRead
+
+export interface DashboardEmergencias {
+  total: number
+  conteos_por_estado: Record<string, number>
+  emergencias: EmergenciaRespuesta[]
+}
+
 // Sobre del `GET /emergencias/bandeja`: `paginas` es 0 cuando `total` es 0.
 export interface BandaEmergencias {
   items: EmergenciaRead[]

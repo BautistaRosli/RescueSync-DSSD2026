@@ -7,10 +7,12 @@ export type {
 export type {
   BandaEmergencias,
   BandaEmergenciasParams,
+  DashboardEmergencias,
   EstadoEmergencia,
   EmergenciaCreateRequest,
   EmergenciaCreada,
   EmergenciaRead,
+  EmergenciaRespuesta,
   LoteNecesidad,
   LoteNecesidadCreateRequest,
   LoteNecesidadUpdateRequest,

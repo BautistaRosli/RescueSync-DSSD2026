@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Navbar } from './components'
 import {
   CentroCoordinadorPage,
+  DashboardEmergenciasPage,
   EmergenciasPage,
   LoginPage,
   PanelOngPage,
@@ -22,6 +23,7 @@ const ROL_OPERADOR_MUNICIPAL = 'OPERADOR_MUNICIPAL'
 
 const ROL_REPRESENTANTE_ONG = 'REPRESENTANTE_ONG'
 const ROL_CENTRO_COORDINADOR = 'CENTRO_COORDINADOR'
+const ROLES_DASHBOARD = ['DIRECTOR_AUDITOR']
 
 const PESTANIAS_OPERADOR: { valor: VistaOperador; etiqueta: string }[] = [
   { valor: 'registrar', etiqueta: 'Registrar emergencia' },
@@ -125,6 +127,8 @@ function App() {
               <CentroCoordinadorPage />
             </section>
           )
+        ) : ROLES_DASHBOARD.includes(sesion.rol) ? (
+          <DashboardEmergenciasPage />
         ) : (
           <section className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
             <h2 className="text-xl font-bold text-amber-400 mb-1">

@@ -40,6 +40,7 @@ RECURSO = {"tipo": "agua", "cantidad_total": 10}
 CASOS = [
     ("GET", "/emergencias", None, ROLES),
     ("GET", "/emergencias/bandeja?publicada=false", None, [OPERADOR, COORDINADOR, AUDITOR]),
+    ("GET", "/emergencias/dashboard", None, [AUDITOR]),
     ("GET", "/emergencias/1", None, [OPERADOR, COORDINADOR, AUDITOR]),
     ("POST", "/emergencias", EMERGENCIA, [OPERADOR]),
     ("PATCH", "/emergencias/1", {"zona_afectada": "Otra"}, [COORDINADOR]),
@@ -214,6 +215,25 @@ def test_listados_filtran_antes_de_devolver_y_contar(entorno):
         assert datos["total"] == 1 and datos["paginas"] == 1 and datos["items"][0]["id"] == identificador
     for ruta in ("/ofertas", "/emergencias/2/ofertas", "/organizaciones"):
         assert [d["id"] for d in cliente.get("/api/v1" + ruta, headers=cabecera(ONG)).json()] == [1]
+
+
+def test_dashboard_de_emergencias_devuelve_resumen_solo_para_auditor(entorno):
+    cliente = entorno[0]
+    respuesta = cliente.get("/api/v1/emergencias/dashboard", headers=cabecera(AUDITOR))
+
+    assert respuesta.status_code == 200, respuesta.text
+    cuerpo = respuesta.json()
+    assert set(cuerpo) == {"total", "conteos_por_estado", "emergencias"}
+    assert cuerpo["total"] == 2
+    assert cuerpo["conteos_por_estado"] == {
+        EstadoEmergencia.ESPERA_LOTES: 1,
+        EstadoEmergencia.ESPERA_OFERTAS: 1,
+    }
+    assert [emergencia["id"] for emergencia in cuerpo["emergencias"]] == [2, 1]
+    for rol in (OPERADOR, COORDINADOR, ONG):
+        assert cliente.get(
+            "/api/v1/emergencias/dashboard", headers=cabecera(rol)
+        ).status_code == 403
 
 
 def test_ong_no_puede_escribir_ofertas_ajenas_o_no_publicadas(entorno):
