@@ -6,16 +6,22 @@ from typing import Optional
 
 from fastapi import BackgroundTasks, HTTPException
 from starlette.concurrency import run_in_threadpool
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from ..dto import EmergenciaRespuesta, EmergenciasDashboard, EmergenciasPaginadas
+from ..dto import (
+    EmergenciaRespuesta,
+    EmergenciasDashboard,
+    EmergenciasPaginadas,
+    EvolucionEmergencias,
+    RankingONG,
+)
 from ..integrations.bonita.client import BonitaClientError, bonita_client
 from ..integrations.email.service import notificar_nueva_emergencia
 from ..integrations.prioridad.client import (
     PrioridadClientError,
     prioridad_client,
 )
-from ..models import EstadoEmergencia, Emergencia
+from ..models import EstadoEmergencia, Emergencia, OfertaAyuda
 from ..repositories import EmergenciaRepository, UsuarioRepository
 from ..schemas import (
     EmergenciaActualizar,
@@ -63,14 +69,87 @@ class EmergenciaService:
     def obtener_dashboard(self, db: Session) -> EmergenciasDashboard:
         emergencias = self._repository.listar(db)
         conteos_por_estado: dict[str, int] = {}
+        evolucion_por_fecha: dict[str, dict[str, int]] = {}
+        ahora = datetime.now(timezone.utc)
+        tiempo_total_horas = 0.0
+        cantidad_total_necesidades = 0
+        emergencias_resueltas = 0
         for emergencia in emergencias:
             if emergencia.estado is not None:
                 conteos_por_estado[emergencia.estado] = (
                     conteos_por_estado.get(emergencia.estado, 0) + 1
                 )
+            if emergencia.estado == EstadoEmergencia.RESUELTA:
+                emergencias_resueltas += 1
+            fecha = emergencia.fecha_hora_registro.date().isoformat()
+            conteo_fecha = evolucion_por_fecha.setdefault(
+                fecha, {"abiertas": 0, "resueltas": 0}
+            )
+            clave_estado = (
+                "resueltas"
+                if emergencia.estado == EstadoEmergencia.RESUELTA
+                else "abiertas"
+            )
+            conteo_fecha[clave_estado] += 1
+            cantidad_total_necesidades += sum(
+                lote.cantidad for lote in emergencia.lotes
+            )
+            fecha_registro = emergencia.fecha_hora_registro
+            if fecha_registro.tzinfo is None:
+                fecha_registro = fecha_registro.replace(tzinfo=timezone.utc)
+            tiempo_total_horas += (
+                ahora - fecha_registro
+            ).total_seconds() / 3600
+
+        ofertas = (
+            db.query(OfertaAyuda)
+            .options(
+                selectinload(OfertaAyuda.items),
+                selectinload(OfertaAyuda.organizacion),
+            )
+            .all()
+        )
+        capacidades_por_ong: dict[int, dict[str, int | str]] = {}
+        for oferta in ofertas:
+            if oferta.adjudicada_en is None:
+                continue
+            organizacion = oferta.organizacion
+            capacidades = sum(
+                item.cantidad_ofrecida for item in oferta.items
+            )
+            registro = capacidades_por_ong.setdefault(
+                oferta.organizacion_id,
+                {
+                    "organizacion_id": oferta.organizacion_id,
+                    "organizacion_nombre": organizacion.nombre,
+                    "cantidad_capacidades_asignadas": 0,
+                },
+            )
+            registro["cantidad_capacidades_asignadas"] += capacidades
+        ranking_ongs = [
+            RankingONG.model_validate(registro)
+            for registro in sorted(
+                capacidades_por_ong.values(),
+                key=lambda registro: (
+                    -int(registro["cantidad_capacidades_asignadas"]),
+                    int(registro["organizacion_id"]),
+                ),
+            )
+        ]
         return EmergenciasDashboard(
             total=len(emergencias),
             conteos_por_estado=conteos_por_estado,
+            emergencias_activas=len(emergencias) - emergencias_resueltas,
+            emergencias_resueltas=emergencias_resueltas,
+            evolucion_abiertas_resueltas=[
+                EvolucionEmergencias(fecha=fecha, **conteos)
+                for fecha, conteos in sorted(evolucion_por_fecha.items())
+            ],
+            ranking_ongs=ranking_ongs,
+            cantidad_total_necesidades=cantidad_total_necesidades,
+            tiempo_medio_vida_horas=(
+                tiempo_total_horas / len(emergencias) if emergencias else 0.0
+            ),
             emergencias=[EmergenciaRespuesta.model_validate(e) for e in emergencias],
         )
 

@@ -13,6 +13,8 @@ export type {
   EmergenciaCreada,
   EmergenciaRead,
   EmergenciaRespuesta,
+  EvolucionAbiertasResueltas,
+  RankingOng,
   LoteNecesidad,
   LoteNecesidadCreateRequest,
   LoteNecesidadUpdateRequest,

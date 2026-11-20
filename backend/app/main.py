@@ -17,6 +17,7 @@ from .api.routes import (
     roles_api,
 )
 from .database import Base, SessionLocal, engine
+from .services.datos_demo_service import sembrar_datos_demo
 from .services.usuarios_service import AuthService, RolService
 
 with engine.begin() as conexion:
@@ -35,6 +36,10 @@ async def lifespan(app: FastAPI):
     try:
         rol_service.sembrar_roles(db)
         auth_service.sembrar_usuarios_iniciales(db)
+        sembrar_datos_demo(db)
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
     yield

@@ -2,6 +2,8 @@ from .emergencias_dto import (
     EmergenciaRespuesta,
     EmergenciasDashboard,
     EmergenciasPaginadas,
+    EvolucionEmergencias,
+    RankingONG,
 )
 from .inventario_dto import RecursoInventarioRespuesta
 from .lotes_dto import LoteNecesidadRespuesta
@@ -28,6 +30,8 @@ __all__ = [
     "EmergenciaRespuesta",
     "EmergenciasDashboard",
     "EmergenciasPaginadas",
+    "EvolucionEmergencias",
+    "RankingONG",
     "LoteNecesidadRespuesta",
     "OfertaConsolidada",
     "OfertaItemConsolidado",

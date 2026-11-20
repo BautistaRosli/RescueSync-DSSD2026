@@ -64,6 +64,7 @@ export interface EmergenciaRead {
   fecha_publicacion: string | null
   estado: EstadoEmergencia | null
   bonita_case_id: string | null
+  prioridad?: number | null
   // Ventana de convocatoria: todavía no existe en el backend (la agrega otro
   // integrante del equipo). Opcionales para que la UI funcione sin ellas.
   fecha_apertura_convocatoria?: string | null
@@ -73,10 +74,28 @@ export interface EmergenciaRead {
 
 export type EmergenciaRespuesta = EmergenciaRead
 
+export interface RankingOng {
+  organizacion_id: number
+  organizacion_nombre: string
+  cantidad_capacidades_asignadas: number
+}
+
+export interface EvolucionAbiertasResueltas {
+  fecha: string
+  abiertas: number
+  resueltas: number
+}
+
 export interface DashboardEmergencias {
   total: number
   conteos_por_estado: Record<string, number>
   emergencias: EmergenciaRespuesta[]
+  emergencias_activas: number
+  emergencias_resueltas: number
+  evolucion_abiertas_resueltas: EvolucionAbiertasResueltas[]
+  ranking_ongs: RankingOng[]
+  cantidad_total_necesidades: number
+  tiempo_medio_vida_horas: number
 }
 
 // Sobre del `GET /emergencias/bandeja`: `paginas` es 0 cuando `total` es 0.
