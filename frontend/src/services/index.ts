@@ -4,6 +4,7 @@ export {
   registrarEmergencia,
   listarEmergencias,
   listarBandejaEmergencias,
+  obtenerDashboardEmergencias,
   crearLote,
   actualizarLote,
   eliminarLote,

@@ -2,6 +2,7 @@ import { apiDelete, apiGet, apiPatch, apiPost } from './http'
 import type {
   BandaEmergencias,
   BandaEmergenciasParams,
+  DashboardEmergencias,
   EmergenciaCreateRequest,
   EmergenciaCreada,
   EmergenciaRead,
@@ -18,6 +19,10 @@ export async function registrarEmergencia(
 
 export async function listarEmergencias(): Promise<EmergenciaRead[]> {
   return apiGet<EmergenciaRead[]>('/emergencias')
+}
+
+export async function obtenerDashboardEmergencias(): Promise<DashboardEmergencias> {
+  return apiGet<DashboardEmergencias>('/emergencias/dashboard')
 }
 
 export async function listarBandejaEmergencias(

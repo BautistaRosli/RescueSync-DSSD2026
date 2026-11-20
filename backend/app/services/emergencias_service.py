@@ -8,7 +8,7 @@ from fastapi import BackgroundTasks, HTTPException
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
-from ..dto import EmergenciaRespuesta, EmergenciasPaginadas
+from ..dto import EmergenciaRespuesta, EmergenciasDashboard, EmergenciasPaginadas
 from ..integrations.bonita.client import BonitaClientError, bonita_client
 from ..integrations.email.service import notificar_nueva_emergencia
 from ..integrations.prioridad.client import (
@@ -58,6 +58,20 @@ class EmergenciaService:
             por_pagina=por_pagina,
             total=total,
             paginas=math.ceil(total / por_pagina) if total else 0,
+        )
+
+    def obtener_dashboard(self, db: Session) -> EmergenciasDashboard:
+        emergencias = self._repository.listar(db)
+        conteos_por_estado: dict[str, int] = {}
+        for emergencia in emergencias:
+            if emergencia.estado is not None:
+                conteos_por_estado[emergencia.estado] = (
+                    conteos_por_estado.get(emergencia.estado, 0) + 1
+                )
+        return EmergenciasDashboard(
+            total=len(emergencias),
+            conteos_por_estado=conteos_por_estado,
+            emergencias=[EmergenciaRespuesta.model_validate(e) for e in emergencias],
         )
 
     def obtener_emergencia_entidad(

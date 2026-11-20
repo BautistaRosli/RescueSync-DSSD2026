@@ -29,3 +29,9 @@ class EmergenciasPaginadas(BaseModel):
     por_pagina: int
     total: int
     paginas: int
+
+
+class EmergenciasDashboard(BaseModel):
+    total: int
+    conteos_por_estado: dict[str, int]
+    emergencias: list[EmergenciaRespuesta] = []

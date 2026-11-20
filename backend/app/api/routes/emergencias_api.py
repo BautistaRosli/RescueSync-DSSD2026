@@ -15,7 +15,11 @@ from ...services.permisos_service import (
     verificar_emergencia,
 )
 from ...database import get_db
-from ...dto.emergencias_dto import EmergenciaRespuesta, EmergenciasPaginadas
+from ...dto.emergencias_dto import (
+    EmergenciaRespuesta,
+    EmergenciasDashboard,
+    EmergenciasPaginadas,
+)
 from ...schemas.emergencias_schema import (
     EmergenciaActualizar,
     EmergenciaCrear,
@@ -57,6 +61,14 @@ def listar_bandeja_emergencias(
         pagina=pagina,
         por_pagina=por_pagina,
     )
+
+
+@router.get("/dashboard", response_model=EmergenciasDashboard)
+def obtener_dashboard_emergencias(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(AUDITOR)),
+):
+    return servicio_emergencias.obtener_dashboard(db)
 
 
 @router.get("/{emergencia_id}", response_model=EmergenciaRespuesta)
