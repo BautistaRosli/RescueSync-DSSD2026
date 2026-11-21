@@ -40,7 +40,7 @@ export function validarBorradorLote(borrador: BorradorLote): ValidacionBorrador 
     return { error: 'La cantidad debe ser un número entero mayor a 0.', datos: null }
   }
   if (!Number.isSafeInteger(tipoRecursoId) || tipoRecursoId <= 0) {
-    return { error: 'El ID del recurso nacional debe ser un número entero mayor a 0.', datos: null }
+    return { error: 'Seleccioná un recurso del catálogo nacional antes de continuar.', datos: null }
   }
   return {
     error: null,
@@ -74,8 +74,7 @@ export function cambiarCampoBorradorLote(
   campo: keyof BorradorLote,
   valor: string,
 ): BorradorLote {
-  const cambioDeRecurso =
-    (campo === 'tipo' || campo === 'unidad') && valor.trim() !== borrador[campo].trim()
+  const cambioDeRecurso = campo === 'tipo' && valor.trim() !== borrador.tipo.trim()
   return {
     ...borrador,
     [campo]: valor,

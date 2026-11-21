@@ -217,6 +217,65 @@ def test_listados_filtran_antes_de_devolver_y_contar(entorno):
         assert [d["id"] for d in cliente.get("/api/v1" + ruta, headers=cabecera(ONG)).json()] == [1]
 
 
+def test_bandeja_filtra_por_cada_estado_y_omite_el_filtro(entorno):
+    cliente, sesiones, _ = entorno
+    estados = [
+        EstadoEmergencia.ESPERA_LOTES,
+        EstadoEmergencia.ESPERA_OFERTAS,
+        EstadoEmergencia.ESPERANDO_ADJUDICACION,
+        EstadoEmergencia.EN_PROCESO,
+        EstadoEmergencia.RESUELTA,
+    ]
+    with sesiones() as db:
+        db.add_all([
+            Emergencia(
+                id=10 + indice,
+                publicada=True,
+                estado=estado,
+                **EMERGENCIA,
+            )
+            for indice, estado in enumerate(estados)
+            if estado != EstadoEmergencia.ESPERA_OFERTAS
+        ])
+        db.commit()
+
+    for estado_filtrado in estados:
+        respuesta = cliente.get(
+            "/api/v1/emergencias/bandeja",
+            params={
+                "publicada": True,
+                "estado": estado_filtrado,
+                "pagina": 1,
+                "por_pagina": 1,
+            },
+            headers=cabecera(COORDINADOR),
+        )
+        assert respuesta.status_code == 200, respuesta.text
+        cuerpo = respuesta.json()
+        assert cuerpo["total"] == 1
+        assert cuerpo["paginas"] == 1
+        assert len(cuerpo["items"]) == 1
+        assert cuerpo["items"][0]["estado"] == estado_filtrado
+
+    sin_filtro = cliente.get(
+        "/api/v1/emergencias/bandeja",
+        params={"publicada": True, "pagina": 1, "por_pagina": 2},
+        headers=cabecera(COORDINADOR),
+    )
+    assert sin_filtro.status_code == 200, sin_filtro.text
+    assert sin_filtro.json()["total"] == len(estados)
+    assert sin_filtro.json()["paginas"] == 3
+
+
+def test_bandeja_rechaza_estado_invalido(entorno):
+    respuesta = entorno[0].get(
+        "/api/v1/emergencias/bandeja",
+        params={"publicada": True, "estado": "estado_inexistente"},
+        headers=cabecera(COORDINADOR),
+    )
+    assert respuesta.status_code == 422
+
+
 def test_dashboard_de_emergencias_devuelve_resumen_solo_para_auditor(entorno):
     cliente = entorno[0]
     respuesta = cliente.get("/api/v1/emergencias/dashboard", headers=cabecera(AUDITOR))

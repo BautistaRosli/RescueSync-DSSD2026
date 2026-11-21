@@ -9,6 +9,7 @@ from ..repositories import LoteNecesidadRepository
 from ..schemas import LoteNecesidadActualizar, LoteNecesidadCrear
 from .emergencias_service import EmergenciaService
 from .ofertas_service import OfertaService
+from ..utils.recursos import normalizar_nombre_recurso
 
 
 class LoteService:
@@ -79,9 +80,9 @@ class LoteService:
                 detail=f"No se pudo liberar la barrera en Bonita: {exc}",
             )
 
-        lote = LoteNecesidad(
-            emergencia_id=emergencia_id, **data.model_dump(exclude={"tipo_recurso_id"})
-        )
+        valores = data.model_dump(exclude={"tipo_recurso_id"})
+        valores["tipo"] = normalizar_nombre_recurso(valores["tipo"])
+        lote = LoteNecesidad(emergencia_id=emergencia_id, **valores)
         if data.tipo_recurso_id is not None:
             lote.referencia_cloud = LoteRecursoCloud(tipo_recurso_id=data.tipo_recurso_id)
         creado = self._repository.crear(db, lote)
@@ -94,6 +95,8 @@ class LoteService:
         self._verificar_emergencia_no_publicada(db, lote.emergencia_id)
         lote = self._obtener_lote_entidad(db, lote_id)
         cambios = data.model_dump(exclude_unset=True)
+        if "tipo" in cambios and cambios["tipo"] is not None:
+            cambios["tipo"] = normalizar_nombre_recurso(cambios["tipo"])
         if "tipo_recurso_id" in cambios:
             nacional = cambios.pop("tipo_recurso_id")
             if nacional is None:
@@ -102,8 +105,7 @@ class LoteService:
                 lote.referencia_cloud = LoteRecursoCloud(tipo_recurso_id=nacional)
             else:
                 lote.referencia_cloud.tipo_recurso_id = nacional
-        elif any(campo in cambios and cambios[campo] != getattr(lote, campo)
-                 for campo in ("tipo", "unidad")):
+        elif "tipo" in cambios and cambios["tipo"] != lote.tipo:
             lote.referencia_cloud = None
         for field, value in cambios.items():
             setattr(lote, field, value)

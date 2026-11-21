@@ -15,6 +15,7 @@ from .api.routes import (
     ofertas_api,
     organizaciones_api,
     roles_api,
+    recursos_cloud_api,
 )
 from .database import Base, SessionLocal, engine
 from .services.datos_demo_service import sembrar_datos_demo
@@ -64,6 +65,7 @@ app.include_router(lotes_api.router, prefix=API_PREFIX)
 app.include_router(inventario_api.router, prefix=API_PREFIX)
 app.include_router(ofertas_api.router, prefix=API_PREFIX)
 app.include_router(bonita_api.router, prefix=API_PREFIX)
+app.include_router(recursos_cloud_api.router, prefix=API_PREFIX)
 
 
 @app.get("/")

@@ -67,7 +67,8 @@ def test_lectura_lote_conserva_referencia_opcional_e_invalidacion(entorno, cambi
                                json={"tipo_recurso_id": 41})
     assert vinculacion.status_code == 200 and vinculacion.json()["tipo_recurso_id"] == 41
     actualizado = cliente.patch("/api/v1/lotes/1", headers=cabeceras, json=cambios)
-    assert actualizado.status_code == 200 and actualizado.json()["tipo_recurso_id"] is None
+    esperado_nacional = 41 if "unidad" in cambios else None
+    assert actualizado.status_code == 200 and actualizado.json()["tipo_recurso_id"] == esperado_nacional
     lectura = cliente.get("/api/v1/lotes/1", headers=cabeceras)
     assert lectura.status_code == 200 and lectura.json() == actualizado.json()
 

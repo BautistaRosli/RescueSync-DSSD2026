@@ -35,6 +35,7 @@ from .usuarios_schema import (
     UsuarioCrear,
     validar_formato_email,
 )
+from .recursos_cloud_schema import RecursoCloudCrear, RecursoCloudRespuesta
 
 __all__ = [
     "ESTADOS_EMERGENCIA_VALIDOS",
@@ -64,4 +65,6 @@ __all__ = [
     "validar_estado_emergencia",
     "validar_formato_email",
     "validar_nivel_gravedad",
+    "RecursoCloudCrear",
+    "RecursoCloudRespuesta",
 ]

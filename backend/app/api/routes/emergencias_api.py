@@ -23,6 +23,7 @@ from ...dto.emergencias_dto import (
 from ...schemas.emergencias_schema import (
     EmergenciaActualizar,
     EmergenciaCrear,
+    ESTADOS_EMERGENCIA_VALIDOS,
 )
 from ...services.emergencias_service import EmergenciaService
 
@@ -49,15 +50,25 @@ def listar_emergencias(
 @router.get("/bandeja", response_model=EmergenciasPaginadas)
 def listar_bandeja_emergencias(
     publicada: bool,
+    estado: Optional[str] = Query(default=None),
     pagina: int = Query(default=1, ge=1),
     por_pagina: int = Query(default=POR_PAGINA_MAXIMO, ge=1, le=POR_PAGINA_MAXIMO),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(OPERADOR, COORDINADOR, ONG, AUDITOR)),
 ):
     """Bandeja del Centro Coordinador, paginada por bucket de publicacion."""
+    if estado is not None and estado not in ESTADOS_EMERGENCIA_VALIDOS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "estado debe ser uno de: "
+                + ", ".join(sorted(ESTADOS_EMERGENCIA_VALIDOS))
+            ),
+        )
     return servicio_emergencias.listar_emergencias_paginadas(
         db,
         publicada=filtrar_publicada(usuario, publicada),
+        estado=estado,
         pagina=pagina,
         por_pagina=por_pagina,
     )

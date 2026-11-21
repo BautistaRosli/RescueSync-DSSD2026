@@ -15,6 +15,8 @@ import {
   eliminarLote,
   listarBandejaEmergencias,
   listarOfertasDeEmergencia,
+  listarRecursosCloud,
+  crearRecursoCloud,
   publicarEmergencia,
 } from '../services'
 import {
@@ -30,9 +32,10 @@ import type {
   LoteNecesidad,
   NivelGravedad,
   OfertaRead,
+  RecursoCloud,
 } from '../types'
 
-type PestaniaBandeja = 'sin_publicar' | 'publicadas'
+type PestaniaBandeja = EstadoEmergencia
 
 const NIVELES_GRAVEDAD: { valor: NivelGravedad; etiqueta: string }[] = [
   { valor: 'baja', etiqueta: 'Baja' },
@@ -54,19 +57,22 @@ const PESTANIAS_BANDEJA: {
   etiqueta: string
   titulo: string
 }[] = [
-  {
-    valor: 'sin_publicar',
-    etiqueta: 'Sin publicar',
-    titulo: 'Emergencias sin publicar',
-  },
-  { valor: 'publicadas', etiqueta: 'Publicadas', titulo: 'Emergencias publicadas' },
+  { valor: 'esperando_lotes', etiqueta: 'Esperando lotes', titulo: 'Emergencias esperando lotes' },
+  { valor: 'esperando_ofertas', etiqueta: 'Esperando ofertas', titulo: 'Emergencias esperando ofertas' },
+  { valor: 'esperando_adjudicacion', etiqueta: 'Esperando adjudicación', titulo: 'Emergencias esperando adjudicación' },
+  { valor: 'en_proceso', etiqueta: 'En proceso', titulo: 'Emergencias en proceso' },
+  { valor: 'resuelta', etiqueta: 'Resueltas', titulo: 'Emergencias resueltas' },
 ]
 
 const DESCRIPCIONES_BANDEJA: Record<PestaniaBandeja, string> = {
-  sin_publicar:
-    'Emergencias a la espera de lotes. Tocá una fila para desplegar su detalle, cargarle sus lotes o publicarla.',
-  publicadas:
-    'Emergencias a la espera de ofertas de ayuda. Tocá una fila para desplegar su detalle.',
+  esperando_lotes:
+    'Emergencias a la espera de lotes. Tocá una fila para desplegar su detalle, cargar lotes o publicarla.',
+  esperando_ofertas:
+    'Emergencias publicadas que reciben ofertas de ayuda. Tocá una fila para desplegar su detalle.',
+  esperando_adjudicacion:
+    'Emergencias con ofertas listas para ser evaluadas y adjudicadas.',
+  en_proceso: 'Emergencias con una oferta adjudicada y atención en curso.',
+  resuelta: 'Emergencias cuya atención fue resuelta.',
 }
 
 const POR_PAGINA = 10
@@ -134,6 +140,23 @@ function sinClave<T>(registro: Record<number, T>, clave: number): Record<number,
   return siguiente
 }
 
+function normalizarTextoRecurso(texto: string): string {
+  return texto.trim().replace(/\s+/g, ' ').toLocaleLowerCase('es-AR')
+}
+
+interface EstadoBusquedaRecurso {
+  sugerencias: RecursoCloud[]
+  cargando: boolean
+  error?: string
+  creando: boolean
+}
+
+const BUSQUEDA_RECURSO_VACIA: EstadoBusquedaRecurso = {
+  sugerencias: [],
+  cargando: false,
+  creando: false,
+}
+
 function DetalleEmergencia({ emergencia }: { emergencia: EmergenciaRead }) {
   return (
     <div
@@ -199,13 +222,43 @@ function CamposLote({
   deshabilitado,
   error,
   alCambiar,
+  sugerencias,
+  cargandoRecursos,
+  errorRecursos,
+  creandoRecurso,
+  alBuscarRecurso,
+  alSeleccionarRecurso,
+  alCrearRecurso,
 }: {
   prefijo: string
   borrador: BorradorLote
   deshabilitado: boolean
   error: string | undefined
   alCambiar: (campo: keyof BorradorLote, valor: string) => void
+  sugerencias: RecursoCloud[]
+  cargandoRecursos: boolean
+  errorRecursos: string | undefined
+  creandoRecurso: boolean
+  alBuscarRecurso: (texto: string) => void
+  alSeleccionarRecurso: (recurso: RecursoCloud) => void
+  alCrearRecurso: () => void
 }) {
+  const textoRecurso = borrador.tipo.trim()
+  const hayCoincidenciaExacta = sugerencias.some(
+    (recurso) => normalizarTextoRecurso(recurso.nombre) === normalizarTextoRecurso(textoRecurso),
+  )
+  const tieneTipoRecursoSeleccionado = Number.isSafeInteger(Number(borrador.tipo_recurso_id)) &&
+    Number(borrador.tipo_recurso_id) > 0
+  const busquedaSinResultados =
+    textoRecurso !== '' &&
+    !cargandoRecursos &&
+    sugerencias.length === 0 &&
+    !hayCoincidenciaExacta &&
+    errorRecursos === undefined &&
+    !tieneTipoRecursoSeleccionado
+  const mostrarBusqueda =
+    cargandoRecursos || sugerencias.length > 0 || errorRecursos !== undefined || busquedaSinResultados
+
   return (
     <>
       <div>
@@ -217,12 +270,65 @@ function CamposLote({
           disabled={deshabilitado}
           type="text"
           value={borrador.tipo}
-          onChange={(evento) => alCambiar('tipo', evento.target.value)}
+          onChange={(evento) => {
+            alCambiar('tipo', evento.target.value)
+            alBuscarRecurso(evento.target.value)
+          }}
+          onKeyDown={(evento) => {
+            if (evento.key === 'Enter' && sugerencias[0] !== undefined) {
+              evento.preventDefault()
+              alSeleccionarRecurso(sugerencias[0])
+            }
+          }}
           placeholder="Colchones"
           maxLength={120}
           required
           className={claseCampo}
         />
+        {mostrarBusqueda && (
+          <div className="relative z-10">
+            <div
+              role="listbox"
+              className="absolute mt-1 max-h-48 w-full overflow-auto rounded-lg border border-slate-700 bg-slate-800 shadow-xl"
+            >
+              {cargandoRecursos && (
+                <p className="px-3 py-2 text-xs text-slate-400">Buscando recursos...</p>
+              )}
+              {!cargandoRecursos && sugerencias.map((recurso) => (
+                <button
+                  key={recurso.id}
+                  type="button"
+                  role="option"
+                  onClick={() => alSeleccionarRecurso(recurso)}
+                  className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700"
+                >
+                  <span className="font-semibold">{recurso.nombre}</span>
+                  {recurso.descripcion && (
+                    <span className="ml-2 text-xs text-slate-400">{recurso.descripcion}</span>
+                  )}
+                </button>
+              ))}
+              {busquedaSinResultados && (
+                <button
+                  type="button"
+                  onClick={alCrearRecurso}
+                  disabled={deshabilitado || creandoRecurso}
+                  className="block w-full border-t border-slate-700 px-3 py-2 text-left text-sm font-semibold text-cyan-400 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {creandoRecurso ? 'Creando recurso...' : `Crear recurso «${textoRecurso}»`}
+                </button>
+              )}
+              {errorRecursos !== undefined && (
+                <p role="alert" className="border-t border-red-500/30 px-3 py-2 text-xs text-red-300">
+                  {errorRecursos}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+        <p className="mt-1 text-xs text-slate-400">
+          Buscá un recurso nacional o crealo si todavía no existe.
+        </p>
       </div>
 
       <div className="flex flex-wrap gap-3">
@@ -259,29 +365,6 @@ function CamposLote({
             className={claseCampo}
           />
         </div>
-      </div>
-
-      <div>
-        <label htmlFor={`${prefijo}-tipo-recurso-id`} className={claseEtiqueta}>
-          ID del recurso del catálogo nacional
-        </label>
-        <input
-          id={`${prefijo}-tipo-recurso-id`}
-          disabled={deshabilitado}
-          type="number"
-          min={1}
-          step={1}
-          value={borrador.tipo_recurso_id}
-          onChange={(evento) => alCambiar('tipo_recurso_id', evento.target.value)}
-          aria-describedby={`${prefijo}-ayuda-recurso`}
-          placeholder="10"
-          required
-          className={claseCampo}
-        />
-        <p id={`${prefijo}-ayuda-recurso`} className="mt-1 text-xs text-slate-400">
-          Usá el campo id de GET /items de la API Cloud que corresponda al tipo
-          y la unidad. Si cambiás alguno, volvé a indicar el ID correspondiente.
-        </p>
       </div>
 
       <div>
@@ -339,6 +422,10 @@ function ListaLotes({
   alAbrirEdicion,
   alCancelarEdicion,
   alCambiarCampoEdicion,
+  busquedaRecursoEdicion,
+  alBuscarRecursoEdicion,
+  alSeleccionarRecursoEdicion,
+  alCrearRecursoEdicion,
   alEnviarEdicion,
   alEliminar,
 }: {
@@ -352,6 +439,10 @@ function ListaLotes({
   alAbrirEdicion: (lote: LoteNecesidad) => void
   alCancelarEdicion: () => void
   alCambiarCampoEdicion: (campo: keyof BorradorLote, valor: string) => void
+  busquedaRecursoEdicion: EstadoBusquedaRecurso
+  alBuscarRecursoEdicion: (texto: string) => void
+  alSeleccionarRecursoEdicion: (recurso: RecursoCloud) => void
+  alCrearRecursoEdicion: () => void
   alEnviarEdicion: (
     evento: FormEvent<HTMLFormElement>,
     lote: LoteNecesidad,
@@ -393,6 +484,13 @@ function ListaLotes({
                   deshabilitado={guardandoEdicion}
                   error={errorEdicion}
                   alCambiar={alCambiarCampoEdicion}
+                  sugerencias={busquedaRecursoEdicion.sugerencias}
+                  cargandoRecursos={busquedaRecursoEdicion.cargando}
+                  errorRecursos={busquedaRecursoEdicion.error}
+                  creandoRecurso={busquedaRecursoEdicion.creando}
+                  alBuscarRecurso={alBuscarRecursoEdicion}
+                  alSeleccionarRecurso={alSeleccionarRecursoEdicion}
+                  alCrearRecurso={alCrearRecursoEdicion}
                 />
 
                 <div className="flex flex-wrap gap-2">
@@ -464,6 +562,7 @@ function PanelAdjudicacion({
   adjudicando,
   errorAdjudicar,
   exitoAdjudicar,
+  puedeAdjudicar,
   alAdjudicar,
 }: {
   ofertas: OfertaRead[] | undefined
@@ -473,6 +572,7 @@ function PanelAdjudicacion({
   adjudicando: number | null
   errorAdjudicar: Record<number, string>
   exitoAdjudicar: Record<number, string>
+  puedeAdjudicar: boolean
   alAdjudicar: (ofertaId: number) => void
 }) {
   const sinOfertas =
@@ -577,6 +677,7 @@ function PanelAdjudicacion({
                 type="button"
                 onClick={() => alAdjudicar(oferta.id)}
                 disabled={
+                  !puedeAdjudicar ||
                   adjudicando === oferta.id ||
                   ofertas.some((registro) => registro.adjudicada_en !== null)
                 }
@@ -584,6 +685,8 @@ function PanelAdjudicacion({
               >
                 {oferta.adjudicada_en !== null
                   ? 'Adjudicada'
+                  : !puedeAdjudicar
+                    ? 'Esperando evaluación'
                   : adjudicando === oferta.id
                     ? 'Adjudicando...'
                     : 'Adjudicar'}
@@ -607,7 +710,7 @@ function PanelAdjudicacion({
 }
 
 export function CentroCoordinadorPage() {
-  const [pestania, setPestania] = useState<PestaniaBandeja>('sin_publicar')
+  const [pestania, setPestania] = useState<PestaniaBandeja>('esperando_lotes')
   const [pagina, setPagina] = useState(1)
   const [bandeja, setBandeja] = useState<BandaEmergencias | null>(null)
   const [cargando, setCargando] = useState(true)
@@ -616,12 +719,17 @@ export function CentroCoordinadorPage() {
   const [desplegadas, setDesplegadas] = useState<Set<number>>(() => new Set())
   const [borradores, setBorradores] = useState<Record<number, BorradorLote>>({})
   const [errorBorrador, setErrorBorrador] = useState<Record<number, string>>({})
+  const [busquedasRecursos, setBusquedasRecursos] = useState<
+    Record<number, EstadoBusquedaRecurso>
+  >({})
   const [enviandoLote, setEnviandoLote] = useState<Record<number, boolean>>({})
   const [publicando, setPublicando] = useState<Record<number, boolean>>({})
   const [errorPublicar, setErrorPublicar] = useState<Record<number, string>>({})
   const [loteEnEdicion, setLoteEnEdicion] = useState<number | null>(null)
   const [borradorEdicion, setBorradorEdicion] = useState<BorradorLote>(BORRADOR_VACIO)
   const [errorEdicion, setErrorEdicion] = useState<string | undefined>(undefined)
+  const [busquedaRecursoEdicion, setBusquedaRecursoEdicion] =
+    useState<EstadoBusquedaRecurso>(BUSQUEDA_RECURSO_VACIA)
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
   const [eliminandoLote, setEliminandoLote] = useState<number | null>(null)
   const [avisoLote, setAvisoLote] = useState<string | null>(null)
@@ -634,6 +742,8 @@ export function CentroCoordinadorPage() {
   const [errorAdjudicar, setErrorAdjudicar] = useState<Record<number, string>>({})
   const [exitoAdjudicar, setExitoAdjudicar] = useState<Record<number, string>>({})
   const revisionLotes = useRef(0)
+  const versionesBusquedaRecursos = useRef<Record<number, number>>({})
+  const versionBusquedaEdicion = useRef(0)
 
   useEffect(() => {
     let vigente = true
@@ -644,7 +754,8 @@ export function CentroCoordinadorPage() {
       setError(null)
       try {
         const datos = await listarBandejaEmergencias({
-          publicada: pestania === 'publicadas',
+          publicada: pestania !== 'esperando_lotes',
+          estado: pestania,
           pagina,
           por_pagina: POR_PAGINA,
         })
@@ -745,11 +856,11 @@ export function CentroCoordinadorPage() {
       return siguientes
     })
 
-    // Las ofertas se piden una sola vez por emergencia, y solo en la pestaña de
-    // publicadas, para no recargarlas en cada despliegue.
+    // Las ofertas se piden una sola vez por emergencia, en los estados donde
+    // corresponde revisarlas o adjudicarlas.
     if (
       desplegando &&
-      !editable &&
+      (pestania === 'esperando_ofertas' || pestania === 'esperando_adjudicacion') &&
       ofertasPorEmergencia[emergenciaId] === undefined
     ) {
       void cargarOfertasDeEmergencia(emergenciaId)
@@ -769,6 +880,81 @@ export function CentroCoordinadorPage() {
       }
     })
     setErrorBorrador((actuales) => sinClave(actuales, emergenciaId))
+  }
+
+  async function buscarRecursosParaNuevoLote(emergenciaId: number, texto: string) {
+    const version = (versionesBusquedaRecursos.current[emergenciaId] ?? 0) + 1
+    versionesBusquedaRecursos.current[emergenciaId] = version
+    if (!texto.trim()) {
+      setBusquedasRecursos((actuales) => ({
+        ...actuales,
+        [emergenciaId]: BUSQUEDA_RECURSO_VACIA,
+      }))
+      return
+    }
+    setBusquedasRecursos((actuales) => ({
+      ...actuales,
+      [emergenciaId]: { ...(actuales[emergenciaId] ?? BUSQUEDA_RECURSO_VACIA), cargando: true, error: undefined },
+    }))
+    try {
+      const sugerencias = await listarRecursosCloud(texto)
+      if (versionesBusquedaRecursos.current[emergenciaId] !== version) {
+        return
+      }
+      setBusquedasRecursos((actuales) => ({
+        ...actuales,
+        [emergenciaId]: { sugerencias, cargando: false, creando: false },
+      }))
+    } catch (fallo) {
+      if (versionesBusquedaRecursos.current[emergenciaId] !== version) {
+        return
+      }
+      setBusquedasRecursos((actuales) => ({
+        ...actuales,
+        [emergenciaId]: {
+          ...(actuales[emergenciaId] ?? BUSQUEDA_RECURSO_VACIA),
+          cargando: false,
+          error: describirError(fallo),
+        },
+      }))
+    }
+  }
+
+  function seleccionarRecursoNuevo(emergenciaId: number, recurso: RecursoCloud) {
+    versionesBusquedaRecursos.current[emergenciaId] =
+      (versionesBusquedaRecursos.current[emergenciaId] ?? 0) + 1
+    actualizarBorrador(emergenciaId, 'tipo', recurso.nombre)
+    setBorradores((actuales) => ({
+      ...actuales,
+      [emergenciaId]: {
+        ...(actuales[emergenciaId] ?? BORRADOR_VACIO),
+        tipo: recurso.nombre,
+        tipo_recurso_id: String(recurso.id),
+      },
+    }))
+    setBusquedasRecursos((actuales) => ({
+      ...actuales,
+      [emergenciaId]: BUSQUEDA_RECURSO_VACIA,
+    }))
+  }
+
+  async function crearRecursoParaNuevoLote(emergenciaId: number) {
+    const borrador = borradores[emergenciaId] ?? BORRADOR_VACIO
+    const nombre = borrador.tipo.trim()
+    if (!nombre) return
+    setBusquedasRecursos((actuales) => ({
+      ...actuales,
+      [emergenciaId]: { ...(actuales[emergenciaId] ?? BUSQUEDA_RECURSO_VACIA), creando: true, error: undefined },
+    }))
+    try {
+      const recurso = await crearRecursoCloud({ nombre, descripcion: borrador.descripcion.trim() || null })
+      seleccionarRecursoNuevo(emergenciaId, recurso)
+    } catch (fallo) {
+      setBusquedasRecursos((actuales) => ({
+        ...actuales,
+        [emergenciaId]: { ...(actuales[emergenciaId] ?? BUSQUEDA_RECURSO_VACIA), creando: false, error: describirError(fallo) },
+      }))
+    }
   }
 
   function actualizarLotesEnBandeja(
@@ -831,6 +1017,7 @@ export function CentroCoordinadorPage() {
     setBorradorEdicion(borradorDesdeLote(lote))
     setErrorEdicion(undefined)
     setAvisoLote(null)
+    setBusquedaRecursoEdicion(BUSQUEDA_RECURSO_VACIA)
   }
 
   function cerrarEdicionLote() {
@@ -842,6 +1029,53 @@ export function CentroCoordinadorPage() {
   function cambiarCampoEdicion(campo: keyof BorradorLote, valor: string) {
     setBorradorEdicion((actual) => cambiarCampoBorradorLote(actual, campo, valor))
     setErrorEdicion(undefined)
+  }
+
+  async function buscarRecursoEdicion(texto: string) {
+    const version = versionBusquedaEdicion.current + 1
+    versionBusquedaEdicion.current = version
+    if (!texto.trim()) {
+      setBusquedaRecursoEdicion(BUSQUEDA_RECURSO_VACIA)
+      return
+    }
+    setBusquedaRecursoEdicion((actual) => ({ ...actual, cargando: true, error: undefined }))
+    try {
+      const sugerencias = await listarRecursosCloud(texto)
+      if (versionBusquedaEdicion.current !== version) {
+        return
+      }
+      setBusquedaRecursoEdicion({ sugerencias, cargando: false, creando: false })
+    } catch (fallo) {
+      if (versionBusquedaEdicion.current !== version) {
+        return
+      }
+      setBusquedaRecursoEdicion((actual) => ({ ...actual, cargando: false, error: describirError(fallo) }))
+    }
+  }
+
+  function seleccionarRecursoEdicion(recurso: RecursoCloud) {
+    versionBusquedaEdicion.current += 1
+    setBorradorEdicion((actual) => ({
+      ...actual,
+      tipo: recurso.nombre,
+      tipo_recurso_id: String(recurso.id),
+    }))
+    setBusquedaRecursoEdicion(BUSQUEDA_RECURSO_VACIA)
+  }
+
+  async function crearRecursoEdicion() {
+    const nombre = borradorEdicion.tipo.trim()
+    if (!nombre) return
+    setBusquedaRecursoEdicion((actual) => ({ ...actual, creando: true, error: undefined }))
+    try {
+      const recurso = await crearRecursoCloud({
+        nombre,
+        descripcion: borradorEdicion.descripcion.trim() || null,
+      })
+      seleccionarRecursoEdicion(recurso)
+    } catch (fallo) {
+      setBusquedaRecursoEdicion((actual) => ({ ...actual, creando: false, error: describirError(fallo) }))
+    }
   }
 
   async function manejarEnvioEdicion(
@@ -931,7 +1165,7 @@ export function CentroCoordinadorPage() {
   const totalPaginas = bandeja?.paginas ?? 0
   const paginaActual = bandeja?.pagina ?? pagina
   const sinPaginas = totalPaginas === 0
-  const editable = pestania === 'sin_publicar'
+  const editable = pestania === 'esperando_lotes'
   const tituloBandeja =
     PESTANIAS_BANDEJA.find((p) => p.valor === pestania)?.titulo ?? pestania
 
@@ -988,9 +1222,7 @@ export function CentroCoordinadorPage() {
 
       {!cargando && error === null && bandeja !== null && bandeja.items.length === 0 && (
         <p className="rounded-xl bg-slate-800 border border-slate-700 p-6 text-sm text-slate-400 shadow-2xl">
-          {editable
-            ? 'No hay emergencias sin publicar.'
-            : 'Todavía no hay emergencias publicadas.'}
+          No hay emergencias en este estado.
         </p>
       )}
 
@@ -1065,13 +1297,17 @@ export function CentroCoordinadorPage() {
                       alAbrirEdicion={abrirEdicionLote}
                       alCancelarEdicion={cerrarEdicionLote}
                       alCambiarCampoEdicion={cambiarCampoEdicion}
+                      busquedaRecursoEdicion={busquedaRecursoEdicion}
+                      alBuscarRecursoEdicion={(texto) => void buscarRecursoEdicion(texto)}
+                      alSeleccionarRecursoEdicion={seleccionarRecursoEdicion}
+                      alCrearRecursoEdicion={() => void crearRecursoEdicion()}
                       alEnviarEdicion={(evento, lote) =>
                         void manejarEnvioEdicion(evento, lote)
                       }
                       alEliminar={(lote) => void manejarEliminar(lote)}
                     />
 
-                    {!editable && (
+                    {(pestania === 'esperando_ofertas' || pestania === 'esperando_adjudicacion') && (
                       <PanelAdjudicacion
                         ofertas={ofertasPorEmergencia[emergencia.id]}
                         lotes={emergencia.lotes}
@@ -1080,6 +1316,7 @@ export function CentroCoordinadorPage() {
                         adjudicando={adjudicando}
                         errorAdjudicar={errorAdjudicar}
                         exitoAdjudicar={exitoAdjudicar}
+                        puedeAdjudicar={pestania === 'esperando_adjudicacion'}
                         alAdjudicar={(ofertaId) => void manejarAdjudicar(ofertaId)}
                       />
                     )}
@@ -1100,6 +1337,31 @@ export function CentroCoordinadorPage() {
                             borrador={borrador}
                             deshabilitado={guardandoLote}
                             error={errorFormulario}
+                            sugerencias={
+                              (busquedasRecursos[emergencia.id] ?? BUSQUEDA_RECURSO_VACIA)
+                                .sugerencias
+                            }
+                            cargandoRecursos={
+                              (busquedasRecursos[emergencia.id] ?? BUSQUEDA_RECURSO_VACIA)
+                                .cargando
+                            }
+                            errorRecursos={
+                              (busquedasRecursos[emergencia.id] ?? BUSQUEDA_RECURSO_VACIA)
+                                .error
+                            }
+                            creandoRecurso={
+                              (busquedasRecursos[emergencia.id] ?? BUSQUEDA_RECURSO_VACIA)
+                                .creando
+                            }
+                            alBuscarRecurso={(texto) =>
+                              void buscarRecursosParaNuevoLote(emergencia.id, texto)
+                            }
+                            alSeleccionarRecurso={(recurso) =>
+                              seleccionarRecursoNuevo(emergencia.id, recurso)
+                            }
+                            alCrearRecurso={() =>
+                              void crearRecursoParaNuevoLote(emergencia.id)
+                            }
                             alCambiar={(campo, valor) =>
                               actualizarBorrador(emergencia.id, campo, valor)
                             }

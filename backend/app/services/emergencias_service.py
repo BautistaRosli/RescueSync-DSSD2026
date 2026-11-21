@@ -50,13 +50,16 @@ class EmergenciaService:
         self,
         db: Session,
         publicada: bool,
+        estado: Optional[str] = None,
         pagina: int = 1,
         por_pagina: int = 10,
     ) -> EmergenciasPaginadas:
         """Bandeja paginada: bucket de no publicadas o de publicadas."""
-        total = self._repository.contar_por_publicada(db, publicada)
+        total = self._repository.contar_por_publicada(
+            db, publicada, estado=estado
+        )
         emergencias = self._repository.listar_paginado(
-            db, publicada, pagina, por_pagina
+            db, publicada, pagina, por_pagina, estado=estado
         )
         return EmergenciasPaginadas(
             items=[EmergenciaRespuesta.model_validate(e) for e in emergencias],

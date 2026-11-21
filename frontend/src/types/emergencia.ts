@@ -52,7 +52,8 @@ export interface LoteNecesidadUpdateRequest {
 }
 
 export interface BandaEmergenciasParams {
-  publicada: boolean
+  publicada?: boolean
+  estado?: EstadoEmergencia
   pagina: number
   por_pagina: number
 }

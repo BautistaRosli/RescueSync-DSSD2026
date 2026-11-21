@@ -12,6 +12,7 @@ export {
 } from './emergencia'
 export { listarRoles } from './rol'
 export { listarLotes } from './lote'
+export { listarRecursosCloud, crearRecursoCloud } from './recursosCloud'
 export { crearOrganizacion, listarOrganizaciones } from './organizacion'
 export {
   actualizarOferta,

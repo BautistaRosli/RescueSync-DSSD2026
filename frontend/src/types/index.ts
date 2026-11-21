@@ -39,3 +39,4 @@ export type {
   OrganizacionResumen,
 } from './organizacion'
 export type { Rol } from './rol'
+export type { RecursoCloud, RecursoCloudCreateRequest } from './recursosCloud'
