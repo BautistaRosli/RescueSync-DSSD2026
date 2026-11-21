@@ -30,6 +30,7 @@ export interface LoteNecesidad {
   cantidad: number
   unidad: string | null
   descripcion: string | null
+  tipo_recurso_id: number | null
 }
 
 export interface LoteNecesidadCreateRequest {
@@ -37,14 +38,16 @@ export interface LoteNecesidadCreateRequest {
   cantidad: number
   unidad?: string | null
   descripcion?: string | null
+  tipo_recurso_id?: number | null
 }
 
-// Espejo de `LoteNecesidadActualizar`: PATCH parcial, los cuatro campos son opcionales.
+// Espejo de `LoteNecesidadActualizar`: PATCH parcial, todos los campos son opcionales.
 export interface LoteNecesidadUpdateRequest {
   tipo?: string
   cantidad?: number
   unidad?: string | null
   descripcion?: string | null
+  tipo_recurso_id?: number | null
 }
 
 export interface BandaEmergenciasParams {

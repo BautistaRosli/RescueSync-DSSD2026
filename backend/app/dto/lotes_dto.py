@@ -8,5 +8,6 @@ class LoteNecesidadRespuesta(BaseModel):
     cantidad: int = Field(gt=0)
     unidad: str | None = None
     descripcion: str | None = None
+    tipo_recurso_id: int | None = None
     id: int
     emergencia_id: int
