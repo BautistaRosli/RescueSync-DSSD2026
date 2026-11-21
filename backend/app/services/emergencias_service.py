@@ -12,8 +12,12 @@ from ..dto import (
     EmergenciaRespuesta,
     EmergenciasDashboard,
     EmergenciasPaginadas,
+    DemandaOfertaRecurso,
+    EmergenciasPorEstadoGravedad,
     EvolucionEmergencias,
+    ParticipacionConsorcios,
     RankingONG,
+    RecursoAdjudicadoPorMes,
 )
 from ..integrations.bonita.client import BonitaClientError, bonita_client
 from ..integrations.email.service import notificar_nueva_emergencia
@@ -21,7 +25,13 @@ from ..integrations.prioridad.client import (
     PrioridadClientError,
     prioridad_client,
 )
-from ..models import EstadoEmergencia, Emergencia, OfertaAyuda
+from ..models import (
+    EstadoEmergencia,
+    Emergencia,
+    LoteNecesidad,
+    OfertaAyuda,
+    OfertaItem,
+)
 from ..repositories import EmergenciaRepository, UsuarioRepository
 from ..schemas import (
     EmergenciaActualizar,
@@ -77,10 +87,15 @@ class EmergenciaService:
         tiempo_total_horas = 0.0
         cantidad_total_necesidades = 0
         emergencias_resueltas = 0
+        emergencias_por_estado_y_gravedad: dict[tuple[str, str], int] = {}
         for emergencia in emergencias:
             if emergencia.estado is not None:
                 conteos_por_estado[emergencia.estado] = (
                     conteos_por_estado.get(emergencia.estado, 0) + 1
+                )
+                clave_gravedad = (emergencia.estado, emergencia.nivel_gravedad)
+                emergencias_por_estado_y_gravedad[clave_gravedad] = (
+                    emergencias_por_estado_y_gravedad.get(clave_gravedad, 0) + 1
                 )
             if emergencia.estado == EstadoEmergencia.RESUELTA:
                 emergencias_resueltas += 1
@@ -109,9 +124,39 @@ class EmergenciaService:
             .options(
                 selectinload(OfertaAyuda.items),
                 selectinload(OfertaAyuda.organizacion),
+                selectinload(OfertaAyuda.items)
+                .selectinload(OfertaItem.lote_necesidad)
+                .selectinload(LoteNecesidad.referencia_cloud),
             )
             .all()
         )
+        ofertas_adjudicadas = [oferta for oferta in ofertas if oferta.adjudicada_en]
+        ofertas_conjuntas = sum(
+            1 for oferta in ofertas_adjudicadas if oferta.es_conjunta
+        )
+        recursos_adjudicados: dict[tuple[str, int | None, str], int] = {}
+        demanda_oferta: dict[tuple[str, int | None], dict[str, int]] = {}
+        for emergencia in emergencias:
+            for lote in emergencia.lotes:
+                recurso_id = lote.tipo_recurso_id
+                clave = (lote.tipo, recurso_id)
+                registro = demanda_oferta.setdefault(
+                    clave,
+                    {"cantidad_requerida": 0, "cantidad_ofrecida": 0},
+                )
+                registro["cantidad_requerida"] += lote.cantidad
+                registro["cantidad_ofrecida"] += sum(
+                    item.cantidad_ofrecida
+                    for item in lote.items
+                )
+        for oferta in ofertas_adjudicadas:
+            mes = oferta.adjudicada_en.astimezone(timezone.utc).strftime("%Y-%m")
+            for item in oferta.items:
+                lote = item.lote_necesidad
+                clave = (mes, lote.tipo_recurso_id, lote.tipo)
+                recursos_adjudicados[clave] = (
+                    recursos_adjudicados.get(clave, 0) + item.cantidad_ofrecida
+                )
         capacidades_por_ong: dict[int, dict[str, int | str]] = {}
         for oferta in ofertas:
             if oferta.adjudicada_en is None:
@@ -154,6 +199,46 @@ class EmergenciaService:
                 tiempo_total_horas / len(emergencias) if emergencias else 0.0
             ),
             emergencias=[EmergenciaRespuesta.model_validate(e) for e in emergencias],
+            participacion_consorcios=ParticipacionConsorcios(
+                total_ofertas_adjudicadas=len(ofertas_adjudicadas),
+                ofertas_conjuntas_adjudicadas=ofertas_conjuntas,
+                porcentaje_consorcios=(
+                    ofertas_conjuntas * 100 / len(ofertas_adjudicadas)
+                    if ofertas_adjudicadas else 0.0
+                ),
+            ),
+            recursos_adjudicados_por_mes=[
+                RecursoAdjudicadoPorMes(
+                    mes=mes,
+                    tipo_recurso=tipo,
+                    tipo_recurso_id=recurso_id,
+                    cantidad_adjudicada=cantidad,
+                )
+                for (mes, recurso_id, tipo), cantidad in sorted(
+                    recursos_adjudicados.items()
+                )
+            ],
+            demanda_vs_oferta_por_recurso=[
+                DemandaOfertaRecurso(
+                    tipo_recurso=tipo,
+                    tipo_recurso_id=recurso_id,
+                    **cantidades,
+                )
+                for (tipo, recurso_id), cantidades in sorted(
+                    demanda_oferta.items(),
+                    key=lambda item: (item[0][0], item[0][1] is not None, item[0][1] or 0),
+                )
+            ],
+            emergencias_por_estado_y_gravedad=[
+                EmergenciasPorEstadoGravedad(
+                    estado=estado,
+                    nivel_gravedad=gravedad,
+                    cantidad=cantidad,
+                )
+                for (estado, gravedad), cantidad in sorted(
+                    emergencias_por_estado_y_gravedad.items()
+                )
+            ],
         )
 
     def obtener_emergencia_entidad(

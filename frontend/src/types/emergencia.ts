@@ -91,6 +91,32 @@ export interface EvolucionAbiertasResueltas {
   resueltas: number
 }
 
+export interface ParticipacionConsorcios {
+  total_ofertas_adjudicadas: number
+  ofertas_conjuntas_adjudicadas: number
+  porcentaje_consorcios: number
+}
+
+export interface RecursoAdjudicadoPorMes {
+  mes: string
+  tipo_recurso: string
+  tipo_recurso_id: number | null
+  cantidad_adjudicada: number
+}
+
+export interface DemandaVsOfertaPorRecurso {
+  tipo_recurso: string
+  tipo_recurso_id: number | null
+  cantidad_requerida: number
+  cantidad_ofrecida: number
+}
+
+export interface EmergenciaPorEstadoYGravedad {
+  estado: string
+  nivel_gravedad: string
+  cantidad: number
+}
+
 export interface DashboardEmergencias {
   total: number
   conteos_por_estado: Record<string, number>
@@ -101,6 +127,19 @@ export interface DashboardEmergencias {
   ranking_ongs: RankingOng[]
   cantidad_total_necesidades: number
   tiempo_medio_vida_horas: number
+  participacion_consorcios: ParticipacionConsorcios
+  recursos_adjudicados_por_mes: RecursoAdjudicadoPorMes[]
+  demanda_vs_oferta_por_recurso: DemandaVsOfertaPorRecurso[]
+  emergencias_por_estado_y_gravedad: EmergenciaPorEstadoYGravedad[]
+  necesidades_actuales: Array<{
+    tipo_recurso: string
+    tipo_recurso_id: number | null
+    cantidad_requerida: number
+  }>
+  prioridad_abiertas: {
+    promedio_prioridad: number
+    cantidad_emergencias: number
+  }
 }
 
 // Sobre del `GET /emergencias/bandeja`: `paginas` es 0 cuando `total` es 0.

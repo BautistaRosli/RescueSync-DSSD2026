@@ -1,6 +1,19 @@
 import { useEffect, useState } from 'react'
 import { DashboardEmergencias } from '../components'
-import { ApiError, obtenerDashboardEmergencias } from '../services'
+import {
+  ApiError,
+  listarEmergencias,
+  obtenerActivasResueltas,
+  obtenerDemandaOferta,
+  obtenerEmergenciasPorEstadoYGravedad,
+  obtenerEvolucionAbiertasResueltas,
+  obtenerNecesidadesActuales,
+  obtenerParticipacionConsorcios,
+  obtenerPrioridadAbiertas,
+  obtenerRankingOngs,
+  obtenerSuministrosMovilizados,
+  obtenerTiempoVida,
+} from '../services'
 import type { DashboardEmergencias as DashboardEmergenciasDatos } from '../types'
 
 function describirError(error: unknown): string {
@@ -19,7 +32,56 @@ export function DashboardEmergenciasPage() {
 
     async function cargar() {
       try {
-        const resultado = await obtenerDashboardEmergencias()
+        const [
+          emergencias,
+          emergenciasPorEstadoYGravedad,
+          activasResueltas,
+          evolucion,
+          necesidades,
+          suministros,
+          consorcios,
+          demandaOferta,
+          rankingOngs,
+          tiempoVida,
+          prioridadAbiertas,
+        ] = await Promise.all([
+          listarEmergencias(),
+          obtenerEmergenciasPorEstadoYGravedad(),
+          obtenerActivasResueltas(),
+          obtenerEvolucionAbiertasResueltas(),
+          obtenerNecesidadesActuales(),
+          obtenerSuministrosMovilizados(),
+          obtenerParticipacionConsorcios(),
+          obtenerDemandaOferta(),
+          obtenerRankingOngs(),
+          obtenerTiempoVida(),
+          obtenerPrioridadAbiertas(),
+        ])
+
+        const conteosPorEstado = emergencias.reduce<Record<string, number>>((conteos, emergencia) => {
+          if (emergencia.estado !== null) {
+            conteos[emergencia.estado] = (conteos[emergencia.estado] ?? 0) + 1
+          }
+          return conteos
+        }, {})
+
+        const resultado: DashboardEmergenciasDatos = {
+          total: emergencias.length,
+          conteos_por_estado: conteosPorEstado,
+          emergencias,
+          emergencias_activas: activasResueltas.activas,
+          emergencias_resueltas: activasResueltas.resueltas,
+          evolucion_abiertas_resueltas: evolucion,
+          ranking_ongs: rankingOngs,
+          cantidad_total_necesidades: necesidades.reduce((total, necesidad) => total + necesidad.cantidad_requerida, 0),
+          tiempo_medio_vida_horas: tiempoVida.promedio_horas,
+          participacion_consorcios: consorcios,
+          recursos_adjudicados_por_mes: suministros,
+          demanda_vs_oferta_por_recurso: demandaOferta,
+          emergencias_por_estado_y_gravedad: emergenciasPorEstadoYGravedad,
+          necesidades_actuales: necesidades,
+          prioridad_abiertas: prioridadAbiertas,
+        }
         if (vigente) {
           setDatos(resultado)
         }

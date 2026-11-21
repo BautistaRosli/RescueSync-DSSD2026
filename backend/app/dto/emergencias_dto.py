@@ -37,6 +37,32 @@ class RankingONG(BaseModel):
     cantidad_capacidades_asignadas: int
 
 
+class ParticipacionConsorcios(BaseModel):
+    total_ofertas_adjudicadas: int
+    ofertas_conjuntas_adjudicadas: int
+    porcentaje_consorcios: float
+
+
+class RecursoAdjudicadoPorMes(BaseModel):
+    mes: str
+    tipo_recurso: str
+    tipo_recurso_id: Optional[int] = None
+    cantidad_adjudicada: int
+
+
+class DemandaOfertaRecurso(BaseModel):
+    tipo_recurso: str
+    tipo_recurso_id: Optional[int] = None
+    cantidad_requerida: int
+    cantidad_ofrecida: int
+
+
+class EmergenciasPorEstadoGravedad(BaseModel):
+    estado: str
+    nivel_gravedad: str
+    cantidad: int
+
+
 class EvolucionEmergencias(BaseModel):
     """Estado actual agrupado por fecha de registro; no existe fecha de resolución."""
 
@@ -55,3 +81,7 @@ class EmergenciasDashboard(BaseModel):
     cantidad_total_necesidades: int
     tiempo_medio_vida_horas: float
     emergencias: list[EmergenciaRespuesta] = []
+    participacion_consorcios: ParticipacionConsorcios
+    recursos_adjudicados_por_mes: list[RecursoAdjudicadoPorMes] = []
+    demanda_vs_oferta_por_recurso: list[DemandaOfertaRecurso] = []
+    emergencias_por_estado_y_gravedad: list[EmergenciasPorEstadoGravedad] = []

@@ -2,7 +2,11 @@ from .emergencias_dto import (
     EmergenciaRespuesta,
     EmergenciasDashboard,
     EmergenciasPaginadas,
+    DemandaOfertaRecurso,
+    EmergenciasPorEstadoGravedad,
     EvolucionEmergencias,
+    ParticipacionConsorcios,
+    RecursoAdjudicadoPorMes,
     RankingONG,
 )
 from .inventario_dto import RecursoInventarioRespuesta
@@ -30,7 +34,11 @@ __all__ = [
     "EmergenciaRespuesta",
     "EmergenciasDashboard",
     "EmergenciasPaginadas",
+    "DemandaOfertaRecurso",
+    "EmergenciasPorEstadoGravedad",
     "EvolucionEmergencias",
+    "ParticipacionConsorcios",
+    "RecursoAdjudicadoPorMes",
     "RankingONG",
     "LoteNecesidadRespuesta",
     "OfertaConsolidada",
