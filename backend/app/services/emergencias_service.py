@@ -79,8 +79,36 @@ class EmergenciaService:
             paginas=math.ceil(total / por_pagina) if total else 0,
         )
 
-    def obtener_dashboard(self, db: Session) -> EmergenciasDashboard:
+    def obtener_dashboard(
+        self,
+        db: Session,
+        desde: Optional[datetime] = None,
+        hasta: Optional[datetime] = None,
+        nivel_gravedad: Optional[str] = None,
+    ) -> EmergenciasDashboard:
         emergencias = self._repository.listar(db)
+        def fecha_normalizada(fecha: datetime) -> datetime:
+            if fecha.tzinfo is None:
+                return fecha
+            return fecha.astimezone(timezone.utc).replace(tzinfo=None)
+
+        desde_normalizado = fecha_normalizada(desde) if desde is not None else None
+        hasta_normalizado = fecha_normalizada(hasta) if hasta is not None else None
+        if desde is not None:
+            emergencias = [
+                emergencia for emergencia in emergencias
+                if fecha_normalizada(emergencia.fecha_hora_registro) >= desde_normalizado
+            ]
+        if hasta is not None:
+            emergencias = [
+                emergencia for emergencia in emergencias
+                if fecha_normalizada(emergencia.fecha_hora_registro) <= hasta_normalizado
+            ]
+        if nivel_gravedad is not None:
+            emergencias = [
+                emergencia for emergencia in emergencias
+                if emergencia.nivel_gravedad == nivel_gravedad
+            ]
         conteos_por_estado: dict[str, int] = {}
         evolucion_por_fecha: dict[str, dict[str, int]] = {}
         ahora = datetime.now(timezone.utc)
@@ -130,6 +158,8 @@ class EmergenciaService:
             )
             .all()
         )
+        emergencias_filtradas = {emergencia.id for emergencia in emergencias}
+        ofertas = [oferta for oferta in ofertas if oferta.emergencia_id in emergencias_filtradas]
         ofertas_adjudicadas = [oferta for oferta in ofertas if oferta.adjudicada_en]
         ofertas_conjuntas = sum(
             1 for oferta in ofertas_adjudicadas if oferta.es_conjunta

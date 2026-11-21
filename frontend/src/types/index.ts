@@ -46,6 +46,8 @@ export type { Rol } from './rol'
 export type { RecursoCloud, RecursoCloudCreateRequest } from './recursosCloud'
 export type {
   ActivasResueltas,
+  FiltrosReportes,
+  FormatoReporte,
   NecesidadActual,
   PrioridadAbiertas,
   ReportesDashboard,

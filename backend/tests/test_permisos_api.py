@@ -52,6 +52,7 @@ CASOS = [
     ("GET", "/reportes/necesidades-actuales", None, [AUDITOR]),
     ("GET", "/reportes/tiempo-vida", None, [AUDITOR]),
     ("GET", "/reportes/prioridad-abiertas", None, [AUDITOR]),
+    ("GET", "/reportes/exportar", None, [AUDITOR]),
     ("GET", "/emergencias/1", None, [OPERADOR, COORDINADOR, AUDITOR]),
     ("POST", "/emergencias", EMERGENCIA, [OPERADOR, AUDITOR]),
     ("PATCH", "/emergencias/1", {"zona_afectada": "Otra"}, [COORDINADOR, AUDITOR]),

@@ -1,4 +1,4 @@
-import { apiGet } from './http'
+import { apiDescargar, apiGet } from './http'
 import type {
   ActivasResueltas,
   DemandaVsOfertaPorRecurso,
@@ -12,32 +12,48 @@ import type {
   TiempoVida,
 } from '../types'
 
-export const obtenerEmergenciasPorEstadoYGravedad = (): Promise<EmergenciaPorEstadoYGravedad[]> =>
-  apiGet<EmergenciaPorEstadoYGravedad[]>('/reportes/emergencias')
+import type { FiltrosReportes, FormatoReporte } from '../types'
 
-export const obtenerActivasResueltas = (): Promise<ActivasResueltas> =>
-  apiGet<ActivasResueltas>('/reportes/activas-resueltas')
+function construirConsulta(filtros: FiltrosReportes = {}, formato?: FormatoReporte): string {
+  const consulta = new URLSearchParams()
+  if (filtros.desde) consulta.set('desde', `${filtros.desde}T00:00:00`)
+  if (filtros.hasta) consulta.set('hasta', `${filtros.hasta}T23:59:59`)
+  if (filtros.nivel_gravedad) consulta.set('nivel_gravedad', filtros.nivel_gravedad)
+  if (formato) consulta.set('formato', formato)
+  const texto = consulta.toString()
+  return texto ? `?${texto}` : ''
+}
 
-export const obtenerEvolucionAbiertasResueltas = (): Promise<EvolucionAbiertasResueltas[]> =>
-  apiGet<EvolucionAbiertasResueltas[]>('/reportes/evolucion-abiertas-resueltas')
+export function exportarReporteCompleto(filtros: FiltrosReportes, formato: FormatoReporte): Promise<Blob> {
+  return apiDescargar(`/reportes/exportar${construirConsulta(filtros, formato)}`)
+}
 
-export const obtenerNecesidadesActuales = (): Promise<NecesidadActual[]> =>
-  apiGet<NecesidadActual[]>('/reportes/necesidades-actuales')
+export const obtenerEmergenciasPorEstadoYGravedad = (filtros?: FiltrosReportes): Promise<EmergenciaPorEstadoYGravedad[]> =>
+  apiGet<EmergenciaPorEstadoYGravedad[]>(`/reportes/emergencias${construirConsulta(filtros)}`)
 
-export const obtenerSuministrosMovilizados = (): Promise<RecursoAdjudicadoPorMes[]> =>
-  apiGet<RecursoAdjudicadoPorMes[]>('/reportes/suministros-movilizados')
+export const obtenerActivasResueltas = (filtros?: FiltrosReportes): Promise<ActivasResueltas> =>
+  apiGet<ActivasResueltas>(`/reportes/activas-resueltas${construirConsulta(filtros)}`)
 
-export const obtenerParticipacionConsorcios = (): Promise<ParticipacionConsorcios> =>
-  apiGet<ParticipacionConsorcios>('/reportes/consorcios')
+export const obtenerEvolucionAbiertasResueltas = (filtros?: FiltrosReportes): Promise<EvolucionAbiertasResueltas[]> =>
+  apiGet<EvolucionAbiertasResueltas[]>(`/reportes/evolucion-abiertas-resueltas${construirConsulta(filtros)}`)
 
-export const obtenerDemandaOferta = (): Promise<DemandaVsOfertaPorRecurso[]> =>
-  apiGet<DemandaVsOfertaPorRecurso[]>('/reportes/demanda-oferta')
+export const obtenerNecesidadesActuales = (filtros?: FiltrosReportes): Promise<NecesidadActual[]> =>
+  apiGet<NecesidadActual[]>(`/reportes/necesidades-actuales${construirConsulta(filtros)}`)
 
-export const obtenerRankingOngs = (): Promise<RankingOng[]> =>
-  apiGet<RankingOng[]>('/reportes/ranking-ongs')
+export const obtenerSuministrosMovilizados = (filtros?: FiltrosReportes): Promise<RecursoAdjudicadoPorMes[]> =>
+  apiGet<RecursoAdjudicadoPorMes[]>(`/reportes/suministros-movilizados${construirConsulta(filtros)}`)
 
-export const obtenerTiempoVida = (): Promise<TiempoVida> =>
-  apiGet<TiempoVida>('/reportes/tiempo-vida')
+export const obtenerParticipacionConsorcios = (filtros?: FiltrosReportes): Promise<ParticipacionConsorcios> =>
+  apiGet<ParticipacionConsorcios>(`/reportes/consorcios${construirConsulta(filtros)}`)
 
-export const obtenerPrioridadAbiertas = (): Promise<PrioridadAbiertas> =>
-  apiGet<PrioridadAbiertas>('/reportes/prioridad-abiertas')
+export const obtenerDemandaOferta = (filtros?: FiltrosReportes): Promise<DemandaVsOfertaPorRecurso[]> =>
+  apiGet<DemandaVsOfertaPorRecurso[]>(`/reportes/demanda-oferta${construirConsulta(filtros)}`)
+
+export const obtenerRankingOngs = (filtros?: FiltrosReportes): Promise<RankingOng[]> =>
+  apiGet<RankingOng[]>(`/reportes/ranking-ongs${construirConsulta(filtros)}`)
+
+export const obtenerTiempoVida = (filtros?: FiltrosReportes): Promise<TiempoVida> =>
+  apiGet<TiempoVida>(`/reportes/tiempo-vida${construirConsulta(filtros)}`)
+
+export const obtenerPrioridadAbiertas = (filtros?: FiltrosReportes): Promise<PrioridadAbiertas> =>
+  apiGet<PrioridadAbiertas>(`/reportes/prioridad-abiertas${construirConsulta(filtros)}`)

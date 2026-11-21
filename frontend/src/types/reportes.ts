@@ -7,6 +7,14 @@ import type {
   RecursoAdjudicadoPorMes,
 } from './emergencia'
 
+export interface FiltrosReportes {
+  desde?: string
+  hasta?: string
+  nivel_gravedad?: 'baja' | 'media' | 'alta' | 'critica'
+}
+
+export type FormatoReporte = 'csv' | 'json'
+
 export interface ActivasResueltas {
   activas: number
   resueltas: number
