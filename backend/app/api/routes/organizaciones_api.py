@@ -46,7 +46,7 @@ def obtener_organizacion(
 def crear_organizacion(
     data: OrganizacionCrear,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     return servicio_organizaciones.crear_organizacion(db, data)
 
@@ -56,7 +56,7 @@ def actualizar_organizacion(
     organizacion_id: int,
     data: OrganizacionActualizar,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     return servicio_organizaciones.actualizar_organizacion(
         db, organizacion_id, data

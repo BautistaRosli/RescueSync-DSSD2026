@@ -86,7 +86,7 @@ async def crear_emergencia(
     data: EmergenciaCrear,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(OPERADOR)),
+    usuario: Usuario = Depends(requiere_roles(OPERADOR, AUDITOR)),
 ):
     respuesta = await servicio_emergencias.crear_emergencia(
         db, data, background_tasks=background_tasks
@@ -110,7 +110,7 @@ def actualizar_emergencia(
     emergencia_id: int,
     data: EmergenciaActualizar,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     return servicio_emergencias.actualizar_emergencia(
         db, emergencia_id, data
@@ -121,7 +121,7 @@ def actualizar_emergencia(
 async def publicar_emergencia(
     emergencia_id: int,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     await servicio_emergencias.iniciar_proceso_bonita(db, emergencia_id)
     return servicio_emergencias.publicar_emergencia(db, emergencia_id)
@@ -131,7 +131,7 @@ async def publicar_emergencia(
 async def iniciar_proceso_bonita(
     emergencia_id: int,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     case_id = await servicio_emergencias.iniciar_proceso_bonita(
         db, emergencia_id

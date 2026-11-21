@@ -36,7 +36,7 @@ ROLES_INICIALES = [
 ORGANIZACION_ONU = {
     "nombre": "Organización de las Naciones Unidas",
     "tipo": "ong",
-    "email": "ong@un.org",
+    "email": "ong@onu.org",
     "telefono": "754 1200",
     "activa": True,
 }

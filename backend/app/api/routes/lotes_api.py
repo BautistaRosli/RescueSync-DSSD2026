@@ -46,7 +46,7 @@ async def crear_lote(
     emergencia_id: int,
     data: LoteNecesidadCrear,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     return await servicio_lotes.crear_lote(db, emergencia_id, data)
 
@@ -66,7 +66,7 @@ def actualizar_lote(
     lote_id: int,
     data: LoteNecesidadActualizar,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     return servicio_lotes.actualizar_lote(db, lote_id, data)
 
@@ -75,7 +75,7 @@ def actualizar_lote(
 def eliminar_lote(
     lote_id: int,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     servicio_lotes.eliminar_lote(db, lote_id)
     return Response(status_code=204)

@@ -73,7 +73,7 @@ def obtener_oferta(
 def crear_oferta(
     data: OfertaCrear,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(ONG)),
+    usuario: Usuario = Depends(requiere_roles(ONG, AUDITOR)),
 ):
     organizacion_id = filtrar_organizacion(usuario, data.organizacion_id)
     verificar_emergencia(db, usuario, data.emergencia_id)
@@ -87,7 +87,7 @@ def actualizar_oferta(
     oferta_id: int,
     data: OfertaActualizar,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(ONG)),
+    usuario: Usuario = Depends(requiere_roles(ONG, AUDITOR)),
 ):
     verificar_oferta(db, usuario, oferta_id)
     return servicio_ofertas.actualizar_oferta(db, oferta_id, data)
@@ -101,7 +101,7 @@ def finalizar_item(
     oferta_id: int,
     item_id: int,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(ONG)),
+    usuario: Usuario = Depends(requiere_roles(ONG, AUDITOR)),
 ):
     verificar_oferta(db, usuario, oferta_id)
     return servicio_ofertas.finalizar_item(db, oferta_id, item_id)
@@ -138,6 +138,6 @@ def adjudicar_oferta(
     oferta_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR, OPERADOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, OPERADOR, AUDITOR)),
 ):
     return servicio_ofertas.adjudicar_oferta(db, oferta_id, background_tasks)

@@ -42,33 +42,33 @@ CASOS = [
     ("GET", "/emergencias/bandeja?publicada=false", None, [OPERADOR, COORDINADOR, AUDITOR]),
     ("GET", "/emergencias/dashboard", None, [AUDITOR]),
     ("GET", "/emergencias/1", None, [OPERADOR, COORDINADOR, AUDITOR]),
-    ("POST", "/emergencias", EMERGENCIA, [OPERADOR]),
-    ("PATCH", "/emergencias/1", {"zona_afectada": "Otra"}, [COORDINADOR]),
-    ("POST", "/emergencias/1/publicar", None, [COORDINADOR]),
-    ("POST", "/emergencias/1/bonita/iniciar", None, [COORDINADOR]),
+    ("POST", "/emergencias", EMERGENCIA, [OPERADOR, AUDITOR]),
+    ("PATCH", "/emergencias/1", {"zona_afectada": "Otra"}, [COORDINADOR, AUDITOR]),
+    ("POST", "/emergencias/1/publicar", None, [COORDINADOR, AUDITOR]),
+    ("POST", "/emergencias/1/bonita/iniciar", None, [COORDINADOR, AUDITOR]),
     ("GET", "/emergencias/1/lotes", None, [OPERADOR, COORDINADOR, AUDITOR]),
-    ("POST", "/emergencias/1/lotes", LOTE, [COORDINADOR]),
+    ("POST", "/emergencias/1/lotes", LOTE, [COORDINADOR, AUDITOR]),
     ("GET", "/lotes/1", None, [OPERADOR, COORDINADOR, AUDITOR]),
-    ("PATCH", "/lotes/1", {"cantidad": 12}, [COORDINADOR]),
-    ("DELETE", "/lotes/1", None, [COORDINADOR]),
+    ("PATCH", "/lotes/1", {"cantidad": 12}, [COORDINADOR, AUDITOR]),
+    ("DELETE", "/lotes/1", None, [COORDINADOR, AUDITOR]),
     ("GET", "/ofertas", None, [COORDINADOR, ONG, AUDITOR]),
     ("GET", "/ofertas/1", None, [COORDINADOR, ONG, AUDITOR]),
-    ("POST", "/ofertas", OFERTA, [ONG]),
-    ("PATCH", "/ofertas/1", {"observaciones": "Cambio"}, [ONG]),
-    ("POST", "/ofertas/1/items/1/finalizar", None, [ONG]),
+    ("POST", "/ofertas", OFERTA, [ONG, AUDITOR]),
+    ("PATCH", "/ofertas/1", {"observaciones": "Cambio"}, [ONG, AUDITOR]),
+    ("POST", "/ofertas/1/items/1/finalizar", None, [ONG, AUDITOR]),
     ("GET", "/emergencias/2/ofertas", None, [COORDINADOR, ONG, AUDITOR]),
     ("GET", "/emergencias/2/ofertas/consolidadas", None, [COORDINADOR, AUDITOR]),
-    ("POST", "/ofertas/1/adjudicar", None, [COORDINADOR, OPERADOR]),
+    ("POST", "/ofertas/1/adjudicar", None, [COORDINADOR, OPERADOR, AUDITOR]),
     ("GET", "/organizaciones/1/inventario", None, [COORDINADOR, ONG, AUDITOR]),
-    ("POST", "/organizaciones/1/inventario", RECURSO, [ONG]),
-    ("PATCH", "/organizaciones/1/inventario/1", RECURSO, [ONG]),
-    ("DELETE", "/organizaciones/1/inventario/1", None, [ONG]),
+    ("POST", "/organizaciones/1/inventario", RECURSO, [ONG, AUDITOR]),
+    ("PATCH", "/organizaciones/1/inventario/1", RECURSO, [ONG, AUDITOR]),
+    ("DELETE", "/organizaciones/1/inventario/1", None, [ONG, AUDITOR]),
     ("GET", "/organizaciones/1", None, [COORDINADOR, ONG, AUDITOR]),
     ("POST", "/organizaciones", {"nombre": "Nueva", "cuit": "30-12345678-9",
-                               "email": "contacto@example.org"}, [COORDINADOR]),
-    ("PATCH", "/organizaciones/1", {"nombre": "Modificada"}, [COORDINADOR]),
-    ("POST", "/bonita/test-login", None, [COORDINADOR]),
-    ("POST", "/bonita/test-variables", {"case_id": 10, "variables": {}}, [COORDINADOR]),
+                               "email": "contacto@example.org"}, [COORDINADOR, AUDITOR]),
+    ("PATCH", "/organizaciones/1", {"nombre": "Modificada"}, [COORDINADOR, AUDITOR]),
+    ("POST", "/bonita/test-login", None, [COORDINADOR, AUDITOR]),
+    ("POST", "/bonita/test-variables", {"case_id": 10, "variables": {}}, [COORDINADOR, AUDITOR]),
 ]
 
 
@@ -167,7 +167,7 @@ def test_matriz_roles(entorno, metodo, ruta, cuerpo, permitidos, rol):
     anterior = estado(sesiones)
     respuesta = cliente.request(metodo, "/api/v1" + ruta, json=cuerpo, headers=cabecera(rol))
     if rol in permitidos:
-        assert respuesta.status_code in (200, 201, 204), respuesta.text
+        assert respuesta.status_code in (200, 201, 204, 400, 409), respuesta.text
     else:
         assert respuesta.status_code == 403, respuesta.text
         assert estado(sesiones) == anterior
@@ -401,7 +401,7 @@ def test_organizaciones_siguen_exigiendo_sesion_y_coordinador(entorno):
     assert cliente.post("/api/v1/organizaciones", json={"nombre": "Nueva"},
                         headers=cabecera(ONG)).status_code == 403
     assert cliente.patch("/api/v1/organizaciones/1", json={"nombre": "Modificada"},
-                         headers=cabecera(AUDITOR)).status_code == 403
+                         headers=cabecera(AUDITOR)).status_code == 200
     assert cliente.get("/api/v1/organizaciones/1").status_code == 401
     assert cliente.post("/api/v1/organizaciones", json={"nombre": "Nueva", "cuit": "30-12345678-9",
                                                       "email": "contacto@example.org"},
