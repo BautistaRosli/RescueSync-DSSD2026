@@ -17,6 +17,7 @@ const NIVELES_GRAVEDAD: { valor: NivelGravedad; etiqueta: string }[] = [
 const ESTADOS_EMERGENCIA: { valor: EstadoEmergencia; etiqueta: string }[] = [
   { valor: 'esperando_lotes', etiqueta: 'Esperando lotes' },
   { valor: 'esperando_ofertas', etiqueta: 'Esperando ofertas' },
+  { valor: 'esperando_adjudicacion', etiqueta: 'Esperando adjudicación' },
   { valor: 'en_proceso', etiqueta: 'En proceso' },
   { valor: 'resuelta', etiqueta: 'Resuelta' },
 ]

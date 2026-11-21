@@ -28,9 +28,19 @@ export async function obtenerDashboardEmergencias(): Promise<DashboardEmergencia
 export async function listarBandejaEmergencias(
   params: BandaEmergenciasParams,
 ): Promise<BandaEmergencias> {
-  const { publicada, pagina, por_pagina } = params
+  const { publicada, estado, pagina, por_pagina } = params
+  const consulta = new URLSearchParams({
+    pagina: String(pagina),
+    por_pagina: String(por_pagina),
+  })
+  if (publicada !== undefined) {
+    consulta.set('publicada', String(publicada))
+  }
+  if (estado !== undefined) {
+    consulta.set('estado', estado)
+  }
   return apiGet<BandaEmergencias>(
-    `/emergencias/bandeja?publicada=${publicada}&pagina=${pagina}&por_pagina=${por_pagina}`,
+    `/emergencias/bandeja?${consulta.toString()}`,
   )
 }
 

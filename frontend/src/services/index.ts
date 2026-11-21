@@ -12,6 +12,20 @@ export {
 } from './emergencia'
 export { listarRoles } from './rol'
 export { listarLotes } from './lote'
+export { listarRecursosCloud, crearRecursoCloud } from './recursosCloud'
+export {
+  exportarReporteCompleto,
+  obtenerActivasResueltas,
+  obtenerDemandaOferta,
+  obtenerEmergenciasPorEstadoYGravedad,
+  obtenerEvolucionAbiertasResueltas,
+  obtenerNecesidadesActuales,
+  obtenerParticipacionConsorcios,
+  obtenerPrioridadAbiertas,
+  obtenerRankingOngs,
+  obtenerSuministrosMovilizados,
+  obtenerTiempoVida,
+} from './reportes'
 export { crearOrganizacion, listarOrganizaciones } from './organizacion'
 export {
   actualizarOferta,

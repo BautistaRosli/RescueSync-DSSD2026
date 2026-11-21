@@ -1,4 +1,9 @@
-import type { DashboardEmergencias, EmergenciaRespuesta } from '../types'
+import type {
+  DashboardEmergencias,
+  EmergenciaRespuesta,
+  DemandaVsOfertaPorRecurso,
+  RecursoAdjudicadoPorMes,
+} from '../types'
 
 interface DashboardEmergenciasProps {
   datos: DashboardEmergencias
@@ -28,15 +33,35 @@ function etiquetaDeEstado(estado: string): string {
   const etiquetas: Record<string, string> = {
     esperando_lotes: 'Esperando lotes',
     esperando_ofertas: 'Esperando ofertas',
+    esperando_adjudicacion: 'Esperando adjudicación',
     en_proceso: 'En proceso',
     resuelta: 'Resuelta',
   }
   return etiquetas[estado] ?? estado
 }
 
+function etiquetaDeGravedad(gravedad: string): string {
+  const etiquetas: Record<string, string> = {
+    baja: 'Baja',
+    media: 'Media',
+    alta: 'Alta',
+    critica: 'Crítica',
+  }
+  return etiquetas[gravedad] ?? gravedad
+}
+
+function numero(valor: number): string {
+  return valor.toLocaleString('es-AR', { maximumFractionDigits: 2 })
+}
+
+function decimal(valor: number | string): string {
+  return Number(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
 const ORDEN_ESTADOS = [
   'esperando_lotes',
   'esperando_ofertas',
+  'esperando_adjudicacion',
   'en_proceso',
   'resuelta',
 ]
@@ -241,17 +266,9 @@ function RankingOngs({ datos }: { datos: DashboardEmergencias }) {
 }
 
 function NecesidadesActuales({ datos }: { datos: DashboardEmergencias }) {
-  const necesidadesPorTipo = new Map<string, number>()
-
-  datos.emergencias
-    .filter((emergencia) => emergencia.estado !== 'resuelta')
-    .flatMap((emergencia) => emergencia.lotes)
-    .forEach((necesidad) => {
-      const tipo = necesidad.tipo.trim() || 'Sin tipo'
-      necesidadesPorTipo.set(tipo, (necesidadesPorTipo.get(tipo) ?? 0) + necesidad.cantidad)
-    })
-
-  const necesidades = Array.from(necesidadesPorTipo.entries()).sort(([, cantidadA], [, cantidadB]) => cantidadB - cantidadA)
+  const necesidades = datos.necesidades_actuales
+    .map((necesidad) => [necesidad.tipo_recurso, necesidad.cantidad_requerida] as const)
+    .sort(([, cantidadA], [, cantidadB]) => cantidadB - cantidadA)
   const maximo = Math.max(...necesidades.map(([, cantidad]) => cantidad), 1)
 
   function etiquetaDeNecesidad(tipo: string): string {
@@ -291,12 +308,111 @@ function NecesidadesActuales({ datos }: { datos: DashboardEmergencias }) {
   )
 }
 
+function ParticipacionConsorcios({ datos }: { datos: DashboardEmergencias }) {
+  const participacion = datos.participacion_consorcios
+  const porcentaje = Math.min(Math.max(participacion.porcentaje_consorcios, 0), 100)
+
+  return (
+    <section className="rounded-xl border border-slate-700 bg-slate-800 p-5 shadow-2xl" aria-labelledby="titulo-consorcios">
+      <h2 id="titulo-consorcios" className="text-lg font-bold text-cyan-400">Participación de consorcios</h2>
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-lg bg-slate-900/70 p-3">
+          <p className="text-xs text-slate-400">Ofertas adjudicadas</p>
+          <p className="mt-1 text-2xl font-bold text-white">{numero(participacion.total_ofertas_adjudicadas)}</p>
+        </div>
+        <div className="rounded-lg bg-slate-900/70 p-3">
+          <p className="text-xs text-slate-400">Conjuntas adjudicadas</p>
+          <p className="mt-1 text-2xl font-bold text-white">{numero(participacion.ofertas_conjuntas_adjudicadas)}</p>
+        </div>
+        <div className="rounded-lg bg-slate-900/70 p-3">
+          <p className="text-xs text-slate-400">Participación</p>
+          <p className="mt-1 text-2xl font-bold text-fuchsia-300">{decimal(participacion.porcentaje_consorcios)}%</p>
+        </div>
+      </div>
+      <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-700" aria-label={`Participación de consorcios: ${decimal(participacion.porcentaje_consorcios)}%`} role="img">
+        <div className="h-full rounded-full bg-fuchsia-400" style={{ width: `${porcentaje}%` }} />
+      </div>
+    </section>
+  )
+}
+
+function RecursosAdjudicadosPorMes({ datos }: { datos: DashboardEmergencias }) {
+  const recursos = datos.recursos_adjudicados_por_mes
+  const maximo = Math.max(...recursos.map((recurso) => recurso.cantidad_adjudicada), 1)
+
+  return (
+    <section className="rounded-xl border border-slate-700 bg-slate-800 p-5 shadow-2xl" aria-labelledby="titulo-adjudicados-mes">
+      <h2 id="titulo-adjudicados-mes" className="text-lg font-bold text-cyan-400">Recursos adjudicados por mes</h2>
+      {recursos.length === 0 ? <p className="mt-4 text-sm text-slate-400">No hay recursos adjudicados para mostrar.</p> : (
+        <>
+          <ul className="mt-5 flex flex-col gap-4" aria-label="Recursos adjudicados agrupados por mes y tipo">
+            {recursos.map((recurso: RecursoAdjudicadoPorMes) => (
+              <BarraHorizontal
+                key={`${recurso.mes}-${recurso.tipo_recurso}-${recurso.tipo_recurso_id ?? 'sin-id'}`}
+                etiqueta={`${recurso.mes} · ${recurso.tipo_recurso}`}
+                valor={recurso.cantidad_adjudicada}
+                maximo={maximo}
+                color="bg-emerald-400"
+              />
+            ))}
+          </ul>
+          <table className="sr-only"><caption>Recursos adjudicados por mes y tipo</caption><thead><tr><th>Mes</th><th>Recurso</th><th>Cantidad</th></tr></thead><tbody>
+            {recursos.map((recurso) => <tr key={`${recurso.mes}-${recurso.tipo_recurso}-${recurso.tipo_recurso_id ?? 'sin-id'}`}><td>{recurso.mes}</td><td>{recurso.tipo_recurso}</td><td>{numero(recurso.cantidad_adjudicada)}</td></tr>)}
+          </tbody></table>
+        </>
+      )}
+    </section>
+  )
+}
+
+function DemandaVsOferta({ datos }: { datos: DashboardEmergencias }) {
+  const recursos = datos.demanda_vs_oferta_por_recurso
+  const maximo = Math.max(...recursos.flatMap((recurso) => [recurso.cantidad_requerida, recurso.cantidad_ofrecida]), 1)
+
+  return (
+    <section className="rounded-xl border border-slate-700 bg-slate-800 p-5 shadow-2xl" aria-labelledby="titulo-demanda-oferta">
+      <h2 id="titulo-demanda-oferta" className="text-lg font-bold text-cyan-400">Demanda vs. oferta por recurso</h2>
+      {recursos.length === 0 ? <p className="mt-4 text-sm text-slate-400">No hay datos de demanda y oferta para mostrar.</p> : (
+        <>
+          <div className="mt-4 flex gap-4 text-xs"><span className="text-amber-300">● Demanda</span><span className="text-cyan-300">● Oferta</span></div>
+          <ul className="mt-5 flex flex-col gap-5" aria-label="Comparación de demanda y oferta por recurso">
+            {recursos.map((recurso: DemandaVsOfertaPorRecurso) => (
+              <li key={`${recurso.tipo_recurso}-${recurso.tipo_recurso_id ?? 'sin-id'}`}>
+                <div className="flex justify-between gap-3 text-sm"><span className="font-medium text-slate-200">{recurso.tipo_recurso}</span><span className="font-mono text-slate-300">{numero(recurso.cantidad_requerida)} / {numero(recurso.cantidad_ofrecida)}</span></div>
+                <div className="mt-2 flex flex-col gap-1"><div className="h-2 overflow-hidden rounded-full bg-slate-700"><div className="h-full rounded-full bg-amber-400" style={{ width: `${(recurso.cantidad_requerida / maximo) * 100}%` }} /></div><div className="h-2 overflow-hidden rounded-full bg-slate-700"><div className="h-full rounded-full bg-cyan-400" style={{ width: `${(recurso.cantidad_ofrecida / maximo) * 100}%` }} /></div></div>
+              </li>
+            ))}
+          </ul>
+          <table className="sr-only"><caption>Demanda y oferta por recurso</caption><thead><tr><th>Recurso</th><th>Demanda</th><th>Oferta</th></tr></thead><tbody>
+            {recursos.map((recurso) => <tr key={`${recurso.tipo_recurso}-${recurso.tipo_recurso_id ?? 'sin-id'}`}><td>{recurso.tipo_recurso}</td><td>{numero(recurso.cantidad_requerida)}</td><td>{numero(recurso.cantidad_ofrecida)}</td></tr>)}
+          </tbody></table>
+        </>
+      )}
+    </section>
+  )
+}
+
+function EmergenciasPorEstadoYGravedad({ datos }: { datos: DashboardEmergencias }) {
+  const filas = datos.emergencias_por_estado_y_gravedad
+  const estados = Array.from(new Set(filas.map((fila) => fila.estado))).sort((a, b) => ORDEN_ESTADOS.indexOf(a) - ORDEN_ESTADOS.indexOf(b))
+  const gravedades = ['baja', 'media', 'alta', 'critica']
+  const cantidad = (estado: string, gravedad: string) => filas.find((fila) => fila.estado === estado && fila.nivel_gravedad === gravedad)?.cantidad ?? 0
+
+  return (
+    <section className="rounded-xl border border-slate-700 bg-slate-800 p-5 shadow-2xl" aria-labelledby="titulo-estado-gravedad">
+      <h2 id="titulo-estado-gravedad" className="text-lg font-bold text-cyan-400">Emergencias por estado y gravedad</h2>
+      {filas.length === 0 ? <p className="mt-4 text-sm text-slate-400">No hay datos de estado y gravedad para mostrar.</p> : (
+        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[560px] text-left text-sm"><caption className="sr-only">Cantidad de emergencias por estado y nivel de gravedad</caption><thead><tr className="border-b border-slate-700 text-slate-400"><th className="px-3 py-2">Estado</th>{gravedades.map((gravedad) => <th key={gravedad} className="px-3 py-2 text-right">{etiquetaDeGravedad(gravedad)}</th>)}</tr></thead><tbody>
+          {estados.map((estado) => <tr key={estado} className="border-b border-slate-800"><th scope="row" className="px-3 py-3 font-medium text-slate-200">{etiquetaDeEstado(estado)}</th>{gravedades.map((gravedad) => <td key={gravedad} className="px-3 py-3 text-right font-mono text-cyan-300">{cantidad(estado, gravedad)}</td>)}</tr>)}
+        </tbody></table></div>
+      )}
+    </section>
+  )
+}
+
 export function DashboardEmergencias({ datos }: DashboardEmergenciasProps) {
-  const prioridadesAbiertas = datos.emergencias
-    .filter((emergencia) => emergencia.estado !== 'resuelta' && emergencia.prioridad != null)
-    .map((emergencia) => emergencia.prioridad as number)
-  const prioridadPromedio = prioridadesAbiertas.length > 0
-    ? (prioridadesAbiertas.reduce((suma, prioridad) => suma + prioridad, 0) / prioridadesAbiertas.length).toFixed(2)
+  const prioridadPromedio = datos.prioridad_abiertas.cantidad_emergencias > 0
+    ? datos.prioridad_abiertas.promedio_prioridad.toFixed(2)
     : '—'
 
   return (
@@ -326,6 +442,19 @@ export function DashboardEmergencias({ datos }: DashboardEmergenciasProps) {
       </div>
 
       <NecesidadesActuales datos={datos} />
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ParticipacionConsorcios datos={datos} />
+        <RecursosAdjudicadosPorMes datos={datos} />
+      </div>
+
+      <DemandaVsOferta datos={datos} />
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="lg:col-span-2">
+          <EmergenciasPorEstadoYGravedad datos={datos} />
+        </div>
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <RankingOngs datos={datos} />

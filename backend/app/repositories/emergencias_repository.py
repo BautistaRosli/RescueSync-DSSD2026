@@ -26,6 +26,7 @@ class EmergenciaRepository:
         publicada: bool,
         pagina: int,
         por_pagina: int,
+        estado: Optional[str] = None,
     ) -> list[Emergencia]:
         """Pagina un bucket de emergencias.
 
@@ -38,22 +39,32 @@ class EmergenciaRepository:
             if not publicada
             else (Emergencia.fecha_hora_registro.desc(), Emergencia.id.desc())
         )
-        return (
+        query = (
             self._consulta_con_lotes(db)
             .filter(Emergencia.publicada == publicada)
+        )
+        if estado is not None:
+            query = query.filter(Emergencia.estado == estado)
+        return (
+            query
             .order_by(*columnas)
             .limit(por_pagina)
             .offset((pagina - 1) * por_pagina)
             .all()
         )
 
-    def contar_por_publicada(self, db: Session, publicada: bool) -> int:
-        return (
-            db.query(func.count(Emergencia.id))
-            .filter(Emergencia.publicada == publicada)
-            .scalar()
-            or 0
+    def contar_por_publicada(
+        self,
+        db: Session,
+        publicada: bool,
+        estado: Optional[str] = None,
+    ) -> int:
+        query = db.query(func.count(Emergencia.id)).filter(
+            Emergencia.publicada == publicada
         )
+        if estado is not None:
+            query = query.filter(Emergencia.estado == estado)
+        return query.scalar() or 0
 
     def obtener_por_id(
         self, db: Session, emergencia_id: int, bloquear: bool = False

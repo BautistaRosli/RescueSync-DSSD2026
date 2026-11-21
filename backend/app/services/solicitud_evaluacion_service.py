@@ -4,14 +4,33 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from ..dto.solicitud_evaluacion_dto import SolicitudEvaluacion
-from ..models import AporteOfertaItem, LoteRecursoCloud, OrganizacionCloud
+from ..models import (
+    AporteOfertaItem,
+    EstadoEmergencia,
+    LoteRecursoCloud,
+    OrganizacionCloud,
+)
 from ..repositories import OfertaRepository
 from .emergencias_service import EmergenciaService
 
 
 class SolicitudEvaluacionService:
     def obtener(self, db: Session, emergencia_id: int) -> SolicitudEvaluacion:
-        emergencia = EmergenciaService().obtener_emergencia_entidad(db, emergencia_id)
+        """Construye la solicitud y cierra la convocatoria de ofertas.
+
+        La ruta HTTP se conserva como ``GET`` por compatibilidad con Bonita,
+        aunque la evaluación válida es un comando de transición:
+        ``ESPERA_OFERTAS`` pasa a ``ESPERANDO_ADJUDICACION``. No se reevalúa
+        una emergencia que ya dejó esa etapa.
+        """
+        emergencia = EmergenciaService().obtener_emergencia_entidad(
+            db, emergencia_id, bloquear=True
+        )
+        if emergencia.estado != EstadoEmergencia.ESPERA_OFERTAS:
+            raise HTTPException(
+                409,
+                "La emergencia no está esperando ofertas o ya fue evaluada",
+            )
         lotes = sorted(emergencia.lotes, key=lambda lote: lote.id)
         if not lotes:
             raise HTTPException(409, "La emergencia no tiene lotes: cargue al menos uno antes de evaluar")
@@ -61,9 +80,12 @@ class SolicitudEvaluacionService:
                               "aportes": [{"ong_id": nacional,
                                            "items": [{"tipo_recurso_id": tipos[lote_id], "cantidad": cantidad}]}
                                           for nacional, cantidad in sorted(cantidades)]})
-        return SolicitudEvaluacion(
+        respuesta = SolicitudEvaluacion(
             emergencia_id=emergencia_id,
             lotes=[{"lote_id": lote.id, "tipo_recurso_id": tipos[lote.id],
                     "cantidad_requerida": lote.cantidad} for lote in lotes],
             ofertas=filas,
         )
+        emergencia.estado = EstadoEmergencia.ESPERANDO_ADJUDICACION
+        db.commit()
+        return respuesta

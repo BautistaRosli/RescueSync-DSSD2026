@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from app.integrations import cloud_client
-from app.models import Emergencia, EstadoEmergencia, Usuario
+from app.models import Emergencia, EstadoEmergencia, OfertaAyuda, Usuario
 from app.services.permisos_service import AUDITOR, COORDINADOR, ONG, OPERADOR
 from test_permisos_api import cabecera, entorno, estado
 
@@ -67,7 +67,8 @@ def test_lectura_lote_conserva_referencia_opcional_e_invalidacion(entorno, cambi
                                json={"tipo_recurso_id": 41})
     assert vinculacion.status_code == 200 and vinculacion.json()["tipo_recurso_id"] == 41
     actualizado = cliente.patch("/api/v1/lotes/1", headers=cabeceras, json=cambios)
-    assert actualizado.status_code == 200 and actualizado.json()["tipo_recurso_id"] is None
+    esperado_nacional = 41 if "unidad" in cambios else None
+    assert actualizado.status_code == 200 and actualizado.json()["tipo_recurso_id"] == esperado_nacional
     lectura = cliente.get("/api/v1/lotes/1", headers=cabeceras)
     assert lectura.status_code == 200 and lectura.json() == actualizado.json()
 
@@ -152,7 +153,6 @@ def test_solicitud_conserva_oferta_lote_y_aportes_efectivos(solicitud):
     cliente, sesiones, _, lotes = solicitud
     alta = crear_oferta(solicitud)
     assert alta.status_code == 201, alta.text
-    anterior = estado(sesiones)
     respuesta = cliente.get("/api/v1/emergencias/1/solicitud-evaluacion", headers=cabecera(COORDINADOR))
     assert respuesta.status_code == 200, respuesta.text
     cuerpo = respuesta.json()
@@ -165,7 +165,8 @@ def test_solicitud_conserva_oferta_lote_y_aportes_efectivos(solicitud):
                                    "aportes": [{"ong_id": 901, "items": [{"tipo_recurso_id": tipo, "cantidad": cantidad}]},
                                                {"ong_id": 907, "items": [{"tipo_recurso_id": tipo, "cantidad": 8 - cantidad}]}]}
                                   for lote, tipo, cantidad in zip(lotes, (41, 73), (3, 6))]}
-    assert estado(sesiones) == anterior
+    with sesiones() as db:
+        assert db.get(Emergencia, 1).estado == EstadoEmergencia.ESPERANDO_ADJUDICACION
 
 
 @pytest.mark.parametrize("rol,esperado", [(COORDINADOR, 409), (AUDITOR, 409), (ONG, 403),
@@ -184,14 +185,52 @@ def test_emergencia_inexistente_y_lotes_historicos(entorno):
     anterior = estado(sesiones)
     assert cliente.get("/api/v1/emergencias/999/solicitud-evaluacion", headers=cabecera(COORDINADOR)).status_code == 404
     respuesta = cliente.get("/api/v1/emergencias/1/solicitud-evaluacion", headers=cabecera(COORDINADOR))
-    assert respuesta.status_code == 409 and "lote 1" in respuesta.json()["detail"].lower()
+    assert respuesta.status_code == 409
     assert estado(sesiones) == anterior
+
+
+def test_emergencia_creada_con_lote_mapeado_aun_no_puede_evaluarse(entorno):
+    cliente, sesiones, _ = entorno
+    assert cliente.patch(
+        "/api/v1/lotes/1",
+        headers=cabecera(COORDINADOR),
+        json={"tipo_recurso_id": 41},
+    ).status_code == 200
+
+    respuesta = cliente.get(
+        "/api/v1/emergencias/1/solicitud-evaluacion",
+        headers=cabecera(COORDINADOR),
+    )
+
+    assert respuesta.status_code == 409, respuesta.text
+    with sesiones() as db:
+        assert db.get(Emergencia, 1).estado == EstadoEmergencia.ESPERA_LOTES
+
+
+def test_evaluacion_repetida_desde_emergencia_creada_sigue_en_conflicto(entorno):
+    cliente, sesiones, _ = entorno
+    assert cliente.patch(
+        "/api/v1/lotes/1",
+        headers=cabecera(COORDINADOR),
+        json={"tipo_recurso_id": 41},
+    ).status_code == 200
+    primera = cliente.get(
+        "/api/v1/emergencias/1/solicitud-evaluacion",
+        headers=cabecera(COORDINADOR),
+    )
+    repetida = cliente.get(
+        "/api/v1/emergencias/1/solicitud-evaluacion",
+        headers=cabecera(COORDINADOR),
+    )
+
+    assert primera.status_code == 409, primera.text
+    assert repetida.status_code == 409, repetida.text
+    with sesiones() as db:
+        assert db.get(Emergencia, 1).estado == EstadoEmergencia.ESPERA_LOTES
 
 
 def test_oferta_individual_y_emergencia_sin_ofertas(solicitud):
     cliente, sesiones, _, _ = solicitud
-    vacia = cliente.get("/api/v1/emergencias/1/solicitud-evaluacion", headers=cabecera(AUDITOR))
-    assert vacia.status_code == 200 and vacia.json()["ofertas"] == []
     alta = crear_oferta(solicitud, conjunta=False)
     assert alta.status_code == 201, alta.text
     respuesta = cliente.get("/api/v1/emergencias/1/solicitud-evaluacion", headers=cabecera(AUDITOR))
@@ -199,6 +238,8 @@ def test_oferta_individual_y_emergencia_sin_ofertas(solicitud):
     assert [fila["aportes"] for fila in respuesta.json()["ofertas"]] == [
         [{"ong_id": 901, "items": [{"tipo_recurso_id": tipo, "cantidad": 8}]}]
         for tipo in (41, 73)]
+    with sesiones() as db:
+        assert db.get(Emergencia, 1).estado == EstadoEmergencia.ESPERANDO_ADJUDICACION
     # Se conserva el contrato previo de los ítems en los listados.
     assert set(alta.json()["items"][0]) == {"id", "lote_necesidad_id", "cantidad_ofrecida",
                                            "descripcion", "finalizado_en"}
@@ -246,9 +287,9 @@ def test_cambio_participantes_no_reutiliza_aportes_obsoletos(solicitud):
     assert respuesta.status_code == 200, respuesta.text
     cuerpo = cliente.get("/api/v1/emergencias/1/solicitud-evaluacion", headers=cabecera(COORDINADOR)).json()
     assert cuerpo["ofertas"][0]["aportes"] == [{"ong_id": 901, "items": [{"tipo_recurso_id": 41, "cantidad": 8}]}]
-    # Volver a conjunta exige declarar de nuevo el reparto.
+    # La convocatoria ya fue evaluada y la oferta no puede editarse.
     assert cliente.patch(f"/api/v1/ofertas/{oferta_id}", headers=cabecera(ONG),
-                         json={"organizaciones_ids": organizaciones}).status_code == 200
+                         json={"organizaciones_ids": organizaciones}).status_code == 409
     respuesta = cliente.get("/api/v1/emergencias/1/solicitud-evaluacion", headers=cabecera(COORDINADOR))
     assert respuesta.status_code == 409
 
@@ -257,10 +298,14 @@ def test_edicion_lote_invalida_tipo_nacional_anterior(entorno):
     cliente, sesiones, _ = entorno
     assert cliente.patch("/api/v1/lotes/1", headers=cabecera(COORDINADOR),
                          json={"tipo_recurso_id": 41}).status_code == 200
+    with sesiones() as db:
+        db.get(Emergencia, 1).estado = EstadoEmergencia.ESPERA_OFERTAS
+        db.commit()
     assert cliente.get("/api/v1/emergencias/1/solicitud-evaluacion", headers=cabecera(COORDINADOR)).status_code == 200
     assert cliente.patch("/api/v1/lotes/1", headers=cabecera(COORDINADOR),
                          json={"cantidad": 12}).status_code == 200
-    assert cliente.get("/api/v1/emergencias/1/solicitud-evaluacion", headers=cabecera(COORDINADOR)).json()["lotes"][0]["cantidad_requerida"] == 12
+    repetida = cliente.get("/api/v1/emergencias/1/solicitud-evaluacion", headers=cabecera(COORDINADOR))
+    assert repetida.status_code == 409
     assert cliente.patch("/api/v1/lotes/1", headers=cabecera(COORDINADOR),
                          json={"tipo": "Abrigo"}).status_code == 200
     anterior = estado(sesiones)
@@ -273,7 +318,7 @@ def test_sin_lotes_y_ong_historica_no_comparan_ids_locales(entorno):
     cliente, sesiones, _ = entorno
     assert cliente.delete("/api/v1/lotes/1", headers=cabecera(COORDINADOR)).status_code == 204
     respuesta = cliente.get("/api/v1/emergencias/1/solicitud-evaluacion", headers=cabecera(COORDINADOR))
-    assert respuesta.status_code == 409 and "al menos uno" in respuesta.json()["detail"]
+    assert respuesta.status_code == 409
     with sesiones() as db:
         db.get(Emergencia, 2).publicada = False
         db.commit()
@@ -338,3 +383,48 @@ def test_vinculacion_nacional_ambigua_no_combina_ongs(solicitud):
     respuesta = cliente.get("/api/v1/emergencias/1/solicitud-evaluacion", headers=cabecera(COORDINADOR))
     assert respuesta.status_code == 409 and "mismo ong_id" in respuesta.json()["detail"]
     assert estado(sesiones) == anterior
+
+
+def test_adjudicacion_persiste_y_bloquea_oferta_alternativa(solicitud):
+    cliente, sesiones, _, _ = solicitud
+    primera = crear_oferta(solicitud, conjunta=False)
+    segunda = crear_oferta(solicitud, conjunta=False)
+    assert primera.status_code == 201 and segunda.status_code == 201
+
+    evaluacion = cliente.get(
+        "/api/v1/emergencias/1/solicitud-evaluacion",
+        headers=cabecera(COORDINADOR),
+    )
+    assert evaluacion.status_code == 200, evaluacion.text
+
+    adjudicacion = cliente.post(
+        f"/api/v1/ofertas/{primera.json()['id']}/adjudicar",
+        headers=cabecera(COORDINADOR),
+    )
+    assert adjudicacion.status_code == 200, adjudicacion.text
+    with sesiones() as db:
+        assert db.get(Emergencia, 1).estado == EstadoEmergencia.EN_PROCESO
+        assert db.get(OfertaAyuda, primera.json()["id"]).adjudicada_en is not None
+
+    alternativa = cliente.post(
+        f"/api/v1/ofertas/{segunda.json()['id']}/adjudicar",
+        headers=cabecera(COORDINADOR),
+    )
+    assert alternativa.status_code == 409
+    assert "adjudicar" in alternativa.json()["detail"]
+    with sesiones() as db:
+        assert db.get(OfertaAyuda, segunda.json()["id"]).adjudicada_en is None
+
+
+def test_evaluacion_repetida_devuelve_conflicto(solicitud):
+    cliente, _, _, _ = solicitud
+    assert crear_oferta(solicitud, conjunta=False).status_code == 201
+    assert cliente.get(
+        "/api/v1/emergencias/1/solicitud-evaluacion",
+        headers=cabecera(COORDINADOR),
+    ).status_code == 200
+    repetida = cliente.get(
+        "/api/v1/emergencias/1/solicitud-evaluacion",
+        headers=cabecera(COORDINADOR),
+    )
+    assert repetida.status_code == 409

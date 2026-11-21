@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 import httpx
 from fastapi import HTTPException
@@ -28,6 +29,11 @@ from ..schemas import (
 from .security_service import generar_token, hashear_password, verificar_password
 
 logger = logging.getLogger(__name__)
+LIMITE_DETALLE_CLOUD = 300
+ONGS_DEMO_CLOUD_POR_CUIT = {
+    "30-12345678-5": 8,
+    "30-87654321-4": 9,
+}
 
 ROLES_INICIALES = [
     "OPERADOR_MUNICIPAL",
@@ -39,6 +45,7 @@ ROLES_INICIALES = [
 ORGANIZACION_ONU = {
     "nombre": "Organización de las Naciones Unidas",
     "tipo": "ong",
+    "cuit": "30-12345678-5",
     "email": "ong@onu.org",
     "telefono": "754 1200",
     "activa": True,
@@ -47,6 +54,7 @@ ORGANIZACION_ONU = {
 ORGANIZACION_UNICEF = {
     "nombre": "UNICEF",
     "tipo": "ong",
+    "cuit": "30-87654321-4",
     "email": "unicef@unicef.org",
     "telefono": "754 1201",
     "activa": True,
@@ -135,26 +143,148 @@ class OrganizacionService:
             raise HTTPException(503, "No se pudo completar el registro de la organización") from None
         return OrganizacionRespuesta.model_validate(creada)
 
-    def _registrar_ong_cloud(self, data: OrganizacionCrear) -> int:
+    def _registrar_ong_cloud(
+        self, data: OrganizacionCrear, recuperar_duplicada: bool = False
+    ) -> int:
         try:
             token = cloud_client.obtener_token_aplicacion()
             respuesta = cloud_client.registrar_ong(data.cuit, data.nombre, data.email, token)
-        except (cloud_client.AutenticacionAplicacionError, httpx.RequestError, httpx.InvalidURL, ValueError):
+        except (cloud_client.AutenticacionAplicacionError, httpx.RequestError, httpx.InvalidURL, ValueError) as exc:
+            logger.warning("No se pudo registrar la ONG en Cloud: %s", type(exc).__name__)
             raise HTTPException(503, "Registro de ONG en Cloud no disponible") from None
         if respuesta.status_code == 409:
+            logger.info("Cloud rechazó el registro de ONG por CUIT duplicado (status=%s)", respuesta.status_code)
+            if recuperar_duplicada:
+                return self._recuperar_ong_cloud_duplicada(data, respuesta, token)
             raise HTTPException(409, "El CUIT ya está registrado en Cloud")
+
+        if respuesta.status_code != 201:
+            detalle = self._detalle_respuesta_cloud(respuesta)
+            logger.warning(
+                "Cloud rechazó el registro de ONG (status=%s, detalle=%s)",
+                respuesta.status_code,
+                detalle,
+            )
+            raise HTTPException(
+                502,
+                f"Cloud respondió con estado {respuesta.status_code}: {detalle}",
+            ) from None
+
         try:
-            if respuesta.status_code != 201:
-                raise ValueError()
             datos = respuesta.json()
-            identidad = {"cuit": data.cuit, "razon_social": data.nombre.strip(), "email": data.email}
-            if (not isinstance(datos, dict) or type(datos.get("id")) is not int
-                    or datos["id"] <= 0
-                    or any(datos.get(campo) != valor for campo, valor in identidad.items())):
-                raise ValueError()
         except (ValueError, TypeError):
-            raise HTTPException(503, "Registro de ONG en Cloud no disponible") from None
+            datos = None
+        identidad = {"cuit": data.cuit, "razon_social": data.nombre.strip(), "email": data.email}
+        if (not isinstance(datos, dict) or type(datos.get("id")) is not int
+                or datos["id"] <= 0
+                or any(datos.get(campo) != valor for campo, valor in identidad.items())):
+            detalle = self._detalle_respuesta_cloud(respuesta)
+            logger.warning(
+                "Cloud devolvió una respuesta inválida al registrar una ONG (status=%s, cuerpo=%s)",
+                respuesta.status_code,
+                detalle,
+            )
+            raise HTTPException(
+                502,
+                f"Cloud devolvió una respuesta inválida para el registro de ONG: {detalle}",
+            ) from None
         return datos["id"]
+
+    def _recuperar_ong_cloud_duplicada(
+        self, data: OrganizacionCrear, respuesta: httpx.Response, token: str
+    ) -> int:
+        """Recupera una ONG demo existente y valida su identidad contra Cloud."""
+        ong_id = self._extraer_id_ong_cloud(respuesta)
+        if ong_id is None:
+            ong_id = ONGS_DEMO_CLOUD_POR_CUIT.get(data.cuit)
+        if ong_id is None:
+            raise RuntimeError(
+                f"Cloud informó que la ONG '{data.nombre}' ya existe, pero no devolvió su id "
+                "y no hay un id demo de desarrollo configurado para su CUIT"
+            )
+
+        try:
+            verificacion = cloud_client.obtener_ong(ong_id, token)
+        except (httpx.RequestError, httpx.InvalidURL) as exc:
+            raise RuntimeError(
+                f"No se pudo verificar en Cloud la ONG demo '{data.nombre}' (id={ong_id}): "
+                f"{type(exc).__name__}"
+            ) from exc
+        if verificacion.status_code != 200:
+            detalle = self._detalle_respuesta_cloud(verificacion)
+            raise RuntimeError(
+                f"No se pudo verificar en Cloud la ONG demo '{data.nombre}' (id={ong_id}): "
+                f"Cloud respondió con estado {verificacion.status_code}: {detalle}"
+            )
+
+        try:
+            datos = verificacion.json()
+        except (ValueError, TypeError):
+            datos = None
+        if not isinstance(datos, dict) or type(datos.get("id")) is not int or datos["id"] != ong_id:
+            raise RuntimeError(
+                f"Cloud devolvió una respuesta inválida al verificar la ONG demo "
+                f"'{data.nombre}' (id={ong_id})"
+            )
+        equivalencias = {
+            "cuit": data.cuit,
+            "razon_social": data.nombre.strip(),
+            "email": data.email,
+        }
+        if any(campo in datos and datos[campo] != valor for campo, valor in equivalencias.items()):
+            raise RuntimeError(
+                f"La ONG demo '{data.nombre}' no coincide con la identidad de Cloud para id={ong_id}"
+            )
+        return ong_id
+
+    @staticmethod
+    def _extraer_id_ong_cloud(respuesta: httpx.Response) -> int | None:
+        try:
+            cuerpo = respuesta.json()
+        except (ValueError, TypeError):
+            return None
+
+        def buscar(valor: object) -> int | None:
+            if isinstance(valor, dict):
+                for clave in ("id", "ong_id"):
+                    if type(valor.get(clave)) is int and valor[clave] > 0:
+                        return valor[clave]
+                for anidado in valor.values():
+                    encontrado = buscar(anidado)
+                    if encontrado is not None:
+                        return encontrado
+            elif isinstance(valor, list):
+                for anidado in valor:
+                    encontrado = buscar(anidado)
+                    if encontrado is not None:
+                        return encontrado
+            return None
+
+        return buscar(cuerpo)
+
+    @staticmethod
+    def _detalle_respuesta_cloud(respuesta: httpx.Response) -> str:
+        """Obtiene un detalle acotado sin exponer credenciales en errores o logs."""
+        try:
+            datos = respuesta.json()
+        except (ValueError, TypeError):
+            datos = None
+
+        detalle = None
+        if isinstance(datos, dict):
+            for campo in ("detail", "message"):
+                if isinstance(datos.get(campo), (str, int, float, bool)):
+                    detalle = str(datos[campo])
+                    break
+        if detalle is None:
+            detalle = respuesta.text or "sin detalle"
+
+        detalle = detalle[:LIMITE_DETALLE_CLOUD]
+        return re.sub(
+            r"(?i)((?:access_token|token|password|contraseña|credential|secret)\s*[=:]\s*)([^,;\s}\]]+)",
+            r"\1[redactado]",
+            detalle,
+        )
 
     def actualizar_organizacion(
         self, db: Session, organizacion_id: int, data: OrganizacionActualizar
@@ -347,6 +477,63 @@ class AuthService:
             db.rollback()
             logger.warning("Precarga %s: no se pudo guardar la vinculación; configure %s=%s para reintentar por consulta.",
                            clave, variable_id, ong_id if ong_id is not None else "<ID confirmado en Cloud>")
+        if organizacion is not None:
+            self._vincular_organizacion_cloud(db, organizacion, campos)
+            return organizacion
+
+        datos = OrganizacionCrear(**campos)
+        ong_id = self._ong_id_demo_cloud(datos)
+        try:
+            organizacion = self._organizaciones.crear(
+                db, Organizacion(**datos.model_dump(exclude={"cuit"}))
+            )
+            if ong_id is not None:
+                organizacion.referencia_cloud = OrganizacionCloud(ong_id=ong_id)
+                self._organizaciones.actualizar(db, organizacion)
+            return organizacion
+        except IntegrityError:
+            db.rollback()
+            # Otro proceso puede haber sembrado la misma organización al arrancar.
+            organizacion = self._organizaciones.obtener_por_nombre(db, campos["nombre"])
+            if organizacion is None:
+                raise
+            self._vincular_organizacion_cloud(db, organizacion, campos)
+            return organizacion
+
+    def _vincular_organizacion_cloud(
+        self,
+        db: Session,
+        organizacion: Organizacion,
+        campos: dict[str, str | bool],
+    ) -> None:
+        """Vincula una organización demo existente que aún no tiene referencia Cloud."""
+        if organizacion.referencia_cloud is not None:
+            return
+        datos = OrganizacionCrear(**campos)
+        ong_id = self._ong_id_demo_cloud(datos)
+        if ong_id is None:
+            return
+        try:
+            organizacion.referencia_cloud = OrganizacionCloud(ong_id=ong_id)
+            self._organizaciones.actualizar(db, organizacion)
+        except SQLAlchemyError:
+            db.rollback()
+            raise HTTPException(
+                503,
+                "No se pudo persistir la vinculación de la organización demo con Cloud",
+            ) from None
+
+    def _ong_id_demo_cloud(self, datos: OrganizacionCrear) -> int | None:
+        """Registra en Cloud solo las organizaciones ONG sembradas en development."""
+        if os.getenv("APP_ENV") != "development" or datos.tipo != "ong":
+            return None
+        try:
+            return OrganizacionService()._registrar_ong_cloud(datos, recuperar_duplicada=True)
+        except HTTPException as exc:
+            raise RuntimeError(
+                f"No se pudo vincular la organización demo '{datos.nombre}' con Cloud: "
+                f"{exc.detail}"
+            ) from exc
 
     def registrar_usuario(self, db: Session, data: UsuarioCrear) -> AuthRespuesta:
         if self._usuarios.obtener_por_email(db, data.email) is not None:

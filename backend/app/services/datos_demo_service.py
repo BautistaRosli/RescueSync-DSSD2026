@@ -15,7 +15,11 @@ from ..models import (
     OfertaItem,
     Organizacion,
     RecursoInventario,
+    LoteRecursoCloud,
 )
+from ..schemas.recursos_cloud_schema import RecursoCloudCrear
+from .recursos_cloud_service import RecursosCloudService
+from ..utils.recursos import normalizar_nombre_recurso
 
 PREFIJO_DEMO = "[DEMO DASHBOARD]"
 CANTIDAD_EMERGENCIAS_DEMO = 10
@@ -39,6 +43,31 @@ def _fechas_demo_equivalentes(actual: datetime | None, esperada: datetime) -> bo
     if actual.tzinfo is None:
         actual = actual.replace(tzinfo=timezone.utc)
     return actual == esperada
+
+
+def _resolver_equivalencias_cloud(db: Session, emergencias_demo: list[Emergencia]) -> bool:
+    """Completa equivalencias nacionales demo sin crear IDs locales ficticios."""
+    servicio = RecursosCloudService()
+    hubo_cambios = False
+    for emergencia in emergencias_demo:
+        for lote in emergencia.lotes:
+            nombre = normalizar_nombre_recurso(lote.tipo)
+            if lote.tipo != nombre:
+                lote.tipo = nombre
+                hubo_cambios = True
+            if lote.referencia_cloud is not None:
+                continue
+            try:
+                recurso, _ = servicio.crear(
+                    RecursoCloudCrear(nombre=nombre, descripcion=lote.descripcion)
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"No se pudo resolver el recurso demo '{nombre}' en Cloud: {exc}"
+                ) from exc
+            lote.referencia_cloud = LoteRecursoCloud(tipo_recurso_id=recurso.id)
+            hubo_cambios = True
+    return hubo_cambios
 
 _DATOS_EMERGENCIAS = (
     ("Zona Norte", "Agua potable", NivelGravedad.ALTA, 9, EstadoEmergencia.ESPERA_OFERTAS, True),
@@ -142,6 +171,12 @@ def sembrar_datos_demo(db: Session) -> None:
             ):
                 emergencia.fecha_publicacion = fecha_publicacion
                 hubo_cambios = True
+
+    # Los lotes demo deben poder participar en la evaluación nacional desde
+    # el primer arranque. La operación es idempotente: reutiliza el catálogo
+    # Cloud y solo persiste la equivalencia local que todavía falte.
+    if _resolver_equivalencias_cloud(db, emergencias_demo):
+        hubo_cambios = True
 
     nombres_organizaciones_demo = (
         "Organización de las Naciones Unidas",
@@ -412,6 +447,11 @@ def sembrar_datos_demo(db: Session) -> None:
                 )
                 .all()
             )
+            for recurso in recursos_demo:
+                tipo_normalizado = normalizar_nombre_recurso(recurso.tipo)
+                if recurso.tipo != tipo_normalizado:
+                    recurso.tipo = tipo_normalizado
+                    hubo_cambios = True
             descripcion_derivada = (
                 f"{PREFIJO_DEMO} Inventario derivado de ofertas adjudicadas"
             )

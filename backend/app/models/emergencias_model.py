@@ -19,6 +19,7 @@ class NivelGravedad:
 class EstadoEmergencia:
     ESPERA_LOTES = "esperando_lotes"
     ESPERA_OFERTAS = "esperando_ofertas"
+    ESPERANDO_ADJUDICACION = "esperando_adjudicacion"
     EN_PROCESO = "en_proceso"
     RESUELTA = "resuelta"
 

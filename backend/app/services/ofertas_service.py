@@ -143,16 +143,49 @@ class OfertaService:
         oferta_id: int,
         background_tasks: BackgroundTasks,
     ) -> AdjudicacionRespuesta:
-        """Adjudica una oferta y agenda el aviso por email a la ONG."""
-        oferta = self._obtener_oferta_entidad(db, oferta_id)
+        """Adjudica exclusivamente una oferta de una emergencia evaluada.
+
+        La evaluación previa deja la emergencia en
+        ``ESPERANDO_ADJUDICACION``. La adjudicación persiste la fecha de la
+        oferta y pasa la emergencia a ``EN_PROCESO``;
+        cualquier oferta alternativa queda bloqueada con ``409``.
+        """
+        oferta = self._obtener_oferta_entidad(db, oferta_id, bloquear=True)
+        emergencia = self._emergencias.obtener_emergencia_entidad(
+            db, oferta.emergencia_id, bloquear=True
+        )
+        if emergencia.estado != EstadoEmergencia.ESPERANDO_ADJUDICACION:
+            raise HTTPException(
+                status_code=409,
+                detail="La emergencia debe estar esperando adjudicación para adjudicar una oferta",
+            )
+        if oferta.adjudicada_en is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="La oferta ya fue adjudicada",
+            )
+        otra_adjudicada = (
+            db.query(OfertaAyuda)
+            .filter(
+                OfertaAyuda.emergencia_id == oferta.emergencia_id,
+                OfertaAyuda.adjudicada_en.is_not(None),
+                OfertaAyuda.id != oferta.id,
+            )
+            .first()
+        )
+        if otra_adjudicada is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="La emergencia ya tiene otra oferta adjudicada",
+            )
         if not oferta.items:
             raise HTTPException(
                 status_code=400,
                 detail="La oferta no tiene ítems cargados",
             )
-        # Idempotente: si ya estaba adjudicada se conserva la fecha original.
         if oferta.adjudicada_en is None:
             oferta.adjudicada_en = datetime.now(timezone.utc)
+            emergencia.estado = EstadoEmergencia.EN_PROCESO
             self._repository.actualizar(db, oferta)
         self._programar_notificacion_adjudicacion(db, oferta, background_tasks)
         return AdjudicacionRespuesta(

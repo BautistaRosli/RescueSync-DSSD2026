@@ -53,6 +53,11 @@ def obtener_solicitud_evaluacion(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
+    """Evalúa la convocatoria y la deja en espera de adjudicación.
+
+    Se mantiene ``GET`` por compatibilidad con el proceso Bonita existente;
+    una evaluación válida tiene efecto de escritura y no puede repetirse.
+    """
     verificar_emergencia(db, usuario, emergencia_id)
     return SolicitudEvaluacionService().obtener(db, emergencia_id)
 

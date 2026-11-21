@@ -20,6 +20,7 @@ from app.models import (
     LoteNecesidad,
     OfertaAyuda,
     OfertaItem,
+    LoteRecursoCloud,
     Organizacion,
     RecursoInventario,
     Rol,
@@ -41,6 +42,17 @@ CASOS = [
     ("GET", "/emergencias", None, ROLES),
     ("GET", "/emergencias/bandeja?publicada=false", None, [OPERADOR, COORDINADOR, AUDITOR]),
     ("GET", "/emergencias/dashboard", None, [AUDITOR]),
+    ("GET", "/reportes/emergencias", None, [AUDITOR]),
+    ("GET", "/reportes/suministros-movilizados", None, [AUDITOR]),
+    ("GET", "/reportes/consorcios", None, [AUDITOR]),
+    ("GET", "/reportes/ranking-ongs", None, [AUDITOR]),
+    ("GET", "/reportes/demanda-oferta", None, [AUDITOR]),
+    ("GET", "/reportes/activas-resueltas", None, [AUDITOR]),
+    ("GET", "/reportes/evolucion-abiertas-resueltas", None, [AUDITOR]),
+    ("GET", "/reportes/necesidades-actuales", None, [AUDITOR]),
+    ("GET", "/reportes/tiempo-vida", None, [AUDITOR]),
+    ("GET", "/reportes/prioridad-abiertas", None, [AUDITOR]),
+    ("GET", "/reportes/exportar", None, [AUDITOR]),
     ("GET", "/emergencias/1", None, [OPERADOR, COORDINADOR, AUDITOR]),
     ("POST", "/emergencias", EMERGENCIA, [OPERADOR, AUDITOR]),
     ("PATCH", "/emergencias/1", {"zona_afectada": "Otra"}, [COORDINADOR, AUDITOR]),
@@ -217,6 +229,65 @@ def test_listados_filtran_antes_de_devolver_y_contar(entorno):
         assert [d["id"] for d in cliente.get("/api/v1" + ruta, headers=cabecera(ONG)).json()] == [1]
 
 
+def test_bandeja_filtra_por_cada_estado_y_omite_el_filtro(entorno):
+    cliente, sesiones, _ = entorno
+    estados = [
+        EstadoEmergencia.ESPERA_LOTES,
+        EstadoEmergencia.ESPERA_OFERTAS,
+        EstadoEmergencia.ESPERANDO_ADJUDICACION,
+        EstadoEmergencia.EN_PROCESO,
+        EstadoEmergencia.RESUELTA,
+    ]
+    with sesiones() as db:
+        db.add_all([
+            Emergencia(
+                id=10 + indice,
+                publicada=True,
+                estado=estado,
+                **EMERGENCIA,
+            )
+            for indice, estado in enumerate(estados)
+            if estado != EstadoEmergencia.ESPERA_OFERTAS
+        ])
+        db.commit()
+
+    for estado_filtrado in estados:
+        respuesta = cliente.get(
+            "/api/v1/emergencias/bandeja",
+            params={
+                "publicada": True,
+                "estado": estado_filtrado,
+                "pagina": 1,
+                "por_pagina": 1,
+            },
+            headers=cabecera(COORDINADOR),
+        )
+        assert respuesta.status_code == 200, respuesta.text
+        cuerpo = respuesta.json()
+        assert cuerpo["total"] == 1
+        assert cuerpo["paginas"] == 1
+        assert len(cuerpo["items"]) == 1
+        assert cuerpo["items"][0]["estado"] == estado_filtrado
+
+    sin_filtro = cliente.get(
+        "/api/v1/emergencias/bandeja",
+        params={"publicada": True, "pagina": 1, "por_pagina": 2},
+        headers=cabecera(COORDINADOR),
+    )
+    assert sin_filtro.status_code == 200, sin_filtro.text
+    assert sin_filtro.json()["total"] == len(estados)
+    assert sin_filtro.json()["paginas"] == 3
+
+
+def test_bandeja_rechaza_estado_invalido(entorno):
+    respuesta = entorno[0].get(
+        "/api/v1/emergencias/bandeja",
+        params={"publicada": True, "estado": "estado_inexistente"},
+        headers=cabecera(COORDINADOR),
+    )
+    assert respuesta.status_code == 422
+
+
 def test_dashboard_de_emergencias_devuelve_resumen_solo_para_auditor(entorno):
     cliente = entorno[0]
     respuesta = cliente.get("/api/v1/emergencias/dashboard", headers=cabecera(AUDITOR))
@@ -227,6 +298,8 @@ def test_dashboard_de_emergencias_devuelve_resumen_solo_para_auditor(entorno):
         "total", "conteos_por_estado", "emergencias_activas",
         "emergencias_resueltas", "evolucion_abiertas_resueltas", "ranking_ongs",
         "cantidad_total_necesidades", "tiempo_medio_vida_horas", "emergencias",
+        "participacion_consorcios", "recursos_adjudicados_por_mes",
+        "demanda_vs_oferta_por_recurso", "emergencias_por_estado_y_gravedad",
     }
     assert cuerpo["total"] == 2
     assert cuerpo["conteos_por_estado"] == {
@@ -239,6 +312,22 @@ def test_dashboard_de_emergencias_devuelve_resumen_solo_para_auditor(entorno):
     assert cuerpo["evolucion_abiertas_resueltas"][0]["abiertas"] == 2
     assert cuerpo["evolucion_abiertas_resueltas"][0]["resueltas"] == 0
     assert cuerpo["ranking_ongs"] == []
+    assert cuerpo["participacion_consorcios"] == {
+        "total_ofertas_adjudicadas": 0,
+        "ofertas_conjuntas_adjudicadas": 0,
+        "porcentaje_consorcios": 0.0,
+    }
+    assert cuerpo["recursos_adjudicados_por_mes"] == []
+    assert cuerpo["demanda_vs_oferta_por_recurso"] == [{
+        "tipo_recurso": "agua",
+        "tipo_recurso_id": None,
+        "cantidad_requerida": 20,
+        "cantidad_ofrecida": 5,
+    }]
+    assert cuerpo["emergencias_por_estado_y_gravedad"] == [
+        {"estado": EstadoEmergencia.ESPERA_LOTES, "nivel_gravedad": "media", "cantidad": 1},
+        {"estado": EstadoEmergencia.ESPERA_OFERTAS, "nivel_gravedad": "media", "cantidad": 1},
+    ]
     assert cuerpo["cantidad_total_necesidades"] == 20
     assert cuerpo["tiempo_medio_vida_horas"] >= 0
     assert [emergencia["id"] for emergencia in cuerpo["emergencias"]] == [2, 1]
@@ -254,10 +343,12 @@ def test_dashboard_calcula_metricas_de_resolucion_necesidades_y_ongs(entorno):
     with sesiones() as db:
         db.get(Emergencia, 1).estado = EstadoEmergencia.RESUELTA
         db.get(Emergencia, 1).prioridad = None
-        db.get(Emergencia, 1).fecha_hora_registro = ahora - timedelta(hours=4)
+        db.get(Emergencia, 1).fecha_hora_registro = ahora - timedelta(days=1, hours=4)
         db.get(Emergencia, 2).prioridad = 3
         db.get(Emergencia, 2).fecha_hora_registro = ahora - timedelta(hours=2)
         db.get(OfertaAyuda, 1).adjudicada_en = ahora
+        db.get(OfertaAyuda, 1).es_conjunta = True
+        db.add(LoteRecursoCloud(lote_id=2, tipo_recurso_id=104))
         db.commit()
 
     cuerpo = cliente.get(
@@ -276,7 +367,32 @@ def test_dashboard_calcula_metricas_de_resolucion_necesidades_y_ongs(entorno):
         "organizacion_nombre": "Propia",
         "cantidad_capacidades_asignadas": 5,
     }]
-    assert cuerpo["tiempo_medio_vida_horas"] == pytest.approx(3, abs=0.01)
+    assert cuerpo["participacion_consorcios"] == {
+        "total_ofertas_adjudicadas": 1,
+        "ofertas_conjuntas_adjudicadas": 1,
+        "porcentaje_consorcios": 100.0,
+    }
+    assert cuerpo["recursos_adjudicados_por_mes"] == [{
+        "mes": ahora.strftime("%Y-%m"),
+        "tipo_recurso": "agua",
+        "tipo_recurso_id": 104,
+        "cantidad_adjudicada": 5,
+    }]
+    assert cuerpo["demanda_vs_oferta_por_recurso"] == [
+        {
+            "tipo_recurso": "agua",
+            "tipo_recurso_id": None,
+            "cantidad_requerida": 10,
+            "cantidad_ofrecida": 0,
+        },
+        {
+            "tipo_recurso": "agua",
+            "tipo_recurso_id": 104,
+            "cantidad_requerida": 10,
+            "cantidad_ofrecida": 5,
+        },
+    ]
+    assert cuerpo["tiempo_medio_vida_horas"] == pytest.approx(15, abs=0.01)
 
 
 def test_ong_no_puede_escribir_ofertas_ajenas_o_no_publicadas(entorno):

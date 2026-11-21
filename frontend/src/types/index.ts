@@ -8,13 +8,17 @@ export type {
   BandaEmergencias,
   BandaEmergenciasParams,
   DashboardEmergencias,
+  DemandaVsOfertaPorRecurso,
   EstadoEmergencia,
+  EmergenciaPorEstadoYGravedad,
   EmergenciaCreateRequest,
   EmergenciaCreada,
   EmergenciaRead,
   EmergenciaRespuesta,
   EvolucionAbiertasResueltas,
   RankingOng,
+  ParticipacionConsorcios,
+  RecursoAdjudicadoPorMes,
   LoteNecesidad,
   LoteNecesidadCreateRequest,
   LoteNecesidadUpdateRequest,
@@ -40,3 +44,13 @@ export type {
   OrganizacionResumen,
 } from './organizacion'
 export type { Rol } from './rol'
+export type { RecursoCloud, RecursoCloudCreateRequest } from './recursosCloud'
+export type {
+  ActivasResueltas,
+  FiltrosReportes,
+  FormatoReporte,
+  NecesidadActual,
+  PrioridadAbiertas,
+  ReportesDashboard,
+  TiempoVida,
+} from './reportes'
