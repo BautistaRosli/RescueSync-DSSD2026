@@ -92,6 +92,9 @@ class OfertaItem(Base):
     )
     cantidad_ofrecida: Mapped[int] = mapped_column(Integer, nullable=False)
     descripcion: Mapped[Optional[str]] = mapped_column(Text)
+    aportes: Mapped[List["AporteOfertaItem"]] = relationship(
+        cascade="all, delete-orphan"
+    )
     # Marca el cierre de la actividad de este ítem (etapa 7 del flujo).
     finalizado_en: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True)

@@ -41,6 +41,9 @@ class Organizacion(Base):
         back_populates="organizaciones",
     )
     usuarios: Mapped[List["Usuario"]] = relationship(back_populates="organizacion")
+    referencia_cloud: Mapped[Optional["OrganizacionCloud"]] = relationship(
+        cascade="all, delete-orphan", single_parent=True
+    )
 
 
 class Usuario(Base):

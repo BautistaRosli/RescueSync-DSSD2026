@@ -23,6 +23,9 @@ class LoteNecesidad(Base):
     cantidad: Mapped[int] = mapped_column(Integer, nullable=False)
     unidad: Mapped[Optional[str]] = mapped_column(String(50))
     descripcion: Mapped[Optional[str]] = mapped_column(Text)
+    referencia_cloud: Mapped[Optional["LoteRecursoCloud"]] = relationship(
+        cascade="all, delete-orphan", single_parent=True
+    )
 
     emergencia: Mapped["Emergencia"] = relationship(back_populates="lotes")
     items: Mapped[List["OfertaItem"]] = relationship(

@@ -27,10 +27,22 @@ from ...schemas.ofertas_schema import (
     OfertaCrear,
 )
 from ...services.ofertas_service import OfertaService
+from ...services.solicitud_evaluacion_service import SolicitudEvaluacionService
+from ...dto.solicitud_evaluacion_dto import SolicitudEvaluacion
 
 router = APIRouter(tags=["Ofertas"])
 
 servicio_ofertas = OfertaService()
+
+
+@router.get("/emergencias/{emergencia_id}/solicitud-evaluacion", response_model=SolicitudEvaluacion)
+def obtener_solicitud_evaluacion(
+    emergencia_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
+):
+    verificar_emergencia(db, usuario, emergencia_id)
+    return SolicitudEvaluacionService().obtener(db, emergencia_id)
 
 
 @router.get("/ofertas", response_model=list[OfertaRespuesta])

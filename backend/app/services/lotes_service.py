@@ -4,7 +4,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..dto import LoteNecesidadRespuesta
 from ..integrations.bonita.client import BonitaClientError, bonita_client
-from ..models import LoteNecesidad
+from ..models import LoteNecesidad, LoteRecursoCloud
 from ..repositories import LoteNecesidadRepository
 from ..schemas import LoteNecesidadActualizar, LoteNecesidadCrear
 from .emergencias_service import EmergenciaService
@@ -80,8 +80,10 @@ class LoteService:
             )
 
         lote = LoteNecesidad(
-            emergencia_id=emergencia_id, **data.model_dump()
+            emergencia_id=emergencia_id, **data.model_dump(exclude={"tipo_recurso_id"})
         )
+        if data.tipo_recurso_id is not None:
+            lote.referencia_cloud = LoteRecursoCloud(tipo_recurso_id=data.tipo_recurso_id)
         creado = self._repository.crear(db, lote)
         return LoteNecesidadRespuesta.model_validate(creado)
 
@@ -91,7 +93,19 @@ class LoteService:
         lote = self._obtener_lote_entidad(db, lote_id)
         self._verificar_emergencia_no_publicada(db, lote.emergencia_id)
         lote = self._obtener_lote_entidad(db, lote_id)
-        for field, value in data.model_dump(exclude_unset=True).items():
+        cambios = data.model_dump(exclude_unset=True)
+        if "tipo_recurso_id" in cambios:
+            nacional = cambios.pop("tipo_recurso_id")
+            if nacional is None:
+                lote.referencia_cloud = None
+            elif lote.referencia_cloud is None:
+                lote.referencia_cloud = LoteRecursoCloud(tipo_recurso_id=nacional)
+            else:
+                lote.referencia_cloud.tipo_recurso_id = nacional
+        elif any(campo in cambios and cambios[campo] != getattr(lote, campo)
+                 for campo in ("tipo", "unidad")):
+            lote.referencia_cloud = None
+        for field, value in cambios.items():
             setattr(lote, field, value)
         actualizado = self._repository.actualizar(db, lote)
         return LoteNecesidadRespuesta.model_validate(actualizado)

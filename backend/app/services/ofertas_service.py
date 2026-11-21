@@ -15,7 +15,7 @@ from ..dto import (
     OrganizacionResumen,
 )
 from ..integrations.email.service import notificar_adjudicacion
-from ..models import EstadoEmergencia, OfertaAyuda, OfertaItem, Organizacion
+from ..models import AporteOfertaItem, EstadoEmergencia, OfertaAyuda, OfertaItem, Organizacion
 from ..repositories import (
     OfertaItemRepository,
     OfertaRepository,
@@ -58,10 +58,10 @@ class OfertaService:
     def crear_oferta(self, db: Session, data: OfertaCrear) -> OfertaRespuesta:
         self._verificar_convocatoria_abierta(db, data.emergencia_id)
         self._organizaciones.obtener_organizacion(db, data.organizacion_id)
-        items = self._validar_items(db, data.emergencia_id, data.items)
         organizaciones = self._resolver_organizaciones(
             db, data.organizacion_id, data.organizaciones_ids
         )
+        items = self._validar_items(db, data.emergencia_id, data.items, organizaciones)
         oferta = OfertaAyuda(
             emergencia_id=data.emergencia_id,
             organizacion_id=data.organizacion_id,
@@ -78,18 +78,26 @@ class OfertaService:
     ) -> OfertaRespuesta:
         oferta = self._obtener_oferta_entidad(db, oferta_id, bloquear=True)
         self._verificar_convocatoria_abierta(db, oferta.emergencia_id, oferta)
+        organizaciones = (
+            self._resolver_organizaciones(db, oferta.organizacion_id, data.organizaciones_ids)
+            if data.organizaciones_ids is not None else oferta.organizaciones
+        )
+        items = (self._validar_items(db, oferta.emergencia_id, data.items, organizaciones,
+                                    oferta.organizacion_id)
+                 if data.items is not None else None)
         if data.observaciones is not None:
             oferta.observaciones = data.observaciones
-        if data.items is not None:
+        if items is not None:
             self._repository.reemplazar_items(
                 db,
                 oferta,
-                self._validar_items(db, oferta.emergencia_id, data.items),
+                items,
             )
         if data.organizaciones_ids is not None:
-            oferta.organizaciones = self._resolver_organizaciones(
-                db, oferta.organizacion_id, data.organizaciones_ids
-            )
+            if items is None and {o.id for o in organizaciones} != {o.id for o in oferta.organizaciones}:
+                for item in oferta.items:
+                    item.aportes.clear()
+            oferta.organizaciones = organizaciones
             oferta.es_conjunta = len(oferta.organizaciones) > 1
         actualizada = self._repository.actualizar(db, oferta)
         return OfertaRespuesta.model_validate(actualizada)
@@ -272,13 +280,17 @@ class OfertaService:
             for organizacion_id in ids_ordenados
         ]
 
-    def _validar_items(self, db: Session, emergencia_id: int, items) -> list[OfertaItem]:
+    def _validar_items(self, db: Session, emergencia_id: int, items,
+                       organizaciones=None, responsable_id=None) -> list[OfertaItem]:
         emergencia = self._emergencias.obtener_emergencia_entidad(
             db, emergencia_id, bloquear=True
         )
         lotes_validos = {lote.id for lote in emergencia.lotes}
         vistos = set()
         nuevos = []
+        participantes = {o.id for o in organizaciones or []}
+        if responsable_id is not None:
+            participantes.add(responsable_id)
         for item in items:
             if item.lote_necesidad_id not in lotes_validos:
                 raise HTTPException(
@@ -294,7 +306,15 @@ class OfertaService:
                     detail=f"Lote duplicado en la oferta: {item.lote_necesidad_id}",
                 )
             vistos.add(item.lote_necesidad_id)
-            nuevos.append(OfertaItem(**item.model_dump()))
+            nuevo = OfertaItem(**item.model_dump(exclude={"aportes"}))
+            if item.aportes is not None:
+                ids = [aporte.organizacion_id for aporte in item.aportes]
+                if len(ids) != len(set(ids)) or not set(ids).issubset(participantes):
+                    raise HTTPException(400, f"Los aportes del lote {item.lote_necesidad_id} deben pertenecer a participantes sin duplicados")
+                if sum(aporte.cantidad for aporte in item.aportes) != item.cantidad_ofrecida:
+                    raise HTTPException(400, f"Los aportes del lote {item.lote_necesidad_id} deben sumar la cantidad ofrecida")
+                nuevo.aportes = [AporteOfertaItem(**aporte.model_dump()) for aporte in item.aportes]
+            nuevos.append(nuevo)
         return nuevos
 
     @staticmethod

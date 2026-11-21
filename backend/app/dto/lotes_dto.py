@@ -1,10 +1,12 @@
-from pydantic import ConfigDict
-
-from ..schemas.lotes_schema import LoteNecesidadBase
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class LoteNecesidadRespuesta(LoteNecesidadBase):
+class LoteNecesidadRespuesta(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    tipo: str
+    cantidad: int = Field(gt=0)
+    unidad: str | None = None
+    descripcion: str | None = None
     id: int
     emergencia_id: int

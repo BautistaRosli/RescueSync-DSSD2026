@@ -1,14 +1,14 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from ..schemas.ofertas_schema import OfertaItemBase
-
-
-class OfertaItemRespuesta(OfertaItemBase):
+class OfertaItemRespuesta(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    lote_necesidad_id: int
+    cantidad_ofrecida: int = Field(gt=0)
+    descripcion: Optional[str] = None
     id: int
     finalizado_en: Optional[datetime] = None
 

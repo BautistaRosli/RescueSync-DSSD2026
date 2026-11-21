@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.integrations import cloud_client
-from app.models import Organizacion
+from app.models import Organizacion, OrganizacionCloud
 from app.services.permisos_service import COORDINADOR, ONG
 from test_permisos_api import cabecera, entorno, estado
 
@@ -57,6 +57,7 @@ def test_registra_ong_cloud_antes_de_guardar_con_token_app(entorno_ong):
         creada = db.query(Organizacion).filter_by(nombre=ALTA_ONG["nombre"]).one()
         assert creada.email == ALTA_ONG["email"] and creada.id != 900
         assert "cuit" not in Organizacion.__table__.columns
+        assert db.get(OrganizacionCloud, creada.id).ong_id == 900
 
 
 @pytest.mark.parametrize("campo,valor", [

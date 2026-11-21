@@ -11,7 +11,7 @@ from ..dto import (
     RolRespuesta,
     UsuarioRespuesta,
 )
-from ..models import Organizacion, Rol, Usuario
+from ..models import Organizacion, OrganizacionCloud, Rol, Usuario
 from ..integrations import cloud_client
 from ..repositories import (
     OrganizacionRepository,
@@ -116,18 +116,18 @@ class OrganizacionService:
     def crear_organizacion(
         self, db: Session, data: OrganizacionCrear
     ) -> OrganizacionRespuesta:
-        if data.tipo == "ong":
-            self._registrar_ong_cloud(data)
+        ong_id = self._registrar_ong_cloud(data) if data.tipo == "ong" else None
         try:
-            creada = self._repository.crear(
-                db, Organizacion(**data.model_dump(exclude={"cuit"}))
-            )
+            organizacion = Organizacion(**data.model_dump(exclude={"cuit"}))
+            if ong_id is not None:
+                organizacion.referencia_cloud = OrganizacionCloud(ong_id=ong_id)
+            creada = self._repository.crear(db, organizacion)
         except SQLAlchemyError:
             db.rollback()
             raise HTTPException(503, "No se pudo completar el registro de la organización") from None
         return OrganizacionRespuesta.model_validate(creada)
 
-    def _registrar_ong_cloud(self, data: OrganizacionCrear) -> None:
+    def _registrar_ong_cloud(self, data: OrganizacionCrear) -> int:
         try:
             token = cloud_client.obtener_token_aplicacion()
             respuesta = cloud_client.registrar_ong(data.cuit, data.nombre, data.email, token)
@@ -146,6 +146,7 @@ class OrganizacionService:
                 raise ValueError()
         except (ValueError, TypeError):
             raise HTTPException(503, "Registro de ONG en Cloud no disponible") from None
+        return datos["id"]
 
     def actualizar_organizacion(
         self, db: Session, organizacion_id: int, data: OrganizacionActualizar
