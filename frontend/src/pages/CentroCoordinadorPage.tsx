@@ -44,6 +44,7 @@ const NIVELES_GRAVEDAD: { valor: NivelGravedad; etiqueta: string }[] = [
 const ESTADOS_EMERGENCIA: { valor: EstadoEmergencia; etiqueta: string }[] = [
   { valor: 'esperando_lotes', etiqueta: 'Esperando lotes' },
   { valor: 'esperando_ofertas', etiqueta: 'Esperando ofertas' },
+  { valor: 'esperando_adjudicacion', etiqueta: 'Esperando adjudicación' },
   { valor: 'en_proceso', etiqueta: 'En proceso' },
   { valor: 'resuelta', etiqueta: 'Resuelta' },
 ]
@@ -566,13 +567,26 @@ function PanelAdjudicacion({
                 </ul>
               </div>
 
+              {oferta.adjudicada_en !== null && (
+                <p className="rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-300">
+                  Oferta adjudicada el {formatearFecha(oferta.adjudicada_en, 'Sin fecha')}
+                </p>
+              )}
+
               <button
                 type="button"
                 onClick={() => alAdjudicar(oferta.id)}
-                disabled={adjudicando === oferta.id}
+                disabled={
+                  adjudicando === oferta.id ||
+                  ofertas.some((registro) => registro.adjudicada_en !== null)
+                }
                 className={`${claseBotonSecundario} self-start text-sm`}
               >
-                {adjudicando === oferta.id ? 'Adjudicando...' : 'Adjudicar'}
+                {oferta.adjudicada_en !== null
+                  ? 'Adjudicada'
+                  : adjudicando === oferta.id
+                    ? 'Adjudicando...'
+                    : 'Adjudicar'}
               </button>
 
               {exitoAdjudicar[oferta.id] !== undefined && (
@@ -686,16 +700,29 @@ export function CentroCoordinadorPage() {
   }
 
   async function manejarAdjudicar(ofertaId: number): Promise<void> {
+    const oferta = Object.values(ofertasPorEmergencia)
+      .flat()
+      .find((registro) => registro.id === ofertaId)
+    if (oferta === undefined) {
+      return
+    }
+
     setAdjudicando(ofertaId)
     setErrorAdjudicar((actuales) => sinClave(actuales, ofertaId))
     setExitoAdjudicar((actuales) => sinClave(actuales, ofertaId))
     try {
       await adjudicarOferta(ofertaId)
+      await cargarOfertasDeEmergencia(oferta.emergencia_id)
+      setRecargo((actual) => actual + 1)
       setExitoAdjudicar((actuales) => ({
         ...actuales,
         [ofertaId]: 'Notificación enviada por mail.',
       }))
     } catch (fallo) {
+      if (fallo instanceof ApiError && fallo.status === 409) {
+        await cargarOfertasDeEmergencia(oferta.emergencia_id)
+        setRecargo((actual) => actual + 1)
+      }
       setErrorAdjudicar((actuales) => ({
         ...actuales,
         [ofertaId]: describirError(fallo),

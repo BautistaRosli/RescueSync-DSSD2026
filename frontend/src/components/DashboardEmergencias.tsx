@@ -28,6 +28,7 @@ function etiquetaDeEstado(estado: string): string {
   const etiquetas: Record<string, string> = {
     esperando_lotes: 'Esperando lotes',
     esperando_ofertas: 'Esperando ofertas',
+    esperando_adjudicacion: 'Esperando adjudicación',
     en_proceso: 'En proceso',
     resuelta: 'Resuelta',
   }
@@ -37,6 +38,7 @@ function etiquetaDeEstado(estado: string): string {
 const ORDEN_ESTADOS = [
   'esperando_lotes',
   'esperando_ofertas',
+  'esperando_adjudicacion',
   'en_proceso',
   'resuelta',
 ]

@@ -3,6 +3,7 @@ export type NivelGravedad = 'baja' | 'media' | 'alta' | 'critica'
 export type EstadoEmergencia =
   | 'esperando_lotes'
   | 'esperando_ofertas'
+  | 'esperando_adjudicacion'
   | 'en_proceso'
   | 'resuelta'
 
