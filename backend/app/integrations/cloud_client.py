@@ -80,3 +80,12 @@ def registrar_ong(cuit: str, razon_social: str, email: str, token: str) -> httpx
         headers={"Authorization": f"Bearer {token}"},
         timeout=TIEMPO_LIMITE,
     )
+
+
+def obtener_ong(ong_id: int, token: str) -> httpx.Response:
+    url = os.getenv("CLOUD_API_URL", "http://127.0.0.1:8002").rstrip("/")
+    return httpx.get(
+        f"{url}/ongs/{ong_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=TIEMPO_LIMITE,
+    )

@@ -457,6 +457,7 @@ function ListaLotes({
 
 function PanelAdjudicacion({
   ofertas,
+  lotes,
   cargando,
   errorCarga,
   adjudicando,
@@ -465,6 +466,7 @@ function PanelAdjudicacion({
   alAdjudicar,
 }: {
   ofertas: OfertaRead[] | undefined
+  lotes: LoteNecesidad[]
   cargando: boolean
   errorCarga: string | undefined
   adjudicando: number | null
@@ -474,6 +476,8 @@ function PanelAdjudicacion({
 }) {
   const sinOfertas =
     !cargando && errorCarga === undefined && (ofertas === undefined || ofertas.length === 0)
+
+  const lotePorId = new Map(lotes.map((lote) => [lote.id, lote]))
 
   return (
     <div className={claseSubPanel}>
@@ -517,6 +521,49 @@ function PanelAdjudicacion({
                   {formatearFecha(oferta.fecha_hora_oferta, 'Sin fecha')}
                 </span>
                 <span className={claseBadge}>Ítems: {oferta.items.length}</span>
+              </div>
+
+              <div className="rounded-lg border border-slate-700/80 bg-slate-900/60 p-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Recursos ofrecidos
+                </p>
+                <ul className="mt-2 flex flex-col gap-2">
+                  {oferta.items.map((item) => {
+                    const lote = lotePorId.get(item.lote_necesidad_id)
+                    const nombreRecurso = item.descripcion ?? lote?.tipo ?? 'Recurso sin nombre'
+                    const unidad = lote?.unidad ?? 'unidades'
+
+                    return (
+                      <li
+                        key={item.id}
+                        className="rounded-md border border-slate-700 bg-slate-800/70 px-3 py-2 text-xs"
+                      >
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <span className="font-semibold text-slate-200">{nombreRecurso}</span>
+                          <span className="font-mono text-cyan-300">
+                            Ofrece: {item.cantidad_ofrecida} {unidad}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-slate-400">
+                          <span>Lote #{item.lote_necesidad_id}</span>
+                          {lote !== undefined && (
+                            <span>
+                              Requerido: {lote.cantidad} {lote.unidad ?? 'unidades'}
+                            </span>
+                          )}
+                          {item.finalizado_en !== null && (
+                            <span className="text-emerald-300">
+                              Finalizado: {formatearFecha(item.finalizado_en, 'Sin fecha')}
+                            </span>
+                          )}
+                        </div>
+                        {lote?.descripcion !== null && lote?.descripcion !== undefined && (
+                          <p className="mt-1 text-slate-500">Necesidad: {lote.descripcion}</p>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
               </div>
 
               <button
@@ -1000,6 +1047,7 @@ export function CentroCoordinadorPage() {
                     {!editable && (
                       <PanelAdjudicacion
                         ofertas={ofertasPorEmergencia[emergencia.id]}
+                        lotes={emergencia.lotes}
                         cargando={cargandoOfertas[emergencia.id] === true}
                         errorCarga={errorOfertas[emergencia.id]}
                         adjudicando={adjudicando}
