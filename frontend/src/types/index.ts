@@ -39,3 +39,15 @@ export type {
   OrganizacionResumen,
 } from './organizacion'
 export type { Rol } from './rol'
+export type {
+  ReporteCoberturaLote,
+  ReporteCoberturaLotes,
+  ReporteConsorcios,
+  ReporteDemandaOferta,
+  ReporteEmergenciaGravedad,
+  ReporteProyecto,
+  ReporteRankingOng,
+  ReporteSuministroMovilizado,
+  ReporteTiempoAdjudicacion,
+  ReporteTiempoPublicacion,
+} from './reportes'

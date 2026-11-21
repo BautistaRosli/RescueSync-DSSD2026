@@ -28,3 +28,14 @@ export {
   eliminarRecurso,
   listarInventario,
 } from './inventario'
+export {
+  obtenerReporteCoberturaLotes,
+  obtenerReporteConsorcios,
+  obtenerReporteDemandaOferta,
+  obtenerReporteEmergencias,
+  obtenerReporteProyectos,
+  obtenerReporteRankingOngs,
+  obtenerReporteSuministrosMovilizados,
+  obtenerReporteTiempoAdjudicacion,
+  obtenerReporteTiempoPublicacion,
+} from './reportes'
