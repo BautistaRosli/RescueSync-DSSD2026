@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
+  BORRADOR_VACIO,
+  borradorDesdeLote,
+  cambiarCampoBorradorLote,
+  validarBorradorLote,
+} from './formularioLote'
+import type { BorradorLote } from './formularioLote'
+import {
   ApiError,
   actualizarLote,
   adjudicarOferta,
@@ -75,52 +82,6 @@ const claseCampo =
   'w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60'
 
 const claseEtiqueta = 'block text-sm text-slate-300 mb-1'
-
-interface BorradorLote {
-  tipo: string
-  cantidad: string
-  unidad: string
-  descripcion: string
-}
-
-const BORRADOR_VACIO: BorradorLote = {
-  tipo: '',
-  cantidad: '',
-  unidad: '',
-  descripcion: '',
-}
-
-interface DatosLote {
-  tipo: string
-  cantidad: number
-  unidad: string | null
-  descripcion: string | null
-}
-
-type ValidacionBorrador =
-  | { error: string; datos: null }
-  | { error: null; datos: DatosLote }
-
-function validarBorradorLote(borrador: BorradorLote): ValidacionBorrador {
-  const tipo = borrador.tipo.trim()
-  const cantidad = Number(borrador.cantidad)
-
-  if (!tipo) {
-    return { error: 'Ingresá el tipo de lote.', datos: null }
-  }
-  if (!Number.isInteger(cantidad) || cantidad <= 0) {
-    return { error: 'La cantidad debe ser un número entero mayor a 0.', datos: null }
-  }
-  return {
-    error: null,
-    datos: {
-      tipo,
-      cantidad,
-      unidad: borrador.unidad.trim() || null,
-      descripcion: borrador.descripcion.trim() || null,
-    },
-  }
-}
 
 function etiquetaDeGravedad(nivel: NivelGravedad): string {
   return NIVELES_GRAVEDAD.find((opcion) => opcion.valor === nivel)?.etiqueta ?? nivel
@@ -297,6 +258,29 @@ function CamposLote({
             className={claseCampo}
           />
         </div>
+      </div>
+
+      <div>
+        <label htmlFor={`${prefijo}-tipo-recurso-id`} className={claseEtiqueta}>
+          ID del recurso del catálogo nacional
+        </label>
+        <input
+          id={`${prefijo}-tipo-recurso-id`}
+          disabled={deshabilitado}
+          type="number"
+          min={1}
+          step={1}
+          value={borrador.tipo_recurso_id}
+          onChange={(evento) => alCambiar('tipo_recurso_id', evento.target.value)}
+          aria-describedby={`${prefijo}-ayuda-recurso`}
+          placeholder="10"
+          required
+          className={claseCampo}
+        />
+        <p id={`${prefijo}-ayuda-recurso`} className="mt-1 text-xs text-slate-400">
+          Usá el campo id de GET /items de la API Cloud que corresponda al tipo
+          y la unidad. Si cambiás alguno, volvé a indicar el ID correspondiente.
+        </p>
       </div>
 
       <div>
@@ -705,7 +689,10 @@ export function CentroCoordinadorPage() {
   ) {
     setBorradores((actuales) => {
       const actual = actuales[emergenciaId] ?? BORRADOR_VACIO
-      return { ...actuales, [emergenciaId]: { ...actual, [campo]: valor } }
+      return {
+        ...actuales,
+        [emergenciaId]: cambiarCampoBorradorLote(actual, campo, valor),
+      }
     })
     setErrorBorrador((actuales) => sinClave(actuales, emergenciaId))
   }
@@ -767,12 +754,7 @@ export function CentroCoordinadorPage() {
 
   function abrirEdicionLote(lote: LoteNecesidad) {
     setLoteEnEdicion(lote.id)
-    setBorradorEdicion({
-      tipo: lote.tipo,
-      cantidad: String(lote.cantidad),
-      unidad: lote.unidad ?? '',
-      descripcion: lote.descripcion ?? '',
-    })
+    setBorradorEdicion(borradorDesdeLote(lote))
     setErrorEdicion(undefined)
     setAvisoLote(null)
   }
@@ -784,7 +766,7 @@ export function CentroCoordinadorPage() {
   }
 
   function cambiarCampoEdicion(campo: keyof BorradorLote, valor: string) {
-    setBorradorEdicion((actual) => ({ ...actual, [campo]: valor }))
+    setBorradorEdicion((actual) => cambiarCampoBorradorLote(actual, campo, valor))
     setErrorEdicion(undefined)
   }
 

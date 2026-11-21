@@ -5,4 +5,5 @@ export interface LoteRead {
   cantidad: number
   unidad: string | null
   descripcion: string | null
+  tipo_recurso_id: number | null
 }

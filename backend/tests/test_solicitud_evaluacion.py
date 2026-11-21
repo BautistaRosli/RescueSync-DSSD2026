@@ -9,6 +9,100 @@ from app.services.permisos_service import AUDITOR, COORDINADOR, ONG, OPERADOR
 from test_permisos_api import cabecera, entorno, estado
 
 
+def test_lote_expone_referencia_nacional_en_alta_lectura_y_edicion(entorno):
+    cliente, sesiones, _ = entorno
+    cabeceras = cabecera(COORDINADOR)
+    datos = {"tipo": "Agua", "cantidad": 10, "unidad": "litros",
+             "descripcion": "Agua potable", "tipo_recurso_id": 41}
+    alta = cliente.post("/api/v1/emergencias/1/lotes", headers=cabeceras, json=datos)
+    assert alta.status_code == 201, alta.text
+    esperado = {**datos, "id": alta.json()["id"], "emergencia_id": 1}
+    assert alta.json() == esperado
+    lote_id = esperado["id"]
+
+    def verificar_lecturas():
+        detalle = cliente.get(f"/api/v1/lotes/{lote_id}", headers=cabeceras)
+        assert detalle.status_code == 200, detalle.text
+        assert detalle.json() == esperado
+        lotes = cliente.get("/api/v1/emergencias/1/lotes", headers=cabeceras)
+        assert lotes.status_code == 200, lotes.text
+        assert next(lote for lote in lotes.json() if lote["id"] == lote_id) == esperado
+        assert next(lote for lote in lotes.json() if lote["id"] == 1)["tipo_recurso_id"] is None
+        for ruta in ("/api/v1/emergencias/1", "/api/v1/emergencias",
+                     "/api/v1/emergencias/bandeja?publicada=false"):
+            respuesta = cliente.get(ruta, headers=cabeceras)
+            assert respuesta.status_code == 200, respuesta.text
+            cuerpo = respuesta.json()
+            emergencia = (cuerpo if ruta.endswith("/1") else
+                          next(fila for fila in (cuerpo["items"] if "items" in cuerpo else cuerpo)
+                               if fila["id"] == 1))
+            assert next(lote for lote in emergencia["lotes"] if lote["id"] == lote_id) == esperado
+
+    verificar_lecturas()
+    for cambios in ({"tipo_recurso_id": 73}, {"cantidad": 12}):
+        actualizado = cliente.patch(f"/api/v1/lotes/{lote_id}", headers=cabeceras, json=cambios)
+        assert actualizado.status_code == 200, actualizado.text
+        esperado.update(cambios)
+        assert actualizado.json() == esperado
+        verificar_lecturas()
+    with sesiones() as db:
+        from app.models import LoteNecesidad
+
+        assert db.get(LoteNecesidad, lote_id).referencia_cloud.tipo_recurso_id == 73
+
+
+@pytest.mark.parametrize("cambios", [{"tipo": "Abrigo"}, {"unidad": "bidones"},
+                                     {"tipo_recurso_id": None}])
+def test_lectura_lote_conserva_referencia_opcional_e_invalidacion(entorno, cambios):
+    cliente, _, _ = entorno
+    cabeceras = cabecera(COORDINADOR)
+    historico = cliente.get("/api/v1/lotes/1", headers=cabeceras)
+    assert historico.status_code == 200, historico.text
+    assert historico.json() == {"id": 1, "emergencia_id": 1, "tipo": "agua", "cantidad": 10,
+                                "unidad": None, "descripcion": None, "tipo_recurso_id": None}
+    alta = cliente.post("/api/v1/emergencias/1/lotes", headers=cabeceras,
+                        json={"tipo": "Agua", "cantidad": 5})
+    assert alta.status_code == 201 and alta.json()["tipo_recurso_id"] is None
+    vinculacion = cliente.patch("/api/v1/lotes/1", headers=cabeceras,
+                               json={"tipo_recurso_id": 41})
+    assert vinculacion.status_code == 200 and vinculacion.json()["tipo_recurso_id"] == 41
+    actualizado = cliente.patch("/api/v1/lotes/1", headers=cabeceras, json=cambios)
+    assert actualizado.status_code == 200 and actualizado.json()["tipo_recurso_id"] is None
+    lectura = cliente.get("/api/v1/lotes/1", headers=cabeceras)
+    assert lectura.status_code == 200 and lectura.json() == actualizado.json()
+
+
+@pytest.mark.parametrize("ruta", ["/api/v1/emergencias/1/lotes", "/api/v1/emergencias/1",
+                                  "/api/v1/emergencias", "/api/v1/emergencias/bandeja?publicada=false"])
+def test_listar_lotes_carga_referencias_sin_consultas_por_lote(entorno, ruta):
+    from sqlalchemy import event
+
+    cliente, sesiones, _ = entorno
+    cabeceras = cabecera(COORDINADOR)
+    consultas = []
+    motor = sesiones.kw["bind"]
+
+    def registrar(conexion, cursor, sentencia, parametros, contexto, multiples):
+        consultas.append(sentencia.lower())
+
+    def contar_lectura():
+        consultas.clear()
+        event.listen(motor, "before_cursor_execute", registrar)
+        try:
+            respuesta = cliente.get(ruta, headers=cabeceras)
+        finally:
+            event.remove(motor, "before_cursor_execute", registrar)
+        assert respuesta.status_code == 200, respuesta.text
+        return len(consultas)
+
+    con_un_lote = contar_lectura()
+    for nacional in (41, 73, 89):
+        alta = cliente.post("/api/v1/emergencias/1/lotes", headers=cabeceras,
+                            json={"tipo": "Agua", "cantidad": 5, "tipo_recurso_id": nacional})
+        assert alta.status_code == 201, alta.text
+    assert contar_lectura() == con_un_lote
+
+
 @pytest.fixture
 def solicitud(entorno, monkeypatch):
     cliente, sesiones, _ = entorno

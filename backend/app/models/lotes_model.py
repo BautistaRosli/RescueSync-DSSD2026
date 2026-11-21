@@ -24,10 +24,15 @@ class LoteNecesidad(Base):
     unidad: Mapped[Optional[str]] = mapped_column(String(50))
     descripcion: Mapped[Optional[str]] = mapped_column(Text)
     referencia_cloud: Mapped[Optional["LoteRecursoCloud"]] = relationship(
-        cascade="all, delete-orphan", single_parent=True
+        cascade="all, delete-orphan", single_parent=True, lazy="selectin"
     )
 
     emergencia: Mapped["Emergencia"] = relationship(back_populates="lotes")
     items: Mapped[List["OfertaItem"]] = relationship(
         back_populates="lote_necesidad"
     )
+
+    @property
+    def tipo_recurso_id(self) -> Optional[int]:
+        """Expone la equivalencia nacional sin duplicar su persistencia."""
+        return self.referencia_cloud.tipo_recurso_id if self.referencia_cloud else None
