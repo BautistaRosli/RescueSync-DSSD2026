@@ -21,6 +21,7 @@ from ...dto.ofertas_dto import (
     OfertaListadoRespuesta,
     OfertaRespuesta,
     OfertasConsolidadas,
+    SeleccionOfertasRespuesta,
 )
 from ...schemas.ofertas_schema import (
     OfertaActualizar,
@@ -28,11 +29,22 @@ from ...schemas.ofertas_schema import (
 )
 from ...services.ofertas_service import OfertaService
 from ...services.solicitud_evaluacion_service import SolicitudEvaluacionService
+from ...services.seleccion_ofertas_service import SeleccionOfertasService
 from ...dto.solicitud_evaluacion_dto import SolicitudEvaluacion
 
 router = APIRouter(tags=["Ofertas"])
 
 servicio_ofertas = OfertaService()
+
+
+@router.post("/emergencias/{emergencia_id}/confirmar-seleccion", response_model=SeleccionOfertasRespuesta)
+async def confirmar_seleccion(
+    emergencia_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, OPERADOR, AUDITOR)),
+):
+    verificar_emergencia(db, usuario, emergencia_id)
+    return await SeleccionOfertasService().confirmar(db, emergencia_id)
 
 
 @router.get("/emergencias/{emergencia_id}/solicitud-evaluacion", response_model=SolicitudEvaluacion)

@@ -40,6 +40,22 @@ Solo se necesita tener instalado Docker (con Docker Desktop o Docker Engine en W
    ```
    *(Si además querés borrar la persistencia de la BD, agregá `-v`)*
 
+### Vinculación nacional de las ONG de demostración
+
+En `development`, el backend crea o reutiliza las filas locales de ONU y UNICEF. Para vincularlas con Cloud, completar en `backend/.env` el CUIT de cada una en `CLOUD_ONU_CUIT` o `CLOUD_UNICEF_CUIT`, además de las credenciales de aplicación de Cloud. Con Docker Compose, la variable `CLOUD_API_URL` se toma del entorno de Compose o del `.env` situado junto a `docker-compose.yml`.
+
+- Si la ONG ya existe en Cloud, completar también `CLOUD_ONU_ONG_ID` o `CLOUD_UNICEF_ONG_ID` con su ID nacional. El backend consulta la ficha y comprueba su identidad antes de vincularla.
+- Si necesita el alta nacional, dejar vacío su ID y completar sólo su CUIT. Cuando Cloud confirma el alta, el backend guarda el ID que recibió. Si Cloud informa que el CUIT ya existe, se necesita el ID de esa ficha.
+
+Después de actualizar la configuración, ejecutar `docker compose up -d --force-recreate --no-deps backend`. La precarga también completa las vinculaciones pendientes de organizaciones existentes. Para configurar otra instalación que use el mismo Cloud, se pueden consultar los IDs confirmados en la base municipal ya vinculada.
+
+```sql
+SELECT o.nombre, n.ong_id
+FROM organizaciones AS o
+JOIN organizaciones_cloud AS n ON n.organizacion_id = o.id
+WHERE o.nombre IN ('Organización de las Naciones Unidas', 'UNICEF');
+```
+
 ### Servicio de prioridad en Kubernetes
 
 El microservicio `rescuesync-prioridad` (stateless, `POST /prioridad`, HPA de 1 a 5

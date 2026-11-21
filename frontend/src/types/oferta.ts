@@ -63,3 +63,9 @@ export interface AdjudicacionRespuesta {
   oferta_id: number
   mensaje: string
 }
+
+export interface SeleccionOfertasRespuesta {
+  emergencia_id: number
+  cantidad_pares: number
+  ya_confirmada: boolean
+}

@@ -6,6 +6,7 @@ import type {
   OfertaRead,
   OfertaUpdateRequest,
   OfertasConsolidadas,
+  SeleccionOfertasRespuesta,
 } from '../types'
 
 export async function listarOfertasDeOrganizacion(
@@ -49,6 +50,15 @@ export async function adjudicarOferta(
   ofertaId: number,
 ): Promise<AdjudicacionRespuesta> {
   return apiPost<AdjudicacionRespuesta>(`/ofertas/${ofertaId}/adjudicar`, {})
+}
+
+export async function confirmarSeleccionOfertas(
+  emergenciaId: number,
+): Promise<SeleccionOfertasRespuesta> {
+  return apiPost<SeleccionOfertasRespuesta>(
+    `/emergencias/${emergenciaId}/confirmar-seleccion`,
+    undefined,
+  )
 }
 
 // Finalizar una actividad tampoco declara cuerpo (los ids viajan en la ruta),

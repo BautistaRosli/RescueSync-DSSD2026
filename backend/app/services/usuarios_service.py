@@ -1,3 +1,4 @@
+import logging
 import os
 
 import httpx
@@ -26,6 +27,8 @@ from ..schemas import (
 )
 from .security_service import generar_token, hashear_password, verificar_password
 
+logger = logging.getLogger(__name__)
+
 ROLES_INICIALES = [
     "OPERADOR_MUNICIPAL",
     "CENTRO_COORDINADOR",
@@ -47,6 +50,11 @@ ORGANIZACION_UNICEF = {
     "email": "unicef@unicef.org",
     "telefono": "754 1201",
     "activa": True,
+}
+
+CONFIGURACION_ONG_INICIALES = {
+    ORGANIZACION_ONU["nombre"]: ("ONU", 2),
+    ORGANIZACION_UNICEF["nombre"]: ("UNICEF", 3),
 }
 
 # Sólo en development: cada cuenta de demostración usa su email como contraseña.
@@ -248,19 +256,97 @@ class AuthService:
     def _sembrar_organizacion(
         self, db: Session, campos: dict[str, str | bool]
     ) -> Organizacion:
-        """Inserta la organización inicial solo si no existe (idempotente)."""
+        """Conserva el registro local y reconcilia su identidad nacional."""
+        configuracion = CONFIGURACION_ONG_INICIALES.get(campos["nombre"])
         organizacion = self._organizaciones.obtener_por_nombre(db, campos["nombre"])
-        if organizacion is not None:
-            return organizacion
-        try:
-            return self._organizaciones.crear(db, Organizacion(**campos))
-        except IntegrityError:
-            db.rollback()
-            # Otro proceso puede haber sembrado la misma organización al arrancar.
+        if organizacion is None:
+            if configuracion is not None:
+                self._organizaciones.bloquear_precarga(db, configuracion[1])
             organizacion = self._organizaciones.obtener_por_nombre(db, campos["nombre"])
-            if organizacion is None:
-                raise
-            return organizacion
+            try:
+                if organizacion is None:
+                    organizacion = self._organizaciones.crear(db, Organizacion(**campos))
+                else:
+                    db.commit()  # Libera el bloqueo de creación antes de acceder a Cloud.
+            except IntegrityError:
+                db.rollback()
+                organizacion = self._organizaciones.obtener_por_nombre(db, campos["nombre"])
+                if organizacion is None:
+                    raise
+        identificador_local = organizacion.id
+        if configuracion is not None:
+            self._reconciliar_ong_cloud(db, identificador_local, configuracion[0])
+        return self._organizaciones.obtener_por_id(db, identificador_local)
+
+    def _reconciliar_ong_cloud(self, db: Session, organizacion_id: int, clave: str) -> None:
+        variable_id = f"CLOUD_{clave}_ONG_ID"
+        cuit = os.getenv(f"CLOUD_{clave}_CUIT", "").strip()
+        id_configurado = os.getenv(variable_id, "").strip()
+        ong_id = None
+        try:
+            organizacion = self._organizaciones.obtener_por_id(db, organizacion_id)
+            coincidencias = self._organizaciones.buscar_precarga(db, organizacion.nombre)
+            if len(coincidencias) != 1 or organizacion.tipo != "ong":
+                logger.warning("Precarga %s: organización local ambigua o de otro tipo; revise los registros antes de vincular.", clave)
+                return
+            referencia = db.get(OrganizacionCloud, organizacion_id, populate_existing=True)
+            if referencia is not None:
+                if id_configurado and id_configurado != str(referencia.ong_id):
+                    logger.warning("Precarga %s: %s contradice la vinculación; se conserva la existente.",
+                                   clave, variable_id)
+                return
+            if not cuit:
+                logger.warning("Precarga %s: configure CLOUD_%s_CUIT para vincular con Cloud; demo local disponible.",
+                               clave, clave)
+                return
+            organizacion = self._organizaciones.obtener_para_vincular(db, organizacion_id)
+            # Otra precarga puede haber completado el vínculo mientras se esperaba la fila.
+            if db.get(OrganizacionCloud, organizacion_id, populate_existing=True) is not None:
+                db.rollback()
+                return
+            datos = OrganizacionCrear(nombre=organizacion.nombre, tipo="ong",
+                                      email=organizacion.email, cuit=cuit)
+            if id_configurado:
+                if not id_configurado.isascii() or not id_configurado.isdecimal() or int(id_configurado) <= 0:
+                    raise ValueError()
+                candidato = int(id_configurado)
+                token = cloud_client.obtener_token_aplicacion()
+                respuesta = cloud_client.obtener_ong(candidato, token)
+                ficha = respuesta.json() if respuesta.status_code == 200 else None
+                identidad = {"id": candidato, "cuit": datos.cuit,
+                             "razon_social": datos.nombre.strip(), "email": datos.email}
+                if (not isinstance(ficha, dict) or type(ficha.get("id")) is not int
+                        or any(ficha.get(campo) != valor for campo, valor in identidad.items())):
+                    raise ValueError()
+                ong_id = candidato
+            else:
+                ong_id = OrganizacionService()._registrar_ong_cloud(datos)
+            # Sin HTTP bajo el bloqueo común; impide asignar el mismo ID a dos ONG.
+            self._organizaciones.bloquear_precarga(db, 4)
+            if self._organizaciones.referencia_nacional_ocupada(db, ong_id, organizacion_id):
+                logger.warning("Precarga %s: ID nacional ocupado por otra organización local; revise %s.",
+                               clave, variable_id)
+                db.rollback()
+                return
+            organizacion.referencia_cloud = OrganizacionCloud(ong_id=ong_id)
+            self._organizaciones.actualizar(db, organizacion)
+            logger.info("Precarga %s: vinculación guardada; %s=%s.", clave, variable_id, ong_id)
+        except HTTPException as error:
+            db.rollback()
+            if error.status_code == 409:
+                logger.warning("Precarga %s: CUIT ya registrado; configure %s con el ID confirmado en Cloud.",
+                               clave, variable_id)
+            else:
+                logger.warning("Precarga %s: Cloud no disponible; se reintentará en el próximo arranque.", clave)
+        except (cloud_client.AutenticacionAplicacionError, httpx.RequestError,
+                httpx.InvalidURL, ValueError, TypeError):
+            db.rollback()
+            logger.warning("Precarga %s: no se pudo verificar la identidad; revise CLOUD_%s_CUIT, %s y disponibilidad de Cloud.",
+                           clave, clave, variable_id)
+        except SQLAlchemyError:
+            db.rollback()
+            logger.warning("Precarga %s: no se pudo guardar la vinculación; configure %s=%s para reintentar por consulta.",
+                           clave, variable_id, ong_id if ong_id is not None else "<ID confirmado en Cloud>")
 
     def registrar_usuario(self, db: Session, data: UsuarioCrear) -> AuthRespuesta:
         if self._usuarios.obtener_por_email(db, data.email) is not None:
