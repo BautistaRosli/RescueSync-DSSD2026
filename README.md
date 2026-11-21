@@ -86,14 +86,6 @@ no autorizado o el acceso a datos fuera de su alcance devuelve `403`. Los filtro
 de consulta no amplían los permisos. Las reglas de negocio existentes siguen
 aplicándose aunque el usuario tenga el rol requerido.
 
-### Solicitud de evaluación de ofertas para Bonita
-
-`GET /api/v1/emergencias/{emergencia_id}/solicitud-evaluacion` devuelve el cuerpo para `POST /validaciones/evaluar-ofertas` de Cloud. Requiere un token de centro coordinador o director auditor. Bonita guarda `bodyAsString` en `solicitudCloudJson` antes de ejecutar `Validar ofertas`.
-
-Al crear o actualizar un lote, `tipo_recurso_id` identifica el recurso del catálogo nacional. La cantidad debe expresarse en la unidad de ese recurso. El alta de una ONG guarda el ID que confirma Cloud. Para ofertas conjuntas, cada ítem admite `aportes` con el `organizacion_id` local y la `cantidad` de cada participante. Las cantidades deben sumar `cantidad_ofrecida`. En una oferta individual se usa la cantidad de la ONG responsable.
-
-La respuesta contiene `emergencia_id`, `lotes` y una fila en `ofertas` por cada oferta y lote. Una emergencia con lotes identificados puede tener `ofertas` vacío. Si falta una equivalencia o el reparto de una oferta histórica, el endpoint responde `409` con el dato que debe completarse. Las vinculaciones de organizaciones anteriores al cambio requieren confirmar la identidad nacional antes de registrarla en `organizaciones_cloud`.
-
 ### Usuarios default
 municipio@municipio.com
 coordinador@coordinador.com
