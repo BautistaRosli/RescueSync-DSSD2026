@@ -397,6 +397,7 @@ class OfertaService:
                     cantidad_ofrecida=item.cantidad_ofrecida,
                     descripcion=item.descripcion,
                     finalizado_en=item.finalizado_en,
+                    aportes=item.aportes,
                 )
                 for item in oferta.items
             ],

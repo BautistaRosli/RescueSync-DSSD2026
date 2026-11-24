@@ -26,6 +26,9 @@ class OfertaRepository:
             selectinload(OfertaAyuda.items).selectinload(
                 OfertaItem.lote_necesidad
             ),
+            selectinload(OfertaAyuda.items).selectinload(
+                OfertaItem.aportes
+            ),
         )
 
     def listar(

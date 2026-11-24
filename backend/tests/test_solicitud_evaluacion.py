@@ -240,9 +240,20 @@ def test_oferta_individual_y_emergencia_sin_ofertas(solicitud):
         for tipo in (41, 73)]
     with sesiones() as db:
         assert db.get(Emergencia, 1).estado == EstadoEmergencia.ESPERANDO_ADJUDICACION
-    # Se conserva el contrato previo de los ítems en los listados.
-    assert set(alta.json()["items"][0]) == {"id", "lote_necesidad_id", "cantidad_ofrecida",
-                                           "descripcion", "finalizado_en"}
+    assert alta.json()["items"][0]["aportes"] == [
+        {"organizacion_id": organizaciones[0], "cantidad": 8}
+    ]
+    listado = cliente.get("/api/v1/emergencias/1/ofertas", headers=cabecera(ONG))
+    assert listado.status_code == 200, listado.text
+    assert listado.json()[0]["items"][0]["aportes"] == [
+        {"organizacion_id": organizaciones[0], "cantidad": 8}
+    ]
+    # Los ítems exponen el reparto también al editar/consultar la oferta.
+    detalle = cliente.get(f"/api/v1/ofertas/{alta.json()['id']}", headers=cabecera(ONG))
+    assert detalle.status_code == 200, detalle.text
+    assert detalle.json()["items"][0]["aportes"] == [
+        {"organizacion_id": organizaciones[0], "cantidad": 8}
+    ]
 
 
 def test_consorcio_sin_reparto_no_inventa_cantidades(solicitud):
@@ -344,6 +355,19 @@ def test_editar_items_reemplaza_aportes_y_rechazo_conserva_oferta(solicitud):
                               json={"items": [{"lote_necesidad_id": lotes[1], "cantidad_ofrecida": 9,
                                                "aportes": [{"organizacion_id": organizaciones[1], "cantidad": 9}]}]})
     assert respuesta.status_code == 200, respuesta.text
+    assert respuesta.json()["items"] == [{
+        "id": respuesta.json()["items"][0]["id"],
+        "lote_necesidad_id": lotes[1],
+        "cantidad_ofrecida": 9,
+        "descripcion": None,
+        "finalizado_en": None,
+        "aportes": [{"organizacion_id": organizaciones[1], "cantidad": 9}],
+    }]
+    detalle = cliente.get(f"/api/v1/ofertas/{oferta_id}", headers=cabecera(ONG))
+    assert detalle.status_code == 200, detalle.text
+    assert detalle.json()["items"][0]["aportes"] == [
+        {"organizacion_id": organizaciones[1], "cantidad": 9}
+    ]
     cuerpo = cliente.get("/api/v1/emergencias/1/solicitud-evaluacion", headers=cabecera(COORDINADOR)).json()
     assert len(cuerpo["ofertas"]) == 1
     assert cuerpo["ofertas"][0]["aportes"] == [{"ong_id": 907, "items": [{"tipo_recurso_id": 73, "cantidad": 9}]}]

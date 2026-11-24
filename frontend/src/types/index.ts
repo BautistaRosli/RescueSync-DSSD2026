@@ -28,6 +28,7 @@ export type { RecursoInventario, RecursoInventarioRequest } from './inventario'
 export type { LoteRead } from './lote'
 export type {
   AdjudicacionRespuesta,
+  AporteOferta,
   OfertaConsolidada,
   OfertaCreateRequest,
   OfertaItemConsolidado,

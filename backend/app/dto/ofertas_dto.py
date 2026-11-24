@@ -3,6 +3,15 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+class AporteOrganizacionRespuesta(BaseModel):
+    """Cantidad del ítem aportada por cada organización participante."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    organizacion_id: int
+    cantidad: int = Field(gt=0)
+
+
 class OfertaItemRespuesta(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -11,6 +20,7 @@ class OfertaItemRespuesta(BaseModel):
     descripcion: Optional[str] = None
     id: int
     finalizado_en: Optional[datetime] = None
+    aportes: List[AporteOrganizacionRespuesta] = []
 
 
 class OrganizacionResumen(BaseModel):
