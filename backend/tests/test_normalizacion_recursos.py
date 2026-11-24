@@ -1,6 +1,7 @@
 import httpx
 from unittest.mock import Mock
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -73,4 +74,42 @@ def test_equivalencias_demo_reales_idempotentes(monkeypatch, tmp_path):
         assert emergencia.lotes[0].referencia_cloud.tipo_recurso_id == 701
 
         assert not datos_demo_service._resolver_equivalencias_cloud(db, [emergencia])
+        assert llamadas == ["Medicamentos"]
+
+
+def test_equivalencias_demo_no_abortan_si_cloud_no_esta_disponible(monkeypatch, tmp_path):
+    motor = create_engine(f"sqlite:///{tmp_path / 'demo_cloud_caido.sqlite3'}")
+    Base.metadata.create_all(motor)
+    estado = {"disponible": False}
+    llamadas = []
+
+    class ServicioCloudFalso:
+        def crear(self, data):
+            if not estado["disponible"]:
+                raise HTTPException(503, "Catálogo de recursos Cloud no disponible")
+            llamadas.append(data.nombre)
+            return type("Recurso", (), {"id": 702})(), True
+
+    monkeypatch.setattr(datos_demo_service, "RecursosCloudService", ServicioCloudFalso)
+    with Session(motor) as db:
+        emergencia = Emergencia(
+            nivel_gravedad="ALTA", zona_afectada="Zona Norte",
+            descripcion_inicial="[DEMO DASHBOARD] prueba cloud caído",
+            estado="ESPERA_LOTES", prioridad=5, publicada=False,
+        )
+        emergencia.lotes = [LoteNecesidad(tipo="Medicamentos", cantidad=2)]
+        db.add(emergencia)
+        db.flush()
+
+        # Cloud no disponible: no propaga la excepción ni marca cambios.
+        assert not datos_demo_service._resolver_equivalencias_cloud(db, [emergencia])
+        db.flush()
+        assert emergencia.lotes[0].referencia_cloud is None
+        assert llamadas == []
+
+        # Siguiente arranque con Cloud disponible: resuelve la equivalencia.
+        estado["disponible"] = True
+        assert datos_demo_service._resolver_equivalencias_cloud(db, [emergencia])
+        db.flush()
+        assert emergencia.lotes[0].referencia_cloud.tipo_recurso_id == 702
         assert llamadas == ["Medicamentos"]
