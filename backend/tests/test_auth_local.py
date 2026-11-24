@@ -557,8 +557,8 @@ def test_seed_demo_409_sin_id_usa_id_configurado_y_lo_valida(entorno_local, monk
     )
 
     identidades = {
-        8: {"id": 8, "cuit": "30-12345678-5", "razon_social": "Organización de las Naciones Unidas", "email": "ong@onu.org"},
-        9: {"id": 9, "cuit": "30-87654321-4", "razon_social": "UNICEF", "email": "unicef@unicef.org"},
+        7: {"id": 7, "cuit": "30-12345678-5", "razon_social": "Organización de las Naciones Unidas", "email": "ong@onu.org"},
+        8: {"id": 8, "cuit": "30-87654321-4", "razon_social": "UNICEF", "email": "unicef@unicef.org"},
     }
     verificar = Mock(side_effect=lambda ong_id, token: httpx.Response(200, json=identidades[ong_id]))
     monkeypatch.setattr(cloud_client, "obtener_ong", verificar)
@@ -570,8 +570,8 @@ def test_seed_demo_409_sin_id_usa_id_configurado_y_lo_valida(entorno_local, monk
             organizacion.nombre: organizacion.referencia_cloud.ong_id
             for organizacion in db.query(Organizacion).all()
         } == {
-            "Organización de las Naciones Unidas": 8,
-            "UNICEF": 9,
+            "Organización de las Naciones Unidas": 7,
+            "UNICEF": 8,
         }
 
     assert verificar.call_count == 2
