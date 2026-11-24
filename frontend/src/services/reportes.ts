@@ -4,6 +4,7 @@ import type {
   EvolucionAbiertasResueltas, FiltrosReportes, FormatoReporte, NecesidadActual,
   ParticipacionConsorcios, PrioridadAbiertas, RankingOng, RecursoAdjudicadoPorMes,
   ReporteCoberturaLotes, ReporteConsorcios, ReporteDemandaOferta,
+  ReporteBonita,
   ReporteEmergenciaGravedad, ReporteProyecto, ReporteRankingOng,
   ReporteSuministroMovilizado, ReporteTiempoAdjudicacion, ReporteTiempoPublicacion,
   TiempoVida,
@@ -32,6 +33,7 @@ export const obtenerReporteTiempoPublicacion = () => apiGet<ReporteTiempoPublica
 export const obtenerReporteTiempoAdjudicacion = () => apiGet<ReporteTiempoAdjudicacion>('/reportes/tiempo-adjudicacion')
 export const obtenerReporteRankingOngs = () => apiGet<ReporteRankingOng[]>('/reportes/ranking-ongs')
 export const obtenerReporteDemandaOferta = () => apiGet<ReporteDemandaOferta[]>('/reportes/demanda-oferta')
+export const obtenerReporteBonita = () => apiGet<ReporteBonita>('/reportes/bonita')
 
 export const obtenerEmergenciasPorEstadoYGravedad = (filtros?: FiltrosReportes): Promise<EmergenciaPorEstadoYGravedad[]> =>
   apiGet<EmergenciaPorEstadoYGravedad[]>(`/reportes/emergencias${construirConsulta(filtros)}`)

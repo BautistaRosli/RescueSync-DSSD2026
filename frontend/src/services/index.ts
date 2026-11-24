@@ -45,6 +45,7 @@ export {
 } from './inventario'
 export {
   obtenerReporteCoberturaLotes,
+  obtenerReporteBonita,
   obtenerReporteConsorcios,
   obtenerReporteDemandaOferta,
   obtenerReporteEmergencias,

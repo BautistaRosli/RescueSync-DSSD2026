@@ -21,11 +21,12 @@ from ...dto.reportes_dto import (
     ActivasResueltas, CoberturaLotesReporte, ConsorciosReporte, DemandaOfertaReporte,
     EmergenciaReporte, NecesidadActual, PrioridadAbiertas, ProyectoReporte,
     RankingONGReporte, SuministroMovilizadoReporte, TiempoAdjudicacionReporte,
-    TiempoPublicacionReporte, TiempoVida,
+    TiempoPublicacionReporte, TiempoVida, ReporteBonita,
 )
 from ...models import Usuario
 from ...services.permisos_service import AUDITOR
 from ...services.reportes_service import ReportesService
+from ...integrations.bonita.service import obtener_metricas_reporte
 
 router = APIRouter(prefix="/reportes", tags=["Reportes"])
 servicio_reportes = ReportesService()
@@ -50,6 +51,11 @@ def reporte_tiempo_publicacion(db: Session = Depends(get_db)):
 @router.get("/tiempo-adjudicacion", response_model=TiempoAdjudicacionReporte, dependencies=[auditor])
 def reporte_tiempo_adjudicacion(db: Session = Depends(get_db)):
     return servicio_reportes.tiempo_adjudicacion(db)
+
+
+@router.get("/bonita", response_model=ReporteBonita, dependencies=[auditor])
+async def reporte_bonita() -> ReporteBonita:
+    return await obtener_metricas_reporte()
 
 FormatoReporte = Literal["json", "csv"]
 NivelGravedad = Literal["baja", "media", "alta", "critica"]

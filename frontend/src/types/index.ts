@@ -19,7 +19,8 @@ export type { Rol } from './rol'
 export type { RecursoCloud, RecursoCloudCreateRequest } from './recursosCloud'
 export type {
   ActivasResueltas, FiltrosReportes, FormatoReporte, NecesidadActual,
-  PrioridadAbiertas, ReporteCoberturaLote, ReporteCoberturaLotes,
+  PrioridadAbiertas, ReporteBonita, ReporteBonitaCasos, ReporteBonitaTiempoEtapa,
+  ReporteCoberturaLote, ReporteCoberturaLotes,
   ReporteConsorcios, ReporteDemandaOferta, ReporteEmergenciaGravedad,
   ReporteProyecto, ReporteRankingOng, ReporteSuministroMovilizado,
   ReporteTiempoAdjudicacion, ReporteTiempoPublicacion, ReportesDashboard,

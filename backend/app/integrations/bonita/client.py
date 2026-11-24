@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from typing import Any
 import httpx
 
@@ -98,6 +99,114 @@ class BonitaClient:
                 f"No se encontró el proceso '{self.process_name}'"
             )
         return str(processes[0]["id"])
+
+    async def obtener_metricas_reporte(self) -> dict[str, Any]:
+        """Consulta en Bonita las métricas requeridas por el dashboard."""
+        try:
+            async with await self._client() as client:
+                await self.login(client)
+                process_id = await self.get_process_id(client)
+                tareas_archivadas = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/archivedHumanTask",
+                    [f"processId={process_id}"],
+                )
+                convocatorias_sin_tilde = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/archivedHumanTask",
+                    [f"processId={process_id}", "name=Decidir curso de accion"],
+                )
+                convocatorias_con_tilde = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/archivedHumanTask",
+                    [f"processId={process_id}", "name=Decidir curso de acción"],
+                )
+                casos_abiertos = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/case",
+                    [f"processDefinitionId={process_id}"],
+                )
+                casos_cerrados = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/archivedCase",
+                    [f"processDefinitionId={process_id}"],
+                )
+        except httpx.RequestError as exc:
+            raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
+
+        etapas = {
+            "Generar lotes": [],
+            "Publicar pedido": [],
+            "Seleccionar oferta": [],
+            "Evaluar proyecto": [],
+        }
+        convocatorias = len(convocatorias_sin_tilde) + len(convocatorias_con_tilde)
+        for tarea in tareas_archivadas:
+            nombre = str(tarea.get("name", ""))
+            if nombre in etapas:
+                inicio = self._fecha_tarea(tarea, "ready")
+                fin = self._fecha_tarea(tarea, "completed")
+                if inicio is not None and fin is not None and fin >= inicio:
+                    etapas[nombre].append((fin - inicio).total_seconds() / 3600)
+        return {
+            "tiempos_por_etapa": [
+                {
+                    "etapa": etapa,
+                    "promedio_horas": sum(duraciones) / len(duraciones) if duraciones else 0.0,
+                    "cantidad": len(duraciones),
+                }
+                for etapa, duraciones in etapas.items()
+            ],
+            "casos": {
+                "abiertos": len(casos_abiertos),
+                "cerrados": len(casos_cerrados),
+            },
+            "convocatorias_camino_alternativo": convocatorias,
+        }
+
+    async def _obtener_coleccion(
+        self,
+        client: httpx.AsyncClient,
+        recurso: str,
+        filtros: list[str],
+    ) -> list[dict[str, Any]]:
+        try:
+            response = await client.get(
+                recurso,
+                params={"p": 0, "c": 2000, "f": filtros},
+            )
+        except httpx.RequestError as exc:
+            raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
+        if response.status_code != 200:
+            raise BonitaClientError(
+                f"Error consultando {recurso} (HTTP {response.status_code})"
+            )
+        try:
+            datos = response.json()
+        except ValueError as exc:
+            raise BonitaClientError(f"Respuesta inválida consultando {recurso}") from exc
+        if not isinstance(datos, list):
+            raise BonitaClientError(f"Respuesta inválida consultando {recurso}")
+        return datos
+
+    @staticmethod
+    def _fecha_tarea(tarea: dict[str, Any], tipo: str) -> datetime | None:
+        nombres = {
+            "ready": ("ready_date", "readyDate", "reached_state_date", "reachedStateDate"),
+            "completed": (
+                "completed_date", "completedDate", "end_date", "endDate",
+                "last_update_date", "lastUpdateDate",
+            ),
+        }[tipo]
+        for nombre in nombres:
+            valor = tarea.get(nombre)
+            if not valor:
+                continue
+            try:
+                return datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+        return None
 
     async def set_case_variables(
         self, case_id: int, variables: dict[str, Any]
