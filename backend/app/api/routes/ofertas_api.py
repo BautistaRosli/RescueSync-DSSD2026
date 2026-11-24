@@ -2,6 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from ..dependencias import requiere_roles
 from ...models import Usuario
@@ -127,14 +128,18 @@ def finalizar_item(
 @router.get(
     "/emergencias/{emergencia_id}/ofertas",
     response_model=list[OfertaListadoRespuesta],
+    response_model_exclude_unset=True,
 )
-def listar_ofertas_de_emergencia(
+async def listar_ofertas_de_emergencia(
     emergencia_id: int,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(COORDINADOR, ONG, AUDITOR)),
 ):
-    return servicio_ofertas.listar_ofertas_de_emergencia(
-        db, emergencia_id, organizacion_id=filtrar_organizacion(usuario)
+    organizacion_id = filtrar_organizacion(usuario)
+    if organizacion_id is None:
+        return await SeleccionOfertasService().listar(db, emergencia_id)
+    return await run_in_threadpool(servicio_ofertas.listar_ofertas_de_emergencia,
+        db, emergencia_id, organizacion_id=organizacion_id
     )
 
 
@@ -151,13 +156,15 @@ def obtener_ofertas_consolidadas(
 
 
 @router.post("/ofertas/{oferta_id}/adjudicar", response_model=AdjudicacionRespuesta)
-def adjudicar_oferta(
+async def adjudicar_oferta(
     oferta_id: int,
     background_tasks: BackgroundTasks,
     para_seleccion: bool = Query(False, description="Preparar una selección de ofertas antes de confirmarla en Bonita"),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(COORDINADOR, OPERADOR, AUDITOR)),
 ):
-    return servicio_ofertas.adjudicar_oferta(
+    if para_seleccion:
+        return await SeleccionOfertasService().preparar(db, oferta_id)
+    return await run_in_threadpool(servicio_ofertas.adjudicar_oferta,
         db, oferta_id, background_tasks, para_seleccion=para_seleccion
     )

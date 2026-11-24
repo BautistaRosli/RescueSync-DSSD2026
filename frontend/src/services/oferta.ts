@@ -1,4 +1,5 @@
 import { apiGet, apiPatch, apiPost } from './http'
+import type { OfertaCoordinadorRead } from '../types/oferta'
 import type {
   AdjudicacionRespuesta,
   OfertaCreateRequest,
@@ -18,8 +19,8 @@ export async function listarOfertasDeOrganizacion(
 
 export async function listarOfertasDeEmergencia(
   emergenciaId: number,
-): Promise<OfertaRead[]> {
-  return apiGet<OfertaRead[]>(`/ofertas?emergencia_id=${emergenciaId}`)
+): Promise<OfertaCoordinadorRead[]> {
+  return apiGet<OfertaCoordinadorRead[]>(`/emergencias/${emergenciaId}/ofertas`)
 }
 
 export async function crearOferta(
