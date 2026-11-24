@@ -199,7 +199,7 @@ export function ConvocatoriasPage({ organizacionId }: Props) {
     try {
       const [lotes, consolidadas] = await Promise.all([
         listarLotes(emergenciaId),
-        obtenerOfertasConsolidadas(emergenciaId),
+        obtenerOfertasConsolidadas(emergenciaId).catch(() => null),
       ])
       setDetalles((actuales) => ({
         ...actuales,

@@ -27,8 +27,10 @@ def listar_organizaciones(
     db: Session = Depends(get_db),
     usuario: Usuario | None = Depends(usuario_opcional),
 ):
-    alcance = filtrar_organizacion(usuario) if usuario is not None else None
-    return servicio_organizaciones.listar_organizaciones(db, organizacion_id=alcance)
+    # La lista se usa también para seleccionar organizaciones socias en una
+    # oferta conjunta. El alcance por ONG se conserva en los recursos
+    # particulares y en las rutas de inventario/ofertas.
+    return servicio_organizaciones.listar_organizaciones(db)
 
 
 @router.get("/{organizacion_id}", response_model=OrganizacionRespuesta)
