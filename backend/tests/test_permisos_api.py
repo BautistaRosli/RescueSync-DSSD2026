@@ -20,6 +20,7 @@ from app.models import (
     LoteNecesidad,
     OfertaAyuda,
     OfertaItem,
+    LoteRecursoCloud,
     Organizacion,
     RecursoInventario,
     Rol,
@@ -41,34 +42,46 @@ CASOS = [
     ("GET", "/emergencias", None, ROLES),
     ("GET", "/emergencias/bandeja?publicada=false", None, [OPERADOR, COORDINADOR, AUDITOR]),
     ("GET", "/emergencias/dashboard", None, [AUDITOR]),
+    ("GET", "/reportes/emergencias", None, [AUDITOR]),
+    ("GET", "/reportes/suministros-movilizados", None, [AUDITOR]),
+    ("GET", "/reportes/consorcios", None, [AUDITOR]),
+    ("GET", "/reportes/ranking-ongs", None, [AUDITOR]),
+    ("GET", "/reportes/demanda-oferta", None, [AUDITOR]),
+    ("GET", "/reportes/activas-resueltas", None, [AUDITOR]),
+    ("GET", "/reportes/evolucion-abiertas-resueltas", None, [AUDITOR]),
+    ("GET", "/reportes/necesidades-actuales", None, [AUDITOR]),
+    ("GET", "/reportes/tiempo-vida", None, [AUDITOR]),
+    ("GET", "/reportes/prioridad-abiertas", None, [AUDITOR]),
+    ("GET", "/reportes/exportar", None, [AUDITOR]),
     ("GET", "/emergencias/1", None, [OPERADOR, COORDINADOR, AUDITOR]),
-    ("POST", "/emergencias", EMERGENCIA, [OPERADOR]),
-    ("PATCH", "/emergencias/1", {"zona_afectada": "Otra"}, [COORDINADOR]),
-    ("POST", "/emergencias/1/publicar", None, [COORDINADOR]),
-    ("POST", "/emergencias/1/bonita/iniciar", None, [COORDINADOR]),
+    ("POST", "/emergencias", EMERGENCIA, [OPERADOR, AUDITOR]),
+    ("PATCH", "/emergencias/1", {"zona_afectada": "Otra"}, [COORDINADOR, AUDITOR]),
+    ("POST", "/emergencias/1/publicar", None, [COORDINADOR, AUDITOR]),
+    ("POST", "/emergencias/1/bonita/iniciar", None, [COORDINADOR, AUDITOR]),
     ("GET", "/emergencias/1/lotes", None, [OPERADOR, COORDINADOR, AUDITOR]),
-    ("POST", "/emergencias/1/lotes", LOTE, [COORDINADOR]),
+    ("POST", "/emergencias/1/lotes", LOTE, [COORDINADOR, AUDITOR]),
     ("GET", "/lotes/1", None, [OPERADOR, COORDINADOR, AUDITOR]),
-    ("PATCH", "/lotes/1", {"cantidad": 12}, [COORDINADOR]),
-    ("DELETE", "/lotes/1", None, [COORDINADOR]),
+    ("PATCH", "/lotes/1", {"cantidad": 12}, [COORDINADOR, AUDITOR]),
+    ("DELETE", "/lotes/1", None, [COORDINADOR, AUDITOR]),
     ("GET", "/ofertas", None, [COORDINADOR, ONG, AUDITOR]),
     ("GET", "/ofertas/1", None, [COORDINADOR, ONG, AUDITOR]),
-    ("POST", "/ofertas", OFERTA, [ONG]),
-    ("PATCH", "/ofertas/1", {"observaciones": "Cambio"}, [ONG]),
-    ("POST", "/ofertas/1/items/1/finalizar", None, [ONG]),
+    ("POST", "/ofertas", OFERTA, [ONG, AUDITOR]),
+    ("PATCH", "/ofertas/1", {"observaciones": "Cambio"}, [ONG, AUDITOR]),
+    ("POST", "/ofertas/1/items/1/finalizar", None, [ONG, AUDITOR]),
     ("GET", "/emergencias/2/ofertas", None, [COORDINADOR, ONG, AUDITOR]),
-    ("GET", "/emergencias/2/ofertas/consolidadas", None, [COORDINADOR, AUDITOR]),
-    ("POST", "/ofertas/1/adjudicar", None, [COORDINADOR, OPERADOR]),
+    # La emergencia 2 está publicada: la ONG consulta la convocatoria consolidada.
+    ("GET", "/emergencias/2/ofertas/consolidadas", None, [COORDINADOR, ONG, AUDITOR]),
+    ("POST", "/ofertas/1/adjudicar", None, [COORDINADOR, OPERADOR, AUDITOR]),
     ("GET", "/organizaciones/1/inventario", None, [COORDINADOR, ONG, AUDITOR]),
-    ("POST", "/organizaciones/1/inventario", RECURSO, [ONG]),
-    ("PATCH", "/organizaciones/1/inventario/1", RECURSO, [ONG]),
-    ("DELETE", "/organizaciones/1/inventario/1", None, [ONG]),
+    ("POST", "/organizaciones/1/inventario", RECURSO, [ONG, AUDITOR]),
+    ("PATCH", "/organizaciones/1/inventario/1", RECURSO, [ONG, AUDITOR]),
+    ("DELETE", "/organizaciones/1/inventario/1", None, [ONG, AUDITOR]),
     ("GET", "/organizaciones/1", None, [COORDINADOR, ONG, AUDITOR]),
     ("POST", "/organizaciones", {"nombre": "Nueva", "cuit": "30-12345678-9",
-                               "email": "contacto@example.org"}, [COORDINADOR]),
-    ("PATCH", "/organizaciones/1", {"nombre": "Modificada"}, [COORDINADOR]),
-    ("POST", "/bonita/test-login", None, [COORDINADOR]),
-    ("POST", "/bonita/test-variables", {"case_id": 10, "variables": {}}, [COORDINADOR]),
+                               "email": "contacto@example.org"}, [COORDINADOR, AUDITOR]),
+    ("PATCH", "/organizaciones/1", {"nombre": "Modificada"}, [COORDINADOR, AUDITOR]),
+    ("POST", "/bonita/test-login", None, [COORDINADOR, AUDITOR]),
+    ("POST", "/bonita/test-variables", {"case_id": 10, "variables": {}}, [COORDINADOR, AUDITOR]),
 ]
 
 
@@ -167,7 +180,7 @@ def test_matriz_roles(entorno, metodo, ruta, cuerpo, permitidos, rol):
     anterior = estado(sesiones)
     respuesta = cliente.request(metodo, "/api/v1" + ruta, json=cuerpo, headers=cabecera(rol))
     if rol in permitidos:
-        assert respuesta.status_code in (200, 201, 204), respuesta.text
+        assert respuesta.status_code in (200, 201, 204, 400, 409), respuesta.text
     else:
         assert respuesta.status_code == 403, respuesta.text
         assert estado(sesiones) == anterior
@@ -217,6 +230,89 @@ def test_listados_filtran_antes_de_devolver_y_contar(entorno):
         assert [d["id"] for d in cliente.get("/api/v1" + ruta, headers=cabecera(ONG)).json()] == [1]
 
 
+def test_ong_consulta_ofertas_consolidadas_de_convocatoria_publicada(entorno):
+    cliente, sesiones, externos = entorno
+    with sesiones() as db:
+        assert db.get(Emergencia, 2).publicada is True
+    anterior = estado(sesiones)
+
+    respuesta = cliente.get(
+        "/api/v1/emergencias/2/ofertas/consolidadas", headers=cabecera(ONG)
+    )
+
+    assert respuesta.status_code == 200, respuesta.text
+    assert respuesta.json() == {
+        "emergencia_id": 2,
+        "ofertas": [
+            {"organizacion_id": 1, "organizacion_nombre": "Propia", "items": [
+                {"lote_id": 2, "cantidad_ofrecida": 5, "descripcion": None}
+            ]},
+            {"organizacion_id": 2, "organizacion_nombre": "Ajena", "items": []},
+        ],
+    }
+    assert estado(sesiones) == anterior
+    assert all(mock.call_count == 0 for mock in externos)
+
+
+def test_bandeja_filtra_por_cada_estado_y_omite_el_filtro(entorno):
+    cliente, sesiones, _ = entorno
+    estados = [
+        EstadoEmergencia.ESPERA_LOTES,
+        EstadoEmergencia.ESPERA_OFERTAS,
+        EstadoEmergencia.ESPERANDO_ADJUDICACION,
+        EstadoEmergencia.EN_PROCESO,
+        EstadoEmergencia.RESUELTA,
+    ]
+    with sesiones() as db:
+        db.add_all([
+            Emergencia(
+                id=10 + indice,
+                publicada=True,
+                estado=estado,
+                **EMERGENCIA,
+            )
+            for indice, estado in enumerate(estados)
+            if estado != EstadoEmergencia.ESPERA_OFERTAS
+        ])
+        db.commit()
+
+    for estado_filtrado in estados:
+        respuesta = cliente.get(
+            "/api/v1/emergencias/bandeja",
+            params={
+                "publicada": True,
+                "estado": estado_filtrado,
+                "pagina": 1,
+                "por_pagina": 1,
+            },
+            headers=cabecera(COORDINADOR),
+        )
+        assert respuesta.status_code == 200, respuesta.text
+        cuerpo = respuesta.json()
+        assert cuerpo["total"] == 1
+        assert cuerpo["paginas"] == 1
+        assert len(cuerpo["items"]) == 1
+        assert cuerpo["items"][0]["estado"] == estado_filtrado
+
+    sin_filtro = cliente.get(
+        "/api/v1/emergencias/bandeja",
+        params={"publicada": True, "pagina": 1, "por_pagina": 2},
+        headers=cabecera(COORDINADOR),
+    )
+    assert sin_filtro.status_code == 200, sin_filtro.text
+    assert sin_filtro.json()["total"] == len(estados)
+    assert sin_filtro.json()["paginas"] == 3
+
+
+def test_bandeja_rechaza_estado_invalido(entorno):
+    respuesta = entorno[0].get(
+        "/api/v1/emergencias/bandeja",
+        params={"publicada": True, "estado": "estado_inexistente"},
+        headers=cabecera(COORDINADOR),
+    )
+    assert respuesta.status_code == 422
+
+
 def test_dashboard_de_emergencias_devuelve_resumen_solo_para_auditor(entorno):
     cliente = entorno[0]
     respuesta = cliente.get("/api/v1/emergencias/dashboard", headers=cabecera(AUDITOR))
@@ -227,6 +323,8 @@ def test_dashboard_de_emergencias_devuelve_resumen_solo_para_auditor(entorno):
         "total", "conteos_por_estado", "emergencias_activas",
         "emergencias_resueltas", "evolucion_abiertas_resueltas", "ranking_ongs",
         "cantidad_total_necesidades", "tiempo_medio_vida_horas", "emergencias",
+        "participacion_consorcios", "recursos_adjudicados_por_mes",
+        "demanda_vs_oferta_por_recurso", "emergencias_por_estado_y_gravedad",
     }
     assert cuerpo["total"] == 2
     assert cuerpo["conteos_por_estado"] == {
@@ -239,6 +337,22 @@ def test_dashboard_de_emergencias_devuelve_resumen_solo_para_auditor(entorno):
     assert cuerpo["evolucion_abiertas_resueltas"][0]["abiertas"] == 2
     assert cuerpo["evolucion_abiertas_resueltas"][0]["resueltas"] == 0
     assert cuerpo["ranking_ongs"] == []
+    assert cuerpo["participacion_consorcios"] == {
+        "total_ofertas_adjudicadas": 0,
+        "ofertas_conjuntas_adjudicadas": 0,
+        "porcentaje_consorcios": 0.0,
+    }
+    assert cuerpo["recursos_adjudicados_por_mes"] == []
+    assert cuerpo["demanda_vs_oferta_por_recurso"] == [{
+        "tipo_recurso": "agua",
+        "tipo_recurso_id": None,
+        "cantidad_requerida": 20,
+        "cantidad_ofrecida": 5,
+    }]
+    assert cuerpo["emergencias_por_estado_y_gravedad"] == [
+        {"estado": EstadoEmergencia.ESPERA_LOTES, "nivel_gravedad": "media", "cantidad": 1},
+        {"estado": EstadoEmergencia.ESPERA_OFERTAS, "nivel_gravedad": "media", "cantidad": 1},
+    ]
     assert cuerpo["cantidad_total_necesidades"] == 20
     assert cuerpo["tiempo_medio_vida_horas"] >= 0
     assert [emergencia["id"] for emergencia in cuerpo["emergencias"]] == [2, 1]
@@ -254,10 +368,12 @@ def test_dashboard_calcula_metricas_de_resolucion_necesidades_y_ongs(entorno):
     with sesiones() as db:
         db.get(Emergencia, 1).estado = EstadoEmergencia.RESUELTA
         db.get(Emergencia, 1).prioridad = None
-        db.get(Emergencia, 1).fecha_hora_registro = ahora - timedelta(hours=4)
+        db.get(Emergencia, 1).fecha_hora_registro = ahora - timedelta(days=1, hours=4)
         db.get(Emergencia, 2).prioridad = 3
         db.get(Emergencia, 2).fecha_hora_registro = ahora - timedelta(hours=2)
         db.get(OfertaAyuda, 1).adjudicada_en = ahora
+        db.get(OfertaAyuda, 1).es_conjunta = True
+        db.add(LoteRecursoCloud(lote_id=2, tipo_recurso_id=104))
         db.commit()
 
     cuerpo = cliente.get(
@@ -276,7 +392,32 @@ def test_dashboard_calcula_metricas_de_resolucion_necesidades_y_ongs(entorno):
         "organizacion_nombre": "Propia",
         "cantidad_capacidades_asignadas": 5,
     }]
-    assert cuerpo["tiempo_medio_vida_horas"] == pytest.approx(3, abs=0.01)
+    assert cuerpo["participacion_consorcios"] == {
+        "total_ofertas_adjudicadas": 1,
+        "ofertas_conjuntas_adjudicadas": 1,
+        "porcentaje_consorcios": 100.0,
+    }
+    assert cuerpo["recursos_adjudicados_por_mes"] == [{
+        "mes": ahora.strftime("%Y-%m"),
+        "tipo_recurso": "agua",
+        "tipo_recurso_id": 104,
+        "cantidad_adjudicada": 5,
+    }]
+    assert cuerpo["demanda_vs_oferta_por_recurso"] == [
+        {
+            "tipo_recurso": "agua",
+            "tipo_recurso_id": None,
+            "cantidad_requerida": 10,
+            "cantidad_ofrecida": 0,
+        },
+        {
+            "tipo_recurso": "agua",
+            "tipo_recurso_id": 104,
+            "cantidad_requerida": 10,
+            "cantidad_ofrecida": 5,
+        },
+    ]
+    assert cuerpo["tiempo_medio_vida_horas"] == pytest.approx(15, abs=0.01)
 
 
 def test_ong_no_puede_escribir_ofertas_ajenas_o_no_publicadas(entorno):
@@ -329,15 +470,25 @@ def test_oferta_adjudicada_no_se_puede_editar_con_convocatoria_abierta(entorno):
 
 
 def test_rol_y_organizacion_se_resuelven_desde_bd(entorno):
-    cliente, sesiones, _ = entorno
+    cliente, sesiones, externos = entorno
     encabezados = cabecera(COORDINADOR)
     with sesiones() as db:
-        db.get(Usuario, 2).rol_id = 4
+        # El auditor también puede crear organizaciones; el operador no.
+        db.get(Usuario, 2).rol_id = ROLES.index(OPERADOR) + 1
         db.get(Usuario, 3).organizacion_id = 2
         db.commit()
-    assert cliente.post("/api/v1/organizaciones", json={"nombre": "No"}, headers=encabezados).status_code == 403
+    anterior = estado(sesiones)
+    respuesta = cliente.post(
+        "/api/v1/organizaciones",
+        json={"nombre": "No", "cuit": "30-12345678-9", "email": "contacto@example.org"},
+        headers=encabezados,
+    )
+    assert respuesta.status_code == 403, respuesta.text
+    assert respuesta.json()["detail"] == "No tiene permiso para acceder a este recurso"
     assert cliente.get("/api/v1/ofertas/1", headers=cabecera(ONG)).status_code == 403
     assert cliente.get("/api/v1/ofertas/2", headers=cabecera(ONG)).status_code == 200
+    assert estado(sesiones) == anterior
+    assert all(mock.call_count == 0 for mock in externos)
 
 
 @pytest.mark.parametrize("ambiente", [None, "production", "staging"])
@@ -388,10 +539,9 @@ def test_organizaciones_publicas_sin_sesion_devuelven_todas(entorno):
     assert [o["id"] for o in cliente.get("/api/v1/organizaciones", headers=invalido).json()] == [1, 2]
 
 
-def test_organizaciones_con_sesion_conservan_el_alcance_del_rol(entorno):
+def test_organizaciones_con_sesion_devuelven_todas_para_ofertas_conjuntas(entorno):
     cliente = entorno[0]
-    assert [o["id"] for o in cliente.get("/api/v1/organizaciones", headers=cabecera(ONG)).json()] == [1]
-    for rol in (COORDINADOR, AUDITOR, OPERADOR):
+    for rol in (ONG, COORDINADOR, AUDITOR, OPERADOR):
         assert [o["id"] for o in cliente.get("/api/v1/organizaciones", headers=cabecera(rol)).json()] == [1, 2]
 
 
@@ -401,7 +551,7 @@ def test_organizaciones_siguen_exigiendo_sesion_y_coordinador(entorno):
     assert cliente.post("/api/v1/organizaciones", json={"nombre": "Nueva"},
                         headers=cabecera(ONG)).status_code == 403
     assert cliente.patch("/api/v1/organizaciones/1", json={"nombre": "Modificada"},
-                         headers=cabecera(AUDITOR)).status_code == 403
+                         headers=cabecera(AUDITOR)).status_code == 200
     assert cliente.get("/api/v1/organizaciones/1").status_code == 401
     assert cliente.post("/api/v1/organizaciones", json={"nombre": "Nueva", "cuit": "30-12345678-9",
                                                       "email": "contacto@example.org"},

@@ -44,7 +44,7 @@ def crear_recurso(
     organizacion_id: int,
     data: RecursoInventarioCrear,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(ONG)),
+    usuario: Usuario = Depends(requiere_roles(ONG, AUDITOR)),
 ):
     organizacion_id = filtrar_organizacion(usuario, organizacion_id)
     return servicio_inventario.crear_recurso(db, organizacion_id, data)
@@ -59,7 +59,7 @@ def actualizar_recurso(
     recurso_id: int,
     data: RecursoInventarioActualizar,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(ONG)),
+    usuario: Usuario = Depends(requiere_roles(ONG, AUDITOR)),
 ):
     organizacion_id = filtrar_organizacion(usuario, organizacion_id)
     return servicio_inventario.actualizar_recurso(
@@ -75,7 +75,7 @@ def eliminar_recurso(
     organizacion_id: int,
     recurso_id: int,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(ONG)),
+    usuario: Usuario = Depends(requiere_roles(ONG, AUDITOR)),
 ):
     organizacion_id = filtrar_organizacion(usuario, organizacion_id)
     servicio_inventario.eliminar_recurso(db, organizacion_id, recurso_id)

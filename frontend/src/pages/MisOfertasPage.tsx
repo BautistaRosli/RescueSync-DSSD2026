@@ -33,6 +33,42 @@ function idPanel(ofertaId: number): string {
   return `detalle-oferta-${ofertaId}`
 }
 
+function AportesDelItem({
+  oferta,
+  item,
+  unidad,
+}: {
+  oferta: OfertaRead
+  item: OfertaRead['items'][number]
+  unidad?: string | null
+}) {
+  const aportes = item.aportes ?? []
+  const nombreDeOrganizacion = (organizacionId: number) =>
+    oferta.organizaciones.find(
+      (organizacion) => organizacion.id === organizacionId,
+    )?.nombre ?? `Organización #${organizacionId}`
+
+  return (
+    <div className="mt-2 rounded-lg border border-slate-700 bg-slate-900/40 p-2 text-xs text-slate-300">
+      <p className="font-semibold text-slate-400">Reparto del aporte</p>
+      {aportes.length === 0 ? (
+        <p className="mt-1 text-slate-500">Todavía no fue declarado el reparto.</p>
+      ) : (
+        <ul className="mt-1 flex flex-col gap-1">
+          {aportes.map((aporte) => (
+            <li key={aporte.organizacion_id} className="flex justify-between gap-2">
+              <span>{nombreDeOrganizacion(aporte.organizacion_id)}</span>
+              <span className="font-mono text-cyan-400">
+                {aporte.cantidad} {unidad ?? ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 export function MisOfertasPage({ organizacionId }: Props) {
   const [ofertas, setOfertas] = useState<OfertaRead[]>([])
   const [emergencias, setEmergencias] = useState<Record<number, EmergenciaRead>>({})
@@ -309,6 +345,14 @@ export function MisOfertasPage({ organizacionId }: Props) {
                                 </p>
                               )}
 
+                              {oferta.es_conjunta && (
+                                <AportesDelItem
+                                  oferta={oferta}
+                                  item={item}
+                                  unidad={lote?.unidad}
+                                />
+                              )}
+
                               <div className="mt-2">
                                 {item.finalizado_en !== null ? (
                                   <span className={claseBadgeExito}>
@@ -356,7 +400,7 @@ export function MisOfertasPage({ organizacionId }: Props) {
                       </div>
                     )}
 
-                    {abierta ? (
+                    {abierta && esLider ? (
                       <button
                         type="button"
                         onClick={() => setEnEdicion(oferta)}
@@ -364,6 +408,10 @@ export function MisOfertasPage({ organizacionId }: Props) {
                       >
                         Editar oferta
                       </button>
+                    ) : abierta ? (
+                      <p className={claseSubPanel}>
+                        Solo la ONG dueña puede editar esta oferta.
+                      </p>
                     ) : (
                       <button
                         type="button"

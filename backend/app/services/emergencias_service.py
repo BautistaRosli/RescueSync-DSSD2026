@@ -12,8 +12,12 @@ from ..dto import (
     EmergenciaRespuesta,
     EmergenciasDashboard,
     EmergenciasPaginadas,
+    DemandaOfertaRecurso,
+    EmergenciasPorEstadoGravedad,
     EvolucionEmergencias,
+    ParticipacionConsorcios,
     RankingONG,
+    RecursoAdjudicadoPorMes,
 )
 from ..integrations.bonita.client import BonitaClientError, bonita_client
 from ..integrations.email.service import notificar_nueva_emergencia
@@ -21,7 +25,13 @@ from ..integrations.prioridad.client import (
     PrioridadClientError,
     prioridad_client,
 )
-from ..models import EstadoEmergencia, Emergencia, OfertaAyuda
+from ..models import (
+    EstadoEmergencia,
+    Emergencia,
+    LoteNecesidad,
+    OfertaAyuda,
+    OfertaItem,
+)
 from ..repositories import EmergenciaRepository, UsuarioRepository
 from ..schemas import (
     EmergenciaActualizar,
@@ -50,13 +60,16 @@ class EmergenciaService:
         self,
         db: Session,
         publicada: bool,
+        estado: Optional[str] = None,
         pagina: int = 1,
         por_pagina: int = 10,
     ) -> EmergenciasPaginadas:
         """Bandeja paginada: bucket de no publicadas o de publicadas."""
-        total = self._repository.contar_por_publicada(db, publicada)
+        total = self._repository.contar_por_publicada(
+            db, publicada, estado=estado
+        )
         emergencias = self._repository.listar_paginado(
-            db, publicada, pagina, por_pagina
+            db, publicada, pagina, por_pagina, estado=estado
         )
         return EmergenciasPaginadas(
             items=[EmergenciaRespuesta.model_validate(e) for e in emergencias],
@@ -66,18 +79,51 @@ class EmergenciaService:
             paginas=math.ceil(total / por_pagina) if total else 0,
         )
 
-    def obtener_dashboard(self, db: Session) -> EmergenciasDashboard:
+    def obtener_dashboard(
+        self,
+        db: Session,
+        desde: Optional[datetime] = None,
+        hasta: Optional[datetime] = None,
+        nivel_gravedad: Optional[str] = None,
+    ) -> EmergenciasDashboard:
         emergencias = self._repository.listar(db)
+        def fecha_normalizada(fecha: datetime) -> datetime:
+            if fecha.tzinfo is None:
+                return fecha
+            return fecha.astimezone(timezone.utc).replace(tzinfo=None)
+
+        desde_normalizado = fecha_normalizada(desde) if desde is not None else None
+        hasta_normalizado = fecha_normalizada(hasta) if hasta is not None else None
+        if desde is not None:
+            emergencias = [
+                emergencia for emergencia in emergencias
+                if fecha_normalizada(emergencia.fecha_hora_registro) >= desde_normalizado
+            ]
+        if hasta is not None:
+            emergencias = [
+                emergencia for emergencia in emergencias
+                if fecha_normalizada(emergencia.fecha_hora_registro) <= hasta_normalizado
+            ]
+        if nivel_gravedad is not None:
+            emergencias = [
+                emergencia for emergencia in emergencias
+                if emergencia.nivel_gravedad == nivel_gravedad
+            ]
         conteos_por_estado: dict[str, int] = {}
         evolucion_por_fecha: dict[str, dict[str, int]] = {}
         ahora = datetime.now(timezone.utc)
         tiempo_total_horas = 0.0
         cantidad_total_necesidades = 0
         emergencias_resueltas = 0
+        emergencias_por_estado_y_gravedad: dict[tuple[str, str], int] = {}
         for emergencia in emergencias:
             if emergencia.estado is not None:
                 conteos_por_estado[emergencia.estado] = (
                     conteos_por_estado.get(emergencia.estado, 0) + 1
+                )
+                clave_gravedad = (emergencia.estado, emergencia.nivel_gravedad)
+                emergencias_por_estado_y_gravedad[clave_gravedad] = (
+                    emergencias_por_estado_y_gravedad.get(clave_gravedad, 0) + 1
                 )
             if emergencia.estado == EstadoEmergencia.RESUELTA:
                 emergencias_resueltas += 1
@@ -106,9 +152,41 @@ class EmergenciaService:
             .options(
                 selectinload(OfertaAyuda.items),
                 selectinload(OfertaAyuda.organizacion),
+                selectinload(OfertaAyuda.items)
+                .selectinload(OfertaItem.lote_necesidad)
+                .selectinload(LoteNecesidad.referencia_cloud),
             )
             .all()
         )
+        emergencias_filtradas = {emergencia.id for emergencia in emergencias}
+        ofertas = [oferta for oferta in ofertas if oferta.emergencia_id in emergencias_filtradas]
+        ofertas_adjudicadas = [oferta for oferta in ofertas if oferta.adjudicada_en]
+        ofertas_conjuntas = sum(
+            1 for oferta in ofertas_adjudicadas if oferta.es_conjunta
+        )
+        recursos_adjudicados: dict[tuple[str, int | None, str], int] = {}
+        demanda_oferta: dict[tuple[str, int | None], dict[str, int]] = {}
+        for emergencia in emergencias:
+            for lote in emergencia.lotes:
+                recurso_id = lote.tipo_recurso_id
+                clave = (lote.tipo, recurso_id)
+                registro = demanda_oferta.setdefault(
+                    clave,
+                    {"cantidad_requerida": 0, "cantidad_ofrecida": 0},
+                )
+                registro["cantidad_requerida"] += lote.cantidad
+                registro["cantidad_ofrecida"] += sum(
+                    item.cantidad_ofrecida
+                    for item in lote.items
+                )
+        for oferta in ofertas_adjudicadas:
+            mes = oferta.adjudicada_en.astimezone(timezone.utc).strftime("%Y-%m")
+            for item in oferta.items:
+                lote = item.lote_necesidad
+                clave = (mes, lote.tipo_recurso_id, lote.tipo)
+                recursos_adjudicados[clave] = (
+                    recursos_adjudicados.get(clave, 0) + item.cantidad_ofrecida
+                )
         capacidades_por_ong: dict[int, dict[str, int | str]] = {}
         for oferta in ofertas:
             if oferta.adjudicada_en is None:
@@ -151,6 +229,46 @@ class EmergenciaService:
                 tiempo_total_horas / len(emergencias) if emergencias else 0.0
             ),
             emergencias=[EmergenciaRespuesta.model_validate(e) for e in emergencias],
+            participacion_consorcios=ParticipacionConsorcios(
+                total_ofertas_adjudicadas=len(ofertas_adjudicadas),
+                ofertas_conjuntas_adjudicadas=ofertas_conjuntas,
+                porcentaje_consorcios=(
+                    ofertas_conjuntas * 100 / len(ofertas_adjudicadas)
+                    if ofertas_adjudicadas else 0.0
+                ),
+            ),
+            recursos_adjudicados_por_mes=[
+                RecursoAdjudicadoPorMes(
+                    mes=mes,
+                    tipo_recurso=tipo,
+                    tipo_recurso_id=recurso_id,
+                    cantidad_adjudicada=cantidad,
+                )
+                for (mes, recurso_id, tipo), cantidad in sorted(
+                    recursos_adjudicados.items()
+                )
+            ],
+            demanda_vs_oferta_por_recurso=[
+                DemandaOfertaRecurso(
+                    tipo_recurso=tipo,
+                    tipo_recurso_id=recurso_id,
+                    **cantidades,
+                )
+                for (tipo, recurso_id), cantidades in sorted(
+                    demanda_oferta.items(),
+                    key=lambda item: (item[0][0], item[0][1] is not None, item[0][1] or 0),
+                )
+            ],
+            emergencias_por_estado_y_gravedad=[
+                EmergenciasPorEstadoGravedad(
+                    estado=estado,
+                    nivel_gravedad=gravedad,
+                    cantidad=cantidad,
+                )
+                for (estado, gravedad), cantidad in sorted(
+                    emergencias_por_estado_y_gravedad.items()
+                )
+            ],
         )
 
     def obtener_emergencia_entidad(
@@ -260,8 +378,9 @@ class EmergenciaService:
     ) -> int:
         """Instancia en Bonita el proceso de convocatoria de la emergencia.
 
-        Instancia el caso y recien despues escribe las variables de caso, que
-        el contrato del proceso deja en null.
+        Envía las cinco variables como entradas del contrato de instanciación;
+        el proceso las usa para inicializar sus variables de caso.
+        Puede iniciarse sin lotes; la publicación exige cargarlos.
 
         Es idempotente: si la emergencia ya tiene un caso, devuelve el mismo.
         """
@@ -273,13 +392,6 @@ class EmergenciaService:
         # Idempotencia: si ya tiene caso, no crear otro
         if emergencia.bonita_case_id:
             return int(emergencia.bonita_case_id)
-
-        # Validar que tenga lotes
-        """if not emergencia.lotes:
-            raise HTTPException(
-                status_code=400,
-                detail="La emergencia no tiene lotes de necesidad cargados",
-            )"""
 
         # Armar variables (simples, con lotes serializados como JSON string)
         variables = {
@@ -312,13 +424,8 @@ class EmergenciaService:
                 detail=f"No se pudo iniciar el proceso en Bonita: {exc}",
             )
 
-        # El contrato del proceso instancia el caso pero deja las variables en
-        # null, asi que se escriben explicitamente recien creado. Va antes de
-        # persistir `bonita_case_id` a proposito: si falla, la emergencia no
-        # queda marcada como instancia y se puede reintentar, en vez de
-        # quedar con un caso de Bonita huerfano y variables en null.
-        
-
+        # Persistir sólo tras la instanciación exitosa para permitir reintentos
+        # cuando Bonita rechaza la solicitud.
         emergencia.bonita_case_id = str(case_id)
         emergencia.bonita_variables_json = json.dumps(variables, default=str)
         self._repository.actualizar(db, emergencia)

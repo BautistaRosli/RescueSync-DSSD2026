@@ -37,7 +37,6 @@ services:
       - BONITA_USER=install
       - BONITA_PASSWORD=install
       - PRIORIDAD_SERVICE_URL=http://host.docker.internal:30080
-      - CLOUD_API_URL=${CLOUD_API_URL:-http://host.docker.internal:8002}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

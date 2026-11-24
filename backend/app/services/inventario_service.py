@@ -6,6 +6,7 @@ from ..models import RecursoInventario
 from ..repositories import RecursoInventarioRepository
 from ..schemas import RecursoInventarioActualizar, RecursoInventarioCrear
 from .usuarios_service import OrganizacionService
+from ..utils.recursos import normalizar_nombre_recurso
 
 
 class InventarioService:
@@ -29,9 +30,9 @@ class InventarioService:
         data: RecursoInventarioCrear,
     ) -> RecursoInventarioRespuesta:
         self._organizaciones.obtener_organizacion_entidad(db, organizacion_id)
-        recurso = RecursoInventario(
-            organizacion_id=organizacion_id, **data.model_dump()
-        )
+        valores = data.model_dump()
+        valores["tipo"] = normalizar_nombre_recurso(valores["tipo"])
+        recurso = RecursoInventario(organizacion_id=organizacion_id, **valores)
         creado = self._repository.crear(db, recurso)
         return RecursoInventarioRespuesta.model_validate(creado)
 
@@ -46,7 +47,9 @@ class InventarioService:
         recurso = self._obtener_recurso_entidad(
             db, recurso_id, organizacion_id
         )
-        for field, value in data.model_dump().items():
+        valores = data.model_dump()
+        valores["tipo"] = normalizar_nombre_recurso(valores["tipo"])
+        for field, value in valores.items():
             setattr(recurso, field, value)
         actualizado = self._repository.actualizar(db, recurso)
         return RecursoInventarioRespuesta.model_validate(actualizado)

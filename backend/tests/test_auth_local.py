@@ -14,11 +14,13 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
+from app.integrations import cloud_client
 from app.models import (
     Emergencia,
     EstadoEmergencia,
     OfertaAyuda,
     Organizacion,
+    OrganizacionCloud,
     Rol,
     Usuario,
 )
@@ -204,12 +206,21 @@ def test_fallo_persistencia_registro_revierte(entorno_local, monkeypatch):
 def test_seed_demo_solo_development_idempotente(entorno_local, monkeypatch, ambiente):
     _, sesiones, remoto = entorno_local
     monkeypatch.setenv("APP_ENV", ambiente)
+    registrar = Mock(side_effect=lambda cuit, nombre, email, token: httpx.Response(
+        201,
+        json={"id": 900 if cuit == "30-12345678-5" else 901,
+              "cuit": cuit, "razon_social": nombre, "email": email},
+    ))
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
+    monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
+    monkeypatch.setattr(cloud_client, "registrar_ong", registrar)
     with sesiones() as db:
         RolService().sembrar_roles(db)
         servicio = AuthService()
         servicio.sembrar_usuarios_iniciales(db)
         servicio.sembrar_usuarios_iniciales(db)
-        assert db.query(Usuario).count() == (5 if ambiente == "development" else 1)
+        assert db.query(Usuario).count() == (6 if ambiente == "development" else 1)
         for datos in USUARIOS_INICIALES:
             usuario = db.query(Usuario).filter_by(email=datos["email"]).first()
             if ambiente == "development":
@@ -217,6 +228,7 @@ def test_seed_demo_solo_development_idempotente(entorno_local, monkeypatch, ambi
             else:
                 assert usuario is None
     remoto.assert_not_called()
+    assert registrar.call_count == (2 if ambiente == "development" else 0)
 
 
 def test_seed_repara_organizacion_del_usuario_demo_sin_cambiar_password(
@@ -224,6 +236,15 @@ def test_seed_repara_organizacion_del_usuario_demo_sin_cambiar_password(
 ):
     _, sesiones, remoto = entorno_local
     monkeypatch.setenv("APP_ENV", "development")
+    registrar = Mock(side_effect=lambda cuit, nombre, email, token: httpx.Response(
+        201,
+        json={"id": 900 if cuit == "30-12345678-5" else 901,
+              "cuit": cuit, "razon_social": nombre, "email": email},
+    ))
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
+    monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
+    monkeypatch.setattr(cloud_client, "registrar_ong", registrar)
     password_existente = "clave-existente-no-demo"
     with sesiones() as db:
         RolService().sembrar_roles(db)
@@ -252,6 +273,7 @@ def test_seed_repara_organizacion_del_usuario_demo_sin_cambiar_password(
         assert verificar_password(password_existente, reparado.password_hash)
         assert db.query(Organizacion).filter_by(nombre="UNICEF").count() == 1
     remoto.assert_not_called()
+    assert registrar.call_count == 2
 
 
 def test_usuario_unicef_demo_autentica_y_accede_a_sus_rutas(
@@ -259,9 +281,26 @@ def test_usuario_unicef_demo_autentica_y_accede_a_sus_rutas(
 ):
     cliente, sesiones, remoto = entorno_local
     monkeypatch.setenv("APP_ENV", "development")
+    registrar = Mock(side_effect=lambda cuit, nombre, email, token: httpx.Response(
+        201,
+        json={"id": 900 if cuit == "30-12345678-5" else 901,
+              "cuit": cuit, "razon_social": nombre, "email": email},
+    ))
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
+    monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
+    monkeypatch.setattr(cloud_client, "registrar_ong", registrar)
     with sesiones() as db:
         RolService().sembrar_roles(db)
         AuthService().sembrar_usuarios_iniciales(db)
+        monkeypatch.setattr(cloud_client, "listar_items", Mock(return_value=httpx.Response(200, json=[])))
+        ids_recursos = {}
+
+        def crear_item(nombre, descripcion, token):
+            identificador = ids_recursos.setdefault(nombre, len(ids_recursos) + 41)
+            return httpx.Response(201, json={"id": identificador, "nombre": nombre, "descripcion": descripcion})
+
+        monkeypatch.setattr(cloud_client, "crear_item", crear_item)
         sembrar_datos_demo(db)
         representantes = []
         for email in ("ong@ong.com", "unicef@unicef.org"):
@@ -310,6 +349,7 @@ def test_usuario_unicef_demo_autentica_y_accede_a_sus_rutas(
         assert inventario.status_code != 403, inventario.text
         assert lotes.status_code != 403, lotes.text
     remoto.assert_not_called()
+    assert registrar.call_count == 2
 
 
 def test_seed_ofertas_demo_solo_para_estados_adjudicables(
@@ -317,9 +357,26 @@ def test_seed_ofertas_demo_solo_para_estados_adjudicables(
 ):
     _, sesiones, remoto = entorno_local
     monkeypatch.setenv("APP_ENV", "development")
+    registrar = Mock(side_effect=lambda cuit, nombre, email, token: httpx.Response(
+        201,
+        json={"id": 900 if cuit == "30-12345678-5" else 901,
+              "cuit": cuit, "razon_social": nombre, "email": email},
+    ))
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
+    monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
+    monkeypatch.setattr(cloud_client, "registrar_ong", registrar)
     with sesiones() as db:
         RolService().sembrar_roles(db)
         AuthService().sembrar_usuarios_iniciales(db)
+        monkeypatch.setattr(cloud_client, "listar_items", Mock(return_value=httpx.Response(200, json=[])))
+        ids_recursos = {}
+
+        def crear_item(nombre, descripcion, token):
+            identificador = ids_recursos.setdefault(nombre, len(ids_recursos) + 41)
+            return httpx.Response(201, json={"id": identificador, "nombre": nombre, "descripcion": descripcion})
+
+        monkeypatch.setattr(cloud_client, "crear_item", crear_item)
         sembrar_datos_demo(db)
         emergencias = (
             db.query(Emergencia)
@@ -370,4 +427,152 @@ def test_seed_ofertas_demo_solo_para_estados_adjudicables(
                 assert len(ofertas_demo) == 1
             else:
                 assert cantidad_ofertas == 0
+    remoto.assert_not_called()
+    assert registrar.call_count == 2
+
+
+def test_seed_demo_vincula_cloud_y_no_repite_registro(entorno_local, monkeypatch):
+    _, sesiones, remoto = entorno_local
+    monkeypatch.setenv("APP_ENV", "development")
+    obtener_token = Mock(return_value="token-demo")
+    registrar = Mock(side_effect=lambda cuit, nombre, email, token: httpx.Response(
+        201,
+        json={"id": 900 if cuit == "30-12345678-5" else 901,
+              "cuit": cuit, "razon_social": nombre, "email": email},
+    ))
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
+    monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", obtener_token)
+    monkeypatch.setattr(cloud_client, "registrar_ong", registrar)
+
+    with sesiones() as db:
+        RolService().sembrar_roles(db)
+        servicio = AuthService()
+        servicio.sembrar_usuarios_iniciales(db)
+        vinculaciones = {
+            organizacion.nombre: organizacion.referencia_cloud.ong_id
+            for organizacion in db.query(Organizacion).all()
+            if organizacion.referencia_cloud is not None
+        }
+        assert vinculaciones == {
+            "Organización de las Naciones Unidas": 900,
+            "UNICEF": 901,
+        }
+        assert obtener_token.call_count == 2
+        assert registrar.call_count == 2
+
+        servicio.sembrar_usuarios_iniciales(db)
+        assert obtener_token.call_count == 2
+        assert registrar.call_count == 2
+        assert db.query(OrganizacionCloud).count() == 2
+
+    remoto.assert_not_called()
+
+
+def test_seed_demo_fallo_cloud_no_crea_vinculacion_falsa(entorno_local, monkeypatch):
+    _, sesiones, remoto = entorno_local
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
+    monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
+    registrar = Mock(side_effect=cloud_client.AutenticacionAplicacionError())
+    monkeypatch.setattr(cloud_client, "registrar_ong", registrar)
+
+    with sesiones() as db:
+        RolService().sembrar_roles(db)
+        with pytest.raises(RuntimeError, match="Organización de las Naciones Unidas"):
+            AuthService().sembrar_usuarios_iniciales(db)
+        assert db.query(Organizacion).count() == 0
+        assert db.query(OrganizacionCloud).count() == 0
+
+    registrar.assert_called_once()
+    remoto.assert_not_called()
+
+    # El próximo arranque reintenta la precarga automática sin duplicar locales.
+    registrar.side_effect = lambda cuit, nombre, email, token: httpx.Response(
+        201, json={"id": 900 if cuit == "30-12345678-5" else 901,
+                   "cuit": cuit, "razon_social": nombre, "email": email})
+    with sesiones() as db:
+        servicio = AuthService()
+        servicio.sembrar_usuarios_iniciales(db)
+        servicio.sembrar_usuarios_iniciales(db)
+        assert db.query(Organizacion).count() == 2
+        assert db.query(OrganizacionCloud).count() == 2
+        assert db.query(Usuario).count() == len(USUARIOS_INICIALES) + 1
+    assert registrar.call_count == 3
+
+
+def test_seed_demo_recupera_ong_existente_en_409_y_valida_id(entorno_local, monkeypatch):
+    _, sesiones, remoto = entorno_local
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
+    monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
+    registrar = Mock(side_effect=[
+        httpx.Response(409, json={"detail": "El CUIT ya existe", "id": 8}),
+        httpx.Response(201, json={
+            "id": 901,
+            "cuit": "30-87654321-4",
+            "razon_social": "UNICEF",
+            "email": "unicef@unicef.org",
+        }),
+    ])
+    verificar = Mock(return_value=httpx.Response(200, json={
+        "id": 8,
+        "cuit": "30-12345678-5",
+        "razon_social": "Organización de las Naciones Unidas",
+        "email": "ong@onu.org",
+    }))
+    monkeypatch.setattr(cloud_client, "registrar_ong", registrar)
+    monkeypatch.setattr(cloud_client, "obtener_ong", verificar)
+
+    with sesiones() as db:
+        RolService().sembrar_roles(db)
+        AuthService().sembrar_usuarios_iniciales(db)
+        vinculaciones = {
+            organizacion.nombre: organizacion.referencia_cloud.ong_id
+            for organizacion in db.query(Organizacion).all()
+            if organizacion.referencia_cloud is not None
+        }
+        assert vinculaciones == {
+            "Organización de las Naciones Unidas": 8,
+            "UNICEF": 901,
+        }
+
+    assert registrar.call_count == 2
+    verificar.assert_called_once_with(8, "token-demo")
+    remoto.assert_not_called()
+
+
+def test_seed_demo_409_sin_id_usa_id_configurado_y_lo_valida(entorno_local, monkeypatch):
+    _, sesiones, remoto = entorno_local
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
+    monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
+    monkeypatch.setattr(
+        cloud_client,
+        "registrar_ong",
+        Mock(return_value=httpx.Response(409, json={"detail": "El CUIT ya está registrado"})),
+    )
+
+    identidades = {
+        8: {"id": 8, "cuit": "30-12345678-5", "razon_social": "Organización de las Naciones Unidas", "email": "ong@onu.org"},
+        9: {"id": 9, "cuit": "30-87654321-4", "razon_social": "UNICEF", "email": "unicef@unicef.org"},
+    }
+    verificar = Mock(side_effect=lambda ong_id, token: httpx.Response(200, json=identidades[ong_id]))
+    monkeypatch.setattr(cloud_client, "obtener_ong", verificar)
+
+    with sesiones() as db:
+        RolService().sembrar_roles(db)
+        AuthService().sembrar_usuarios_iniciales(db)
+        assert {
+            organizacion.nombre: organizacion.referencia_cloud.ong_id
+            for organizacion in db.query(Organizacion).all()
+        } == {
+            "Organización de las Naciones Unidas": 8,
+            "UNICEF": 9,
+        }
+
+    assert verificar.call_count == 2
     remoto.assert_not_called()

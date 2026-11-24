@@ -112,6 +112,24 @@ export async function apiGet<T>(ruta: string): Promise<T> {
   return apiPeticion<T>(ruta, 'GET')
 }
 
+export async function apiDescargar(ruta: string): Promise<Blob> {
+  const tokenActual = leerTokenSesion()
+  let respuesta: Response
+  try {
+    respuesta = await fetch(`${API_BASE}${ruta}`, {
+      method: 'GET',
+      headers: tokenActual ? { Authorization: `Bearer ${tokenActual}` } : {},
+    })
+  } catch {
+    throw new ApiError(0, escribirDetalle(null, 0))
+  }
+  if (!respuesta.ok) {
+    const cuerpo = await respuesta.json().catch(() => null)
+    throw new ApiError(respuesta.status, escribirDetalle(cuerpo, respuesta.status))
+  }
+  return respuesta.blob()
+}
+
 export async function apiPatch<T>(ruta: string, cuerpo: unknown): Promise<T> {
   return apiPeticion<T>(ruta, 'PATCH', cuerpo)
 }

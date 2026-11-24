@@ -218,3 +218,34 @@ def test_credenciales_faltantes_rechazan_incluso_con_cache(sesion_simulada, monk
     with pytest.raises(cloud_client.AutenticacionAplicacionError):
         cloud_client.obtener_token_aplicacion()
     login.assert_called_once()
+
+
+def test_catalogo_cloud_lista_items_con_token(monkeypatch):
+    monkeypatch.setenv("CLOUD_API_URL", "https://cloud.example.test/base/")
+    llamada = Mock(return_value=httpx.Response(200, json=[]))
+    monkeypatch.setattr(httpx, "get", llamada)
+
+    respuesta = cloud_client.listar_items("token-catalogo")
+
+    assert respuesta.status_code == 200
+    llamada.assert_called_once_with(
+        "https://cloud.example.test/base/items",
+        headers={"Authorization": "Bearer token-catalogo"},
+        timeout=10.0,
+    )
+
+
+def test_catalogo_cloud_crea_item_con_token(monkeypatch):
+    monkeypatch.setenv("CLOUD_API_URL", "https://cloud.example.test/base/")
+    llamada = Mock(return_value=httpx.Response(201, json={"id": 12, "nombre": "Agua"}))
+    monkeypatch.setattr(httpx, "post", llamada)
+
+    respuesta = cloud_client.crear_item("Agua", "Bidones", "token-catalogo")
+
+    assert respuesta.status_code == 201
+    llamada.assert_called_once_with(
+        "https://cloud.example.test/base/items",
+        json={"nombre": "Agua", "descripcion": "Bidones"},
+        headers={"Authorization": "Bearer token-catalogo"},
+        timeout=10.0,
+    )

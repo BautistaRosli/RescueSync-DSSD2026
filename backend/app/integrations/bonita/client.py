@@ -7,6 +7,10 @@ class BonitaClientError(Exception):
     pass
 
 
+class BonitaTaskConflictError(BonitaClientError):
+    pass
+
+
 # Clases Java que espera el motor para cada tipo nativo de Python.
 # La clave es el tipo exacto (no una superclase) para que `bool` no caiga
 # en `int` y termine guardado como Integer.
@@ -163,13 +167,16 @@ class BonitaClient:
             tareas = response.json()
             return tareas[0] if tareas else None
 
-    async def obtener_miembro_actor(self, actor_id: int) -> dict | None:
+    async def obtener_miembro_actor(self, actor_id: int, solo_usuarios: bool = False) -> dict | None:
         """Devuelve el primer usuario miembro del actor Bonita, o None si no tiene."""
         async with await self._client() as client:
             await self.login(client)
+            parametros = {"f": f"actor_id={actor_id}"}
+            if solo_usuarios:
+                parametros = {"p": 0, "c": 1, "f": [f"actor_id={actor_id}", "member_type=user"]}
             response = await client.get(
                 "/API/bpm/actorMember",
-                params={"f": f"actor_id={actor_id}"},
+                params=parametros,
             )
             if response.status_code != 200:
                 raise BonitaClientError(
@@ -178,6 +185,19 @@ class BonitaClient:
                 )
             miembros = response.json()
             return miembros[0] if miembros else None
+
+    async def obtener_variable_caso(self, case_id: int, nombre: str) -> str | None:
+        """Lee el valor textual, incluyendo casos ya archivados por el motor."""
+        async with await self._client() as client:
+            await self.login(client)
+            for recurso in ("caseVariable", "archivedCaseVariable"):
+                response = await client.get(f"/API/bpm/{recurso}/{case_id}/{nombre}")
+                if response.status_code == 404:
+                    continue
+                if response.status_code != 200:
+                    raise BonitaClientError(f"Error consultando variable (HTTP {response.status_code})")
+                return response.json()["value"]
+            return None
 
     async def asignar_tarea(self, tarea_id: int, usuario_id: int) -> None:
         """Asigna una tarea humana a un usuario del actor (requisito previo para ejecutarla por API)."""
@@ -188,12 +208,13 @@ class BonitaClient:
                 json={"assigned_id": str(usuario_id)},
             )
             if response.status_code not in (200, 204):
-                raise BonitaClientError(
+                error = BonitaTaskConflictError if response.status_code in (404, 409) else BonitaClientError
+                raise error(
                     f"Error asignando tarea {tarea_id} "
                     f"(HTTP {response.status_code}): {response.text}"
                 )
 
-    async def ejecutar_tarea(self, tarea_id: int) -> None:
+    async def ejecutar_tarea(self, tarea_id: int, contrato: dict | None = None) -> None:
         """Ejecuta una tarea humana del caso (barrera de sincronizacion).
 
         Sin `assign`: la tarea debe estar previamente asignada a un usuario
@@ -203,8 +224,10 @@ class BonitaClient:
             await self.login(client)
             response = await client.post(
                 f"/API/bpm/userTask/{tarea_id}/execution",
-                json={},
+                json=contrato if contrato is not None else {},
             )
+            if contrato is not None and response.status_code in (400, 404, 409):
+                raise BonitaTaskConflictError("Bonita rechazó la ejecución de la tarea")
             if response.status_code not in (200, 204):
                 raise BonitaClientError(
                     f"Error ejecutando tarea {tarea_id} "

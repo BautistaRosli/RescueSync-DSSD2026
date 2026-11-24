@@ -1,16 +1,26 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from ..schemas.ofertas_schema import OfertaItemBase
+class AporteOrganizacionRespuesta(BaseModel):
+    """Cantidad del ítem aportada por cada organización participante."""
 
-
-class OfertaItemRespuesta(OfertaItemBase):
     model_config = ConfigDict(from_attributes=True)
 
+    organizacion_id: int
+    cantidad: int = Field(gt=0)
+
+
+class OfertaItemRespuesta(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    lote_necesidad_id: int
+    cantidad_ofrecida: int = Field(gt=0)
+    descripcion: Optional[str] = None
     id: int
     finalizado_en: Optional[datetime] = None
+    aportes: List[AporteOrganizacionRespuesta] = []
 
 
 class OrganizacionResumen(BaseModel):
@@ -71,3 +81,9 @@ class AdjudicacionRespuesta(BaseModel):
 
     oferta_id: int
     mensaje: str
+
+
+class SeleccionOfertasRespuesta(BaseModel):
+    emergencia_id: int
+    cantidad_pares: int
+    ya_confirmada: bool = False

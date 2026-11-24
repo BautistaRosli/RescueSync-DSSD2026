@@ -3,10 +3,16 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+class AporteOrganizacion(BaseModel):
+    organizacion_id: int = Field(gt=0)
+    cantidad: int = Field(gt=0)
+
+
 class OfertaItemBase(BaseModel):
     lote_necesidad_id: int
     cantidad_ofrecida: int = Field(gt=0)
     descripcion: Optional[str] = None
+    aportes: Optional[List[AporteOrganizacion]] = None
 
 
 class OfertaCrear(BaseModel):
