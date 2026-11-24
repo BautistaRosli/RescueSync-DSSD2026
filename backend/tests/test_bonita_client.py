@@ -197,3 +197,28 @@ async def test_set_case_variables_levanta_error_de_conexion(monkeypatch):
 
     with pytest.raises(BonitaClientError, match="No se pudo conectar a Bonita"):
         await cliente.set_case_variables(3002, {"zona_afectada": "x"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cambio,completada", [({}, True), ({"sourceObjectId": "99"}, False),
+                                              ({"caseId": "9"}, False), ({"name": "Otra"}, False),
+                                              ({"state": "aborted"}, False)])
+async def test_tarea_completada_exige_identidad_y_estado_exactos(monkeypatch, cambio, completada):
+    peticiones = []
+
+    def transportar(request):
+        if request.url.path == "/loginservice":
+            return httpx.Response(204)
+        peticiones.append(request)
+        return httpx.Response(200, json=[{"sourceObjectId": "101", "caseId": "42",
+                                         "name": "Generar lotes", "state": "completed", **cambio}])
+
+    cliente = BonitaClient()
+
+    async def crear_cliente():
+        return httpx.AsyncClient(base_url="http://bonita.test", transport=httpx.MockTransport(transportar))
+
+    monkeypatch.setattr(cliente, "_client", crear_cliente)
+    assert await cliente.tarea_completada(42, "101", "Generar lotes") is completada
+    assert peticiones[0].url.path == "/API/bpm/archivedHumanTask"
+    assert peticiones[0].url.params.get_list("f") == ["sourceObjectId=101", "caseId=42"]
