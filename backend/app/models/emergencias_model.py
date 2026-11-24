@@ -40,6 +40,20 @@ class ConfirmacionSeleccion(Base):
     seleccion_json: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class CursoAccionEmergencia(Base):
+    """Última decisión y tarea de republicación, sin alterar el contrato inicial."""
+
+    __tablename__ = "cursos_accion_emergencia"
+
+    emergencia_id: Mapped[int] = mapped_column(
+        ForeignKey("emergencias.id", ondelete="CASCADE"), primary_key=True
+    )
+    caso_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    accion: Mapped[str] = mapped_column(String(30), nullable=False)
+    tarea_publicacion_id: Mapped[Optional[str]] = mapped_column(String(50))
+    publicacion_completada: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
 class Emergencia(Base):
     """Emergencia registrada en la plataforma."""
 
