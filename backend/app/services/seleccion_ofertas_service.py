@@ -4,11 +4,13 @@ import json
 
 import httpx
 from fastapi import HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from ..dto.ofertas_dto import SeleccionOfertasRespuesta
 from ..integrations.bonita.client import BonitaClientError, BonitaTaskConflictError, bonita_client
+from ..models import EstadoEmergencia
 from ..repositories import EmergenciaRepository, OfertaRepository
 
 
@@ -33,6 +35,15 @@ def pares_de(filas: list) -> set[tuple[int, int]]:
 
 
 class SeleccionOfertasService:
+    async def _guardar_confirmacion(self, db, emergencia, respuesta, ya_confirmada=False):
+        # Una respuesta perdida o un commit fallido se reconcilian con la
+        # selección del caso. Nunca se retrocede una emergencia ya resuelta.
+        if emergencia.estado != EstadoEmergencia.RESUELTA:
+            emergencia.estado = EstadoEmergencia.EN_PROCESO
+        await run_in_threadpool(EmergenciaRepository().eliminar_confirmacion, db, emergencia.id)
+        await run_in_threadpool(db.commit)
+        return respuesta.model_copy(update={"ya_confirmada": ya_confirmada})
+
     async def _leer_json(self, caso_id: int, nombre: str):
         valor = await bonita_client.obtener_variable_caso(caso_id, nombre)
         if valor is None or valor == "":
@@ -54,14 +65,19 @@ class SeleccionOfertasService:
         return True
 
     async def confirmar(self, db: Session, emergencia_id: int) -> SeleccionOfertasRespuesta:
-        # El bloqueo de fila serializa confirmaciones en PostgreSQL. Se libera
-        # incluso ante errores; no se escriben estados locales ni se envían correos.
+        # Mismo orden que la adjudicación y edición: emergencia → ofertas.
+        # Se conserva el bloqueo hasta aceptar Bonita y guardar la etapa local.
         emergencia = await run_in_threadpool(
             EmergenciaRepository().obtener_por_id, db, emergencia_id, bloquear=True
         )
         try:
             if emergencia is None:
                 raise HTTPException(status_code=404, detail="Emergencia no encontrada")
+            if emergencia.estado not in (
+                EstadoEmergencia.ESPERANDO_ADJUDICACION, EstadoEmergencia.EN_PROCESO,
+                EstadoEmergencia.ESPERA_OFERTAS, EstadoEmergencia.RESUELTA,
+            ):
+                conflicto("La emergencia no está en una etapa que permita confirmar la selección")
             if not emergencia.bonita_case_id:
                 conflicto("La emergencia no tiene un caso de Bonita asociado")
             try:
@@ -70,7 +86,9 @@ class SeleccionOfertasService:
                     raise ValueError()
             except (TypeError, ValueError):
                 conflicto("El identificador del caso de Bonita no es válido")
-            ofertas = await run_in_threadpool(OfertaRepository().listar_de_emergencia, db, emergencia_id)
+            ofertas = await run_in_threadpool(
+                OfertaRepository().listar_de_emergencia, db, emergencia_id, bloquear=True
+            )
             filas = []
             for oferta in ofertas:
                 if oferta.adjudicada_en is not None:
@@ -83,9 +101,19 @@ class SeleccionOfertasService:
             pares = pares_de(filas)
             if not pares:
                 conflicto("Debe adjudicar al menos una oferta antes de confirmar la selección")
+            pendiente = await run_in_threadpool(
+                EmergenciaRepository().obtener_confirmacion, db, emergencia_id
+            )
+            if pendiente is not None and (
+                pendiente.caso_id != str(caso_id)
+                or pares_de(json.loads(pendiente.seleccion_json)) != pares
+            ):
+                conflicto("La selección local no coincide con la confirmación pendiente del caso")
             respuesta = SeleccionOfertasRespuesta(emergencia_id=emergencia_id, cantidad_pares=len(pares))
             if await self._ya_confirmada(caso_id, pares):
-                return respuesta.model_copy(update={"ya_confirmada": True})
+                return await self._guardar_confirmacion(db, emergencia, respuesta, True)
+            if emergencia.estado == EstadoEmergencia.RESUELTA:
+                conflicto("La emergencia resuelta no puede confirmar una nueva selección")
             evaluacion = await self._leer_json(caso_id, "evaluacionJson")
             if not isinstance(evaluacion, dict) or evaluacion.get("emergencia_id") != emergencia_id:
                 conflicto("La evaluación del caso no corresponde a esta emergencia")
@@ -98,7 +126,7 @@ class SeleccionOfertasService:
             tarea = await bonita_client.obtener_tarea_pendiente(caso_id, "Seleccionar oferta")
             if tarea is None:
                 if await self._ya_confirmada(caso_id, pares):
-                    return respuesta.model_copy(update={"ya_confirmada": True})
+                    return await self._guardar_confirmacion(db, emergencia, respuesta, True)
                 conflicto("El caso no tiene pendiente la tarea Seleccionar oferta; la selección aún no está confirmada")
             if str(tarea.get("caseId")) != str(caso_id) or tarea.get("name") != "Seleccionar oferta":
                 conflicto("La tarea no corresponde al caso y a la selección de esta emergencia")
@@ -109,6 +137,17 @@ class SeleccionOfertasService:
             asignado = int(tarea.get("assigned_id") or 0)
             if asignado > 0 and asignado != usuario_id:
                 conflicto("La tarea Seleccionar oferta ya está asignada a otro usuario")
+            if pendiente is None:
+                # Persistir antes de cualquier intento de ejecución: un timeout
+                # puede ocultar aceptación y un rollback local no debe liberar
+                # nuevas marcas. Este commit libera los locks; reentrar obliga
+                # a retomarlos y reconciliar lo que hizo otro confirmador.
+                await run_in_threadpool(
+                    EmergenciaRepository().preparar_confirmacion,
+                    db, emergencia_id, caso_id, json.dumps(filas),
+                )
+                await run_in_threadpool(db.commit)
+                return await self.confirmar(db, emergencia_id)
             try:
                 if asignado <= 0:
                     await bonita_client.asignar_tarea(tarea["id"], usuario_id)
@@ -116,11 +155,13 @@ class SeleccionOfertasService:
             except (BonitaClientError, httpx.RequestError) as exc:
                 # Una respuesta perdida puede ocultar una ejecución exitosa.
                 if await self._ya_confirmada(caso_id, pares):
-                    return respuesta.model_copy(update={"ya_confirmada": True})
+                    return await self._guardar_confirmacion(db, emergencia, respuesta, True)
                 if isinstance(exc, BonitaTaskConflictError):
                     conflicto("Bonita no pudo confirmar la tarea; actualice la emergencia y vuelva a intentar")
                 raise
-            return respuesta
+            return await self._guardar_confirmacion(db, emergencia, respuesta)
+        except SQLAlchemyError:
+            raise HTTPException(status_code=503, detail="No se pudo guardar la confirmación local; vuelva a intentar")
         except (BonitaClientError, httpx.RequestError):
             raise HTTPException(status_code=503, detail="No se pudo consultar o confirmar la selección en Bonita")
         except (KeyError, TypeError, ValueError):

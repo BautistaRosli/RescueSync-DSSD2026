@@ -19,6 +19,7 @@ from ..models import AporteOfertaItem, EstadoEmergencia, OfertaAyuda, OfertaItem
 from ..repositories import (
     OfertaItemRepository,
     OfertaRepository,
+    EmergenciaRepository,
     UsuarioRepository,
 )
 from ..schemas import OfertaActualizar, OfertaCrear
@@ -76,7 +77,8 @@ class OfertaService:
     def actualizar_oferta(
         self, db: Session, oferta_id: int, data: OfertaActualizar
     ) -> OfertaRespuesta:
-        oferta = self._obtener_oferta_entidad(db, oferta_id, bloquear=True)
+        emergencia, oferta = self._bloquear_oferta(db, oferta_id)
+        self._verificar_sin_confirmacion_pendiente(db, emergencia.id)
         self._verificar_convocatoria_abierta(db, oferta.emergencia_id, oferta)
         organizaciones = (
             self._resolver_organizaciones(db, oferta.organizacion_id, data.organizaciones_ids)
@@ -142,28 +144,30 @@ class OfertaService:
         db: Session,
         oferta_id: int,
         background_tasks: BackgroundTasks,
+        para_seleccion: bool = False,
     ) -> AdjudicacionRespuesta:
-        """Adjudica exclusivamente una oferta de una emergencia evaluada.
+        """Adjudica exclusivamente o prepara una selección explícita para Bonita.
 
-        La evaluación previa deja la emergencia en
-        ``ESPERANDO_ADJUDICACION``. La adjudicación persiste la fecha de la
-        oferta y pasa la emergencia a ``EN_PROCESO``;
-        cualquier oferta alternativa queda bloqueada con ``409``.
+        Sin ``para_seleccion`` conserva el contrato individual. En modo
+        selección cada marca es idempotente y no adelanta la etapa local.
+        Ambos recorridos toman los bloqueos en orden emergencia → oferta.
         """
-        oferta = self._obtener_oferta_entidad(db, oferta_id, bloquear=True)
-        emergencia = self._emergencias.obtener_emergencia_entidad(
-            db, oferta.emergencia_id, bloquear=True
-        )
+        emergencia, oferta = self._bloquear_oferta(db, oferta_id)
         if emergencia.estado != EstadoEmergencia.ESPERANDO_ADJUDICACION:
             raise HTTPException(
                 status_code=409,
                 detail="La emergencia debe estar esperando adjudicación para adjudicar una oferta",
             )
         if oferta.adjudicada_en is not None:
+            if para_seleccion:
+                return AdjudicacionRespuesta(
+                    oferta_id=oferta_id, mensaje="Notificación de adjudicación enviada"
+                )
             raise HTTPException(
                 status_code=409,
                 detail="La oferta ya fue adjudicada",
             )
+        self._verificar_sin_confirmacion_pendiente(db, emergencia.id)
         otra_adjudicada = (
             db.query(OfertaAyuda)
             .filter(
@@ -173,7 +177,7 @@ class OfertaService:
             )
             .first()
         )
-        if otra_adjudicada is not None:
+        if otra_adjudicada is not None and not para_seleccion:
             raise HTTPException(
                 status_code=409,
                 detail="La emergencia ya tiene otra oferta adjudicada",
@@ -185,13 +189,30 @@ class OfertaService:
             )
         if oferta.adjudicada_en is None:
             oferta.adjudicada_en = datetime.now(timezone.utc)
-            emergencia.estado = EstadoEmergencia.EN_PROCESO
+            if not para_seleccion:
+                emergencia.estado = EstadoEmergencia.EN_PROCESO
             self._repository.actualizar(db, oferta)
         self._programar_notificacion_adjudicacion(db, oferta, background_tasks)
         return AdjudicacionRespuesta(
             oferta_id=oferta_id,
             mensaje="Notificación de adjudicación enviada",
         )
+
+    def _bloquear_oferta(self, db: Session, oferta_id: int):
+        emergencia_id = self._repository.obtener_emergencia_id(db, oferta_id)
+        if emergencia_id is None:
+            raise HTTPException(status_code=404, detail="Oferta no encontrada")
+        emergencia = self._emergencias.obtener_emergencia_entidad(
+            db, emergencia_id, bloquear=True
+        )
+        return emergencia, self._obtener_oferta_entidad(db, oferta_id, bloquear=True)
+
+    def _verificar_sin_confirmacion_pendiente(self, db: Session, emergencia_id: int) -> None:
+        if EmergenciaRepository().obtener_confirmacion(db, emergencia_id) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="La selección está pendiente de confirmación; vuelva a confirmar la selección antes de modificar sus ofertas",
+            )
 
     def _programar_notificacion_adjudicacion(
         self,

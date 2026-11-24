@@ -198,43 +198,28 @@ class OrganizacionService:
         if ong_id is None:
             ong_id = ONGS_DEMO_CLOUD_POR_CUIT.get(data.cuit)
         if ong_id is None:
-            raise RuntimeError(
-                f"Cloud informó que la ONG '{data.nombre}' ya existe, pero no devolvió su id "
-                "y no hay un id demo de desarrollo configurado para su CUIT"
-            )
+            raise HTTPException(409, "El CUIT ya está registrado en Cloud; falta un ID verificable")
 
         try:
             verificacion = cloud_client.obtener_ong(ong_id, token)
         except (httpx.RequestError, httpx.InvalidURL) as exc:
-            raise RuntimeError(
-                f"No se pudo verificar en Cloud la ONG demo '{data.nombre}' (id={ong_id}): "
-                f"{type(exc).__name__}"
-            ) from exc
+            raise HTTPException(503, "No se pudo verificar la ONG existente en Cloud") from exc
         if verificacion.status_code != 200:
-            detalle = self._detalle_respuesta_cloud(verificacion)
-            raise RuntimeError(
-                f"No se pudo verificar en Cloud la ONG demo '{data.nombre}' (id={ong_id}): "
-                f"Cloud respondió con estado {verificacion.status_code}: {detalle}"
-            )
+            raise HTTPException(502, "Cloud no permitió verificar la ONG existente")
 
         try:
             datos = verificacion.json()
         except (ValueError, TypeError):
             datos = None
         if not isinstance(datos, dict) or type(datos.get("id")) is not int or datos["id"] != ong_id:
-            raise RuntimeError(
-                f"Cloud devolvió una respuesta inválida al verificar la ONG demo "
-                f"'{data.nombre}' (id={ong_id})"
-            )
+            raise HTTPException(502, "Cloud devolvió una identidad inválida para la ONG existente")
         equivalencias = {
             "cuit": data.cuit,
             "razon_social": data.nombre.strip(),
             "email": data.email,
         }
-        if any(campo in datos and datos[campo] != valor for campo, valor in equivalencias.items()):
-            raise RuntimeError(
-                f"La ONG demo '{data.nombre}' no coincide con la identidad de Cloud para id={ong_id}"
-            )
+        if any(datos.get(campo) != valor for campo, valor in equivalencias.items()):
+            raise HTTPException(502, "La identidad de la ONG existente no coincide con Cloud")
         return ong_id
 
     @staticmethod
@@ -388,6 +373,11 @@ class AuthService:
     ) -> Organizacion:
         """Conserva el registro local y reconcilia su identidad nacional."""
         configuracion = CONFIGURACION_ONG_INICIALES.get(campos["nombre"])
+        credenciales = all(os.getenv(variable, "").strip()
+                          for variable in ("CLOUD_APP_USUARIO", "CLOUD_APP_PASSWORD"))
+        automatico = bool(configuracion and campos.get("cuit") and credenciales
+                          and not os.getenv(f"CLOUD_{configuracion[0]}_CUIT", "").strip()
+                          and not os.getenv(f"CLOUD_{configuracion[0]}_ONG_ID", "").strip())
         organizacion = self._organizaciones.obtener_por_nombre(db, campos["nombre"])
         if organizacion is None:
             if configuracion is not None:
@@ -395,7 +385,14 @@ class AuthService:
             organizacion = self._organizaciones.obtener_por_nombre(db, campos["nombre"])
             try:
                 if organizacion is None:
-                    organizacion = self._organizaciones.crear(db, Organizacion(**campos))
+                    campos_locales = {campo: valor for campo, valor in campos.items() if campo != "cuit"}
+                    organizacion = Organizacion(**campos_locales)
+                    if automatico:
+                        # El modo automático no confirma un alta local incompleta.
+                        db.add(organizacion)
+                        db.flush()
+                    else:
+                        organizacion = self._organizaciones.crear(db, organizacion)
                 else:
                     db.commit()  # Libera el bloqueo de creación antes de acceder a Cloud.
             except IntegrityError:
@@ -405,18 +402,32 @@ class AuthService:
                     raise
         identificador_local = organizacion.id
         if configuracion is not None:
-            self._reconciliar_ong_cloud(db, identificador_local, configuracion[0])
+            self._reconciliar_ong_cloud(
+                db, identificador_local, configuracion[0], campos.get("cuit"), automatico
+            )
         return self._organizaciones.obtener_por_id(db, identificador_local)
 
-    def _reconciliar_ong_cloud(self, db: Session, organizacion_id: int, clave: str) -> None:
+    def _reconciliar_ong_cloud(
+        self, db: Session, organizacion_id: int, clave: str,
+        cuit_seed: str | None = None, estricto: bool = False
+    ) -> None:
         variable_id = f"CLOUD_{clave}_ONG_ID"
         cuit = os.getenv(f"CLOUD_{clave}_CUIT", "").strip()
+        # El seed conserva el modo local sin credenciales; una configuración
+        # explícita de CUIT siempre prevalece sobre los datos de demostración.
+        credenciales = all(os.getenv(variable, "").strip()
+                          for variable in ("CLOUD_APP_USUARIO", "CLOUD_APP_PASSWORD"))
+        if not cuit and credenciales:
+            cuit = str(cuit_seed or "").strip()
         id_configurado = os.getenv(variable_id, "").strip()
         ong_id = None
         try:
             organizacion = self._organizaciones.obtener_por_id(db, organizacion_id)
             coincidencias = self._organizaciones.buscar_precarga(db, organizacion.nombre)
             if len(coincidencias) != 1 or organizacion.tipo != "ong":
+                if estricto:
+                    db.rollback()
+                    raise RuntimeError(f"La organización demo '{organizacion.nombre}' es ambigua o de otro tipo")
                 logger.warning("Precarga %s: organización local ambigua o de otro tipo; revise los registros antes de vincular.", clave)
                 return
             referencia = db.get(OrganizacionCloud, organizacion_id, populate_existing=True)
@@ -450,90 +461,47 @@ class AuthService:
                     raise ValueError()
                 ong_id = candidato
             else:
-                ong_id = OrganizacionService()._registrar_ong_cloud(datos)
+                ong_id = OrganizacionService()._registrar_ong_cloud(datos, recuperar_duplicada=True)
             # Sin HTTP bajo el bloqueo común; impide asignar el mismo ID a dos ONG.
             self._organizaciones.bloquear_precarga(db, 4)
             if self._organizaciones.referencia_nacional_ocupada(db, ong_id, organizacion_id):
                 logger.warning("Precarga %s: ID nacional ocupado por otra organización local; revise %s.",
                                clave, variable_id)
                 db.rollback()
+                if estricto:
+                    raise RuntimeError(f"La organización demo '{organizacion.nombre}' tiene un ID nacional ocupado")
                 return
             organizacion.referencia_cloud = OrganizacionCloud(ong_id=ong_id)
             self._organizaciones.actualizar(db, organizacion)
             logger.info("Precarga %s: vinculación guardada; %s=%s.", clave, variable_id, ong_id)
         except HTTPException as error:
             db.rollback()
+            if estricto:
+                raise RuntimeError(
+                    f"No se pudo vincular la organización demo '{organizacion.nombre}' con Cloud"
+                ) from error
             if error.status_code == 409:
                 logger.warning("Precarga %s: CUIT ya registrado; configure %s con el ID confirmado en Cloud.",
                                clave, variable_id)
             else:
                 logger.warning("Precarga %s: Cloud no disponible; se reintentará en el próximo arranque.", clave)
         except (cloud_client.AutenticacionAplicacionError, httpx.RequestError,
-                httpx.InvalidURL, ValueError, TypeError):
+                httpx.InvalidURL, ValueError, TypeError) as error:
             db.rollback()
+            if estricto:
+                raise RuntimeError(
+                    f"No se pudo vincular la organización demo '{organizacion.nombre}' con Cloud"
+                ) from error
             logger.warning("Precarga %s: no se pudo verificar la identidad; revise CLOUD_%s_CUIT, %s y disponibilidad de Cloud.",
                            clave, clave, variable_id)
-        except SQLAlchemyError:
+        except SQLAlchemyError as error:
             db.rollback()
+            if estricto:
+                raise RuntimeError(
+                    f"No se pudo vincular la organización demo '{organizacion.nombre}' con Cloud"
+                ) from error
             logger.warning("Precarga %s: no se pudo guardar la vinculación; configure %s=%s para reintentar por consulta.",
                            clave, variable_id, ong_id if ong_id is not None else "<ID confirmado en Cloud>")
-        if organizacion is not None:
-            self._vincular_organizacion_cloud(db, organizacion, campos)
-            return organizacion
-
-        datos = OrganizacionCrear(**campos)
-        ong_id = self._ong_id_demo_cloud(datos)
-        try:
-            organizacion = self._organizaciones.crear(
-                db, Organizacion(**datos.model_dump(exclude={"cuit"}))
-            )
-            if ong_id is not None:
-                organizacion.referencia_cloud = OrganizacionCloud(ong_id=ong_id)
-                self._organizaciones.actualizar(db, organizacion)
-            return organizacion
-        except IntegrityError:
-            db.rollback()
-            # Otro proceso puede haber sembrado la misma organización al arrancar.
-            organizacion = self._organizaciones.obtener_por_nombre(db, campos["nombre"])
-            if organizacion is None:
-                raise
-            self._vincular_organizacion_cloud(db, organizacion, campos)
-            return organizacion
-
-    def _vincular_organizacion_cloud(
-        self,
-        db: Session,
-        organizacion: Organizacion,
-        campos: dict[str, str | bool],
-    ) -> None:
-        """Vincula una organización demo existente que aún no tiene referencia Cloud."""
-        if organizacion.referencia_cloud is not None:
-            return
-        datos = OrganizacionCrear(**campos)
-        ong_id = self._ong_id_demo_cloud(datos)
-        if ong_id is None:
-            return
-        try:
-            organizacion.referencia_cloud = OrganizacionCloud(ong_id=ong_id)
-            self._organizaciones.actualizar(db, organizacion)
-        except SQLAlchemyError:
-            db.rollback()
-            raise HTTPException(
-                503,
-                "No se pudo persistir la vinculación de la organización demo con Cloud",
-            ) from None
-
-    def _ong_id_demo_cloud(self, datos: OrganizacionCrear) -> int | None:
-        """Registra en Cloud solo las organizaciones ONG sembradas en development."""
-        if os.getenv("APP_ENV") != "development" or datos.tipo != "ong":
-            return None
-        try:
-            return OrganizacionService()._registrar_ong_cloud(datos, recuperar_duplicada=True)
-        except HTTPException as exc:
-            raise RuntimeError(
-                f"No se pudo vincular la organización demo '{datos.nombre}' con Cloud: "
-                f"{exc.detail}"
-            ) from exc
 
     def registrar_usuario(self, db: Session, data: UsuarioCrear) -> AuthRespuesta:
         if self._usuarios.obtener_por_email(db, data.email) is not None:

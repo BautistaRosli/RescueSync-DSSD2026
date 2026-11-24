@@ -35,6 +35,8 @@ def sesiones_precarga_pg(sesiones_pg):
 @pytest.fixture
 def precarga(tmp_path, monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.delenv("CLOUD_APP_USUARIO", raising=False)
+    monkeypatch.delenv("CLOUD_APP_PASSWORD", raising=False)
     for ong in ("ONU", "UNICEF"):
         for campo in ("CUIT", "ONG_ID"):
             monkeypatch.delenv(f"CLOUD_{ong}_{campo}", raising=False)
@@ -283,9 +285,9 @@ def test_repara_representante_sin_registrar_ong_ajena(precarga, monkeypatch):
 @pytest.mark.parametrize("caso", ["duplicada", "otro_tipo"])
 def test_organizacion_local_ambigua_o_no_ong_no_se_registra(precarga, monkeypatch, caplog, caso):
     with precarga() as db:
-        db.add(Organizacion(**ORGANIZACION_ONU))
+        db.add(Organizacion(**{campo: valor for campo, valor in ORGANIZACION_ONU.items() if campo != "cuit"}))
         if caso == "duplicada":
-            db.add(Organizacion(**ORGANIZACION_ONU))
+            db.add(Organizacion(**{campo: valor for campo, valor in ORGANIZACION_ONU.items() if campo != "cuit"}))
         else:
             db.flush()
             db.query(Organizacion).one().tipo = "municipio"
@@ -307,16 +309,23 @@ def test_alta_no_confirmada_no_guarda_referencia(precarga, monkeypatch, cuerpo):
         assert db.query(OrganizacionCloud).count() == 0 and db.query(Usuario).count() == 5
 
 
-def test_arranques_simultaneos_pg_no_duplican_locales_ni_altas(sesiones_precarga_pg, monkeypatch):
+@pytest.mark.parametrize("modo", ["configurado", "automatico"])
+def test_arranques_simultaneos_pg_no_duplican_locales_ni_altas(sesiones_precarga_pg, monkeypatch, modo):
     sesiones_pg = sesiones_precarga_pg
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setattr("app.services.usuarios_service.hashear_password", lambda _: "hash-prueba")
     monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", lambda: "token-prueba")
     for clave in ("ONU", "UNICEF"):
-        configurar(monkeypatch, clave, None)
+        if modo == "configurado":
+            configurar(monkeypatch, clave, None)
+        else:
+            monkeypatch.delenv(f"CLOUD_{clave}_CUIT", raising=False)
         monkeypatch.delenv(f"CLOUD_{clave}_ONG_ID", raising=False)
+    if modo == "automatico":
+        monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-prueba")
+        monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-prueba")
     alta = Mock(side_effect=lambda cuit, nombre, email, token: httpx.Response(
-        201, json={"id": 901 if cuit.endswith("onu") else 977,
+        201, json={"id": 901 if nombre == ORGANIZACION_ONU["nombre"] else 977,
                    "cuit": cuit, "razon_social": nombre, "email": email}))
     monkeypatch.setattr(cloud_client, "registrar_ong", alta)
     with sesiones_pg() as db:
@@ -343,7 +352,7 @@ def test_ongs_paralelas_pg_no_bloquean_http_y_no_comparten_id(sesiones_precarga_
         configurar(monkeypatch, clave, None)
         monkeypatch.delenv(f"CLOUD_{clave}_ONG_ID", raising=False)
     with sesiones_pg() as db:
-        db.add_all([Organizacion(**datos) for datos in (ORGANIZACION_ONU, ORGANIZACION_UNICEF)])
+        db.add_all([Organizacion(**{campo: valor for campo, valor in datos.items() if campo != "cuit"}) for datos in (ORGANIZACION_ONU, ORGANIZACION_UNICEF)])
         db.commit()
     monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", lambda: "token-prueba")
     ambas_en_cloud = Barrier(2)
@@ -378,3 +387,71 @@ def test_copia_de_campos_resuelve_alias_por_nombre_y_tercero_no_usa_unicef(preca
         tercero = servicio._sembrar_organizacion(db, {**ORGANIZACION_UNICEF, "nombre": "Tercera ONG"})
         assert tercero.referencia_cloud is None
     consulta.assert_called_once()
+
+
+@pytest.mark.parametrize("cambios", [
+    {"cuit": None}, {"razon_social": None}, {"email": None},
+    {"cuit": "ajena"}, {"id": True},
+])
+def test_409_con_id_no_confirma_identidad_incompleta(precarga, monkeypatch, cambios):
+    configurar(monkeypatch, identificador=None)
+    monkeypatch.setattr(httpx, "post", Mock(return_value=httpx.Response(409, json={"id": 901})))
+    monkeypatch.setattr(httpx, "get", Mock(return_value=httpx.Response(200, json={**ficha(), **cambios})))
+    sembrar(precarga)
+    with precarga() as db:
+        assert db.query(OrganizacionCloud).count() == 0
+        assert db.query(Usuario).count() == 5
+
+
+def test_409_con_id_verificado_reconcilia_sin_otra_alta(precarga, monkeypatch):
+    configurar(monkeypatch, identificador=None)
+    alta = Mock(return_value=httpx.Response(409, json={"ong": {"id": 901}}))
+    consulta = Mock(return_value=httpx.Response(200, json=ficha()))
+    monkeypatch.setattr(httpx, "post", alta)
+    monkeypatch.setattr(httpx, "get", consulta)
+    sembrar(precarga)
+    sembrar(precarga)
+    with precarga() as db:
+        assert db.query(OrganizacionCloud).one().ong_id == 901
+    alta.assert_called_once()
+    consulta.assert_called_once()
+
+
+def test_cuit_explicito_prevalece_y_tolera_caida_con_credenciales(precarga, monkeypatch):
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-prueba")
+    configurar(monkeypatch, identificador=None)
+    configurar(monkeypatch, "UNICEF", None)
+    alta = Mock(side_effect=httpx.ConnectError("transporte no disponible"))
+    monkeypatch.setattr(cloud_client, "registrar_ong", alta)
+    sembrar(precarga)
+    assert {llamada.args[0] for llamada in alta.call_args_list} == {
+        "cuit-ficticio-onu", "cuit-ficticio-unicef",
+    }
+    with precarga() as db:
+        assert db.query(Usuario).count() == 5
+        assert db.query(OrganizacionCloud).count() == 0
+
+
+def test_lifespan_reinicia_base_vacia_y_existente_con_catalogo_simulado(precarga, monkeypatch):
+    from fastapi.testclient import TestClient
+    import app.main as principal
+
+    monkeypatch.setattr(principal, "SessionLocal", precarga)
+    monkeypatch.setattr(cloud_client, "listar_items", Mock(return_value=httpx.Response(200, json=[])))
+    catalogo = {}
+
+    def crear_item(nombre, descripcion, token):
+        identificador = catalogo.setdefault(nombre, len(catalogo) + 41)
+        return httpx.Response(201, json={"id": identificador, "nombre": nombre,
+                                        "descripcion": descripcion})
+
+    monkeypatch.setattr(cloud_client, "crear_item", crear_item)
+    for _ in range(2):
+        with TestClient(principal.app) as cliente:
+            assert cliente.get("/").status_code == 200
+        with precarga() as db:
+            assert db.query(Usuario).count() == 5
+            assert db.query(Organizacion).count() == 2
+            assert db.query(Emergencia).count() == 10
+            assert db.query(LoteRecursoCloud).count() == db.query(LoteNecesidad).count()

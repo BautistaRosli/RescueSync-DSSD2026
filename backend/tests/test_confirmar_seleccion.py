@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from app.integrations.bonita.client import bonita_client
-from app.models import Emergencia, OfertaAyuda, OfertaItem
+from app.models import Emergencia, EstadoEmergencia, OfertaAyuda, OfertaItem
 from app.services.permisos_service import AUDITOR, COORDINADOR, ONG, OPERADOR
 from test_permisos_api import cabecera, entorno, estado
 from test_concurrencia import sesiones_pg
@@ -101,14 +101,344 @@ def confirmar(seleccion, rol=COORDINADOR):
     return seleccion[0].post(RUTA, headers=cabecera(rol))
 
 
+def estado_sin_intencion(sesiones):
+    from app.database import Base
+
+    with sesiones() as db:
+        return [list(db.execute(tabla.select())) for tabla in Base.metadata.sorted_tables
+                if tabla.name != "confirmaciones_seleccion"]
+
+
+def preparar_marcas(seleccion):
+    with seleccion[1]() as db:
+        db.get(Emergencia, 2).estado = EstadoEmergencia.ESPERANDO_ADJUDICACION
+        for oferta in db.query(OfertaAyuda):
+            oferta.adjudicada_en = None
+        db.commit()
+
+
+def adjudicar(seleccion, oferta_id=1, para_seleccion=False, rol=COORDINADOR):
+    return seleccion[0].post(
+        f"/api/v1/ofertas/{oferta_id}/adjudicar",
+        params={"para_seleccion": para_seleccion}, headers=cabecera(rol))
+
+
+def test_marcas_multiples_son_idempotentes_y_confirmacion_avanza_estado(seleccion):
+    preparar_marcas(seleccion)
+    assert adjudicar(seleccion, 1, True).status_code == 200
+    anterior = estado(seleccion[1])
+    assert adjudicar(seleccion, 1, True).status_code == 200
+    assert estado(seleccion[1]) == anterior
+    assert adjudicar(seleccion, 2, True).status_code == 200
+    with seleccion[1]() as db:
+        assert db.get(Emergencia, 2).estado == EstadoEmergencia.ESPERANDO_ADJUDICACION
+    assert confirmar(seleccion).status_code == 200
+    with seleccion[1]() as db:
+        assert db.get(Emergencia, 2).estado == EstadoEmergencia.EN_PROCESO
+    assert confirmar(seleccion).json()["ya_confirmada"] is True
+    assert len(seleccion[2]["ejecuciones"]) == 1
+    assert seleccion[3][1].call_count == 2
+
+
+def test_rechazo_bonita_conserva_etapa_y_permite_reintentar(seleccion):
+    preparar_marcas(seleccion)
+    assert adjudicar(seleccion, 1, True).status_code == 200
+    seleccion[2]["evaluacion"]["resultados"][0]["cantidad_verificada"] = 0
+    anterior = estado(seleccion[1])
+    assert confirmar(seleccion).status_code == 409
+    assert estado(seleccion[1]) == anterior
+    seleccion[2]["evaluacion"]["resultados"][0]["cantidad_verificada"] = 3
+    seleccion[2]["caido"] = True
+    assert confirmar(seleccion).status_code == 503
+    assert estado(seleccion[1]) == anterior
+    seleccion[2]["caido"] = False
+    assert confirmar(seleccion).status_code == 200
+    with seleccion[1]() as db:
+        assert db.get(Emergencia, 2).estado == EstadoEmergencia.EN_PROCESO
+
+
+def test_rechazo_al_ejecutar_tarea_permite_reintentar_sin_duplicar_aviso(seleccion, monkeypatch):
+    from app.integrations.bonita.client import BonitaTaskConflictError
+
+    preparar_marcas(seleccion)
+    assert adjudicar(seleccion, 1, True).status_code == 200
+    ejecutar = bonita_client.ejecutar_tarea
+    monkeypatch.setattr(bonita_client, "ejecutar_tarea", AsyncMock(
+        side_effect=BonitaTaskConflictError("Conflicto simulado")))
+    anterior = estado_sin_intencion(seleccion[1])
+    assert confirmar(seleccion).status_code == 409
+    assert estado_sin_intencion(seleccion[1]) == anterior
+    assert seleccion[2]["ejecuciones"] == []
+    monkeypatch.setattr(bonita_client, "ejecutar_tarea", ejecutar)
+    assert confirmar(seleccion).status_code == 200
+    assert len(seleccion[2]["ejecuciones"]) == 1
+    assert seleccion[3][1].call_count == 1
+
+
+def test_adjudicacion_individual_sin_opciones_conserva_contrato_y_confirma(seleccion):
+    preparar_marcas(seleccion)
+    respuesta = seleccion[0].post("/api/v1/ofertas/1/adjudicar", headers=cabecera(COORDINADOR))
+    assert respuesta.status_code == 200
+    assert respuesta.json() == {"oferta_id": 1, "mensaje": "Notificación de adjudicación enviada"}
+    anterior = estado(seleccion[1])
+    assert adjudicar(seleccion, 2).status_code == 409
+    assert adjudicar(seleccion, 1).status_code == 409
+    assert adjudicar(seleccion, 2, True).status_code == 409
+    assert estado(seleccion[1]) == anterior
+    assert seleccion[3][1].call_count == 1
+    with seleccion[1]() as db:
+        assert db.get(Emergencia, 2).estado == EstadoEmergencia.EN_PROCESO
+    assert confirmar(seleccion).status_code == 200
+    assert seleccion[2]["ejecuciones"] == [{"seleccionInput": PARES[:1]}]
+
+
+def test_no_mezcla_adjudicacion_exclusiva_con_marcas(seleccion):
+    preparar_marcas(seleccion)
+    assert adjudicar(seleccion, 1, True).status_code == 200
+    anterior = estado(seleccion[1])
+    assert adjudicar(seleccion, 1).status_code == 409
+    assert adjudicar(seleccion, 2).status_code == 409
+    assert estado(seleccion[1]) == anterior
+
+
+@pytest.mark.parametrize("etapa", [EstadoEmergencia.ESPERA_LOTES, EstadoEmergencia.ESPERA_OFERTAS,
+                                   EstadoEmergencia.EN_PROCESO, EstadoEmergencia.RESUELTA])
+def test_nuevas_marcas_solo_en_esperando_adjudicacion(seleccion, etapa):
+    preparar_marcas(seleccion)
+    with seleccion[1]() as db:
+        db.get(Emergencia, 2).estado = etapa
+        db.commit()
+    anterior = estado(seleccion[1])
+    assert adjudicar(seleccion, 1, True).status_code == 409
+    assert estado(seleccion[1]) == anterior
+    seleccion[3][1].assert_not_called()
+
+
+@pytest.mark.parametrize("etapa", [EstadoEmergencia.ESPERA_LOTES, EstadoEmergencia.RESUELTA])
+def test_confirmacion_no_abre_etapas_no_autorizadas(seleccion, etapa):
+    with seleccion[1]() as db:
+        db.get(Emergencia, 2).estado = etapa
+        db.commit()
+    anterior = estado(seleccion[1])
+    assert confirmar(seleccion).status_code == 409
+    assert estado(seleccion[1]) == anterior
+    assert seleccion[2]["ejecuciones"] == []
+
+
+def test_reintento_reconcilia_commit_local_fallido(seleccion, monkeypatch):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    preparar_marcas(seleccion)
+    assert adjudicar(seleccion, 1, True).status_code == 200
+    clase_sesion = seleccion[1].class_
+    commit = clase_sesion.commit
+    fallos = [True]
+
+    def guardar(db):
+        if fallos and seleccion[2]["ejecuciones"]:
+            fallos.pop()
+            raise SQLAlchemyError("Fallo de commit simulado")
+        return commit(db)
+
+    monkeypatch.setattr(clase_sesion, "commit", guardar)
+    anterior = estado_sin_intencion(seleccion[1])
+    assert confirmar(seleccion).status_code == 503
+    assert estado_sin_intencion(seleccion[1]) == anterior
+    respuesta = confirmar(seleccion)
+    assert respuesta.status_code == 200 and respuesta.json()["ya_confirmada"] is True
+    with seleccion[1]() as db:
+        assert db.get(Emergencia, 2).estado == EstadoEmergencia.EN_PROCESO
+    assert len(seleccion[2]["ejecuciones"]) == 1
+    assert seleccion[3][1].call_count == 1
+
+
+@pytest.fixture(params=["sqlite", "postgresql"])
+def seleccion_aislada(request, seleccion):
+    if request.param == "sqlite":
+        return seleccion
+    from app.database import Base, get_db
+    from app.main import app
+
+    sesiones = request.getfixturevalue("sesiones_pg")
+    with seleccion[1]() as origen, sesiones() as destino:
+        for tabla in reversed(Base.metadata.sorted_tables):
+            destino.execute(tabla.delete())
+        for tabla in Base.metadata.sorted_tables:
+            filas = [dict(fila) for fila in origen.execute(tabla.select()).mappings()]
+            if filas:
+                destino.execute(tabla.insert(), filas)
+        destino.commit()
+
+    def obtener_db():
+        with sesiones() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = obtener_db
+    return seleccion[0], sesiones, seleccion[2], seleccion[3]
+
+
+def test_aceptacion_remota_y_fallo_local_congelan_seleccion_entre_clientes(seleccion_aislada, monkeypatch):
+    from fastapi.testclient import TestClient
+    from sqlalchemy.exc import SQLAlchemyError
+    from app.main import app
+
+    seleccion = seleccion_aislada
+    preparar_marcas(seleccion)
+    assert adjudicar(seleccion, 1, True).status_code == 200
+    clase_sesion = seleccion[1].class_
+    commit = clase_sesion.commit
+    fallos = [True]
+
+    def guardar(db):
+        if fallos and seleccion[2]["ejecuciones"]:
+            fallos.pop()
+            raise SQLAlchemyError("Fallo local después de la aceptación remota")
+        return commit(db)
+
+    monkeypatch.setattr(clase_sesion, "commit", guardar)
+    assert confirmar(seleccion).status_code == 503
+    anterior = estado(seleccion[1])
+    otro_cliente = TestClient(app)
+    try:
+        nueva = otro_cliente.post("/api/v1/ofertas/2/adjudicar?para_seleccion=true",
+                                  headers=cabecera(COORDINADOR))
+        assert nueva.status_code == 409, nueva.text
+        assert estado(seleccion[1]) == anterior
+        assert adjudicar(seleccion, 1, True).status_code == 200
+        reintento = otro_cliente.post(RUTA, headers=cabecera(COORDINADOR))
+        assert reintento.status_code == 200 and reintento.json()["ya_confirmada"] is True
+    finally:
+        otro_cliente.close()
+    with seleccion[1]() as db:
+        assert db.get(Emergencia, 2).estado == EstadoEmergencia.EN_PROCESO
+        assert db.get(OfertaAyuda, 2).adjudicada_en is None
+    assert seleccion[2]["seleccion"] == PARES[:1]
+    assert len(seleccion[2]["ejecuciones"]) == 1
+    assert seleccion[3][1].call_count == 1
+
+
+def test_timeout_que_oculta_aceptacion_congela_y_reconcilia(seleccion_aislada, monkeypatch):
+    from app.models import ConfirmacionSeleccion
+
+    seleccion = seleccion_aislada
+    preparar_marcas(seleccion)
+    assert adjudicar(seleccion, 1, True).status_code == 200
+    ejecutar = bonita_client.ejecutar_tarea
+
+    async def perder_respuesta(*args, **kwargs):
+        await ejecutar(*args, **kwargs)
+        seleccion[2]["caido"] = True
+        raise httpx.ReadTimeout("Aceptación remota sin respuesta ni reconciliación disponible")
+
+    monkeypatch.setattr(bonita_client, "ejecutar_tarea", perder_respuesta)
+    assert confirmar(seleccion).status_code == 503
+    with seleccion[1]() as db:
+        pendiente = db.get(ConfirmacionSeleccion, 2)
+        assert pendiente.caso_id == "42"
+        assert json.loads(pendiente.seleccion_json) == PARES[:1]
+        assert db.get(Emergencia, 2).estado == EstadoEmergencia.ESPERANDO_ADJUDICACION
+    anterior = estado(seleccion[1])
+    assert adjudicar(seleccion, 2, True).status_code == 409
+    assert estado(seleccion[1]) == anterior
+    seleccion[2]["caido"] = False
+    respuesta = confirmar(seleccion)
+    assert respuesta.status_code == 200 and respuesta.json()["ya_confirmada"] is True
+    with seleccion[1]() as db:
+        assert db.get(ConfirmacionSeleccion, 2) is None
+        assert db.get(Emergencia, 2).estado == EstadoEmergencia.EN_PROCESO
+    assert len(seleccion[2]["ejecuciones"]) == 1
+    assert seleccion[3][1].call_count == 1
+
+
+@pytest.mark.parametrize("rechazo", ["evaluacion", "sin_conexion"])
+def test_rechazo_antes_de_ejecutar_no_congela_nuevas_marcas(seleccion_aislada, rechazo):
+    from app.models import ConfirmacionSeleccion
+
+    seleccion = seleccion_aislada
+    preparar_marcas(seleccion)
+    assert adjudicar(seleccion, 1, True).status_code == 200
+    if rechazo == "evaluacion":
+        seleccion[2]["evaluacion"]["resultados"][0]["cantidad_verificada"] = 0
+    else:
+        seleccion[2]["caido"] = True
+    assert confirmar(seleccion).status_code == (409 if rechazo == "evaluacion" else 503)
+    with seleccion[1]() as db:
+        assert db.get(ConfirmacionSeleccion, 2) is None
+        assert db.get(Emergencia, 2).estado == EstadoEmergencia.ESPERANDO_ADJUDICACION
+    assert adjudicar(seleccion, 2, True).status_code == 200
+    seleccion[2]["evaluacion"]["resultados"][0]["cantidad_verificada"] = 3
+    seleccion[2]["caido"] = False
+    assert confirmar(seleccion).status_code == 200
+    assert seleccion[2]["seleccion"] == PARES
+    assert len(seleccion[2]["ejecuciones"]) == 1
+    assert seleccion[3][1].call_count == 2
+
+
+def test_create_all_agrega_intenciones_sin_reescribir_datos_previos(seleccion_aislada):
+    from app.database import Base
+    from app.models import ConfirmacionSeleccion
+
+    sesiones = seleccion_aislada[1]
+    with sesiones() as db:
+        motor = db.get_bind()
+    anterior = estado_sin_intencion(sesiones)
+    ConfirmacionSeleccion.__table__.drop(motor)
+    Base.metadata.create_all(motor)
+    Base.metadata.create_all(motor)
+    assert estado_sin_intencion(sesiones) == anterior
+    with sesiones() as db:
+        assert db.query(ConfirmacionSeleccion).count() == 0
+
+
+def test_resuelta_con_confirmacion_previa_mantiene_idempotencia_sin_reabrir(seleccion):
+    seleccion[2]["seleccion"] = PARES.copy()
+    with seleccion[1]() as db:
+        db.get(Emergencia, 2).estado = EstadoEmergencia.RESUELTA
+        db.commit()
+    anterior = estado(seleccion[1])
+    respuesta = confirmar(seleccion)
+    assert respuesta.status_code == 200 and respuesta.json()["ya_confirmada"] is True
+    assert estado(seleccion[1]) == anterior
+    assert seleccion[2]["ejecuciones"] == []
+
+
+@pytest.mark.parametrize("rol,codigo", [(ONG, 403), (OPERADOR, 200), (AUDITOR, 200), (COORDINADOR, 200)])
+def test_marcas_conservan_roles_existentes(seleccion, rol, codigo):
+    preparar_marcas(seleccion)
+    anterior = estado(seleccion[1])
+    respuesta = adjudicar(seleccion, 1, True, rol)
+    assert respuesta.status_code == codigo, respuesta.text
+    if codigo == 403:
+        assert estado(seleccion[1]) == anterior
+        seleccion[3][1].assert_not_called()
+
+
+def test_marcas_conservan_errores_de_entrada(seleccion):
+    preparar_marcas(seleccion)
+    cliente = seleccion[0]
+    assert cliente.post("/api/v1/ofertas/1/adjudicar?para_seleccion=true").status_code == 401
+    assert adjudicar(seleccion, 999, True).status_code == 404
+    assert cliente.post("/api/v1/ofertas/1/adjudicar?para_seleccion=invalido",
+                        headers=cabecera(COORDINADOR)).status_code == 422
+    with seleccion[1]() as db:
+        oferta = db.get(OfertaAyuda, 2)
+        oferta.items.clear()
+        db.commit()
+    anterior = estado(seleccion[1])
+    assert adjudicar(seleccion, 2, True).status_code == 400
+    assert estado(seleccion[1]) == anterior
+
+
 def test_confirma_ofertas_completas_y_reintento_sin_correo(seleccion):
     _, sesiones, motor, dobles = seleccion
-    anterior = estado(sesiones)
     respuesta = confirmar(seleccion)
     assert respuesta.status_code == 200, respuesta.text
     assert respuesta.json() == {"emergencia_id": 2, "cantidad_pares": 2, "ya_confirmada": False}
     assert motor["ejecuciones"] == [{"seleccionInput": PARES}]
     assert motor["asignaciones"] == [{"assigned_id": "12"}]
+    with sesiones() as db:
+        assert db.get(Emergencia, 2).estado == EstadoEmergencia.EN_PROCESO
+    anterior = estado(sesiones)
     motor["seleccion"].reverse()
     motor["archivado"] = True
     reintento = confirmar(seleccion)
@@ -154,6 +484,8 @@ def test_respuesta_perdida_reconoce_ejecucion_archivada(seleccion):
     respuesta = confirmar(seleccion)
     assert respuesta.status_code == 200 and respuesta.json()["ya_confirmada"] is True
     assert len(motor["ejecuciones"]) == 1
+    with seleccion[1]() as db:
+        assert db.get(Emergencia, 2).estado == EstadoEmergencia.EN_PROCESO
 
 
 def test_caida_no_se_confunde_con_tarea_ausente(seleccion):
@@ -206,19 +538,27 @@ def test_confirmaciones_simultaneas_reconocen_un_solo_avance_del_motor(seleccion
 
     # SQLite StaticPool comparte una conexión: la concurrencia del motor se
     # prueba con lecturas locales inmutables para no usarla desde dos hilos.
-    emergencia = SimpleNamespace(bonita_case_id="42")
+    emergencia = SimpleNamespace(id=2, bonita_case_id="42", estado=EstadoEmergencia.EN_PROCESO)
     ofertas = [SimpleNamespace(id=numero, adjudicada_en=True, items=[SimpleNamespace(
         lote_necesidad_id=2, cantidad_ofrecida=3, lote_necesidad=SimpleNamespace(emergencia_id=2))])
         for numero in (1, 2)]
     monkeypatch.setattr("app.services.seleccion_ofertas_service.EmergenciaRepository.obtener_por_id",
                         lambda *args, **kwargs: emergencia)
     monkeypatch.setattr("app.services.seleccion_ofertas_service.OfertaRepository.listar_de_emergencia",
-                        lambda *args: ofertas)
+                        lambda *args, **kwargs: ofertas)
     motor = seleccion[2]
     motor["concurrente"] = True
+
+    def confirmar_en_sesion(_):
+        db = Mock()
+        pendientes = []
+        db.get.side_effect = lambda *args, **kwargs: next(iter(pendientes), None)
+        db.add.side_effect = pendientes.append
+        db.delete.side_effect = pendientes.remove
+        return asyncio.run(SeleccionOfertasService().confirmar(db, 2))
+
     with ThreadPoolExecutor(max_workers=2) as ejecutor:
-        respuestas = list(ejecutor.map(
-            lambda _: asyncio.run(SeleccionOfertasService().confirmar(Mock(), 2)), range(2)))
+        respuestas = list(ejecutor.map(confirmar_en_sesion, range(2)))
     assert [respuesta.cantidad_pares for respuesta in respuestas] == [2, 2]
     assert len(motor["ejecuciones"]) == 1
 
@@ -285,9 +625,94 @@ def test_confirmaciones_postgresql_se_serializan(sesiones_pg, monkeypatch):
                 segunda.result(timeout=0.1)
         finally:
             liberar_primera.set()
-        assert primera.result(timeout=10).ya_confirmada is False
-        assert segunda.result(timeout=10).ya_confirmada is True
+        resultados = [primera.result(timeout=10), segunda.result(timeout=10)]
+        assert sorted(respuesta.ya_confirmada for respuesta in resultados) == [False, True]
     ejecucion.assert_awaited_once()
+
+
+@pytest.mark.parametrize("operacion", ["adjudicar", "editar"])
+def test_confirmacion_congela_ofertas_sin_invertir_bloqueos(sesiones_pg, monkeypatch, operacion):
+    from fastapi import BackgroundTasks, HTTPException
+    from app.repositories import OfertaRepository
+    from app.schemas import OfertaActualizar
+    from app.services.ofertas_service import OfertaService
+    from app.services.seleccion_ofertas_service import SeleccionOfertasService
+
+    with sesiones_pg() as db:
+        emergencia = db.get(Emergencia, 1)
+        emergencia.bonita_case_id = "42"
+        emergencia.estado = (EstadoEmergencia.ESPERANDO_ADJUDICACION if operacion == "adjudicar"
+                             else EstadoEmergencia.ESPERA_OFERTAS)
+        oferta = db.get(OfertaAyuda, 1)
+        oferta.adjudicada_en = datetime.now(timezone.utc)
+        oferta.items = [OfertaItem(lote_necesidad_id=1, cantidad_ofrecida=3)]
+        db.add(OfertaAyuda(id=2, emergencia_id=1, organizacion_id=1,
+                          items=[OfertaItem(lote_necesidad_id=1, cantidad_ofrecida=3)]))
+        db.commit()
+
+    emergencia_bloqueada, segunda_esperando, continuar = Event(), Event(), Event()
+    listar = OfertaRepository.listar_de_emergencia
+
+    def listar_pausado(*args, **kwargs):
+        emergencia_bloqueada.set()
+        assert continuar.wait(5)
+        return listar(*args, **kwargs)
+
+    monkeypatch.setattr(OfertaRepository, "listar_de_emergencia", listar_pausado)
+    servicio = OfertaService()
+    obtener = servicio._emergencias.obtener_emergencia_entidad
+
+    def obtener_pausado(*args, **kwargs):
+        segunda_esperando.set()
+        return obtener(*args, **kwargs)
+
+    monkeypatch.setattr(servicio._emergencias, "obtener_emergencia_entidad", obtener_pausado)
+    guardada = []
+
+    async def variable(caso_id, nombre):
+        return json.dumps(guardada if nombre == "seleccionOfertasJson" else {
+            "emergencia_id": 1, "resultados": [
+                {"oferta_id": 1, "lote_id": 1, "cantidad_verificada": 3}]})
+
+    async def ejecutar(tarea_id, contrato):
+        guardada.extend(contrato["seleccionInput"])
+
+    monkeypatch.setattr(bonita_client, "obtener_variable_caso", variable)
+    monkeypatch.setattr(bonita_client, "obtener_tarea_pendiente", AsyncMock(return_value={
+        "id": "99", "caseId": "42", "name": "Seleccionar oferta", "actorId": "7", "assigned_id": "12"}))
+    monkeypatch.setattr(bonita_client, "obtener_miembro_actor", AsyncMock(return_value={"user_id": "12"}))
+    monkeypatch.setattr(bonita_client, "ejecutar_tarea", AsyncMock(side_effect=ejecutar))
+
+    def confirmar_en_sesion():
+        with sesiones_pg() as db:
+            return asyncio.run(SeleccionOfertasService().confirmar(db, 1))
+
+    def cambiar_en_sesion():
+        with sesiones_pg() as db:
+            with pytest.raises(HTTPException) as error:
+                if operacion == "adjudicar":
+                    servicio.adjudicar_oferta(db, 2, BackgroundTasks(), para_seleccion=True)
+                else:
+                    servicio.actualizar_oferta(db, 2, OfertaActualizar(observaciones="No debe guardarse"))
+            assert error.value.status_code == 409
+
+    with ThreadPoolExecutor(max_workers=2) as ejecutor:
+        confirmacion = ejecutor.submit(confirmar_en_sesion)
+        assert emergencia_bloqueada.wait(5)
+        cambio = ejecutor.submit(cambiar_en_sesion)
+        try:
+            assert segunda_esperando.wait(5)
+            with pytest.raises(TimeoutError):
+                cambio.result(timeout=0.1)
+        finally:
+            continuar.set()
+        assert confirmacion.result(timeout=10).cantidad_pares == 1
+        cambio.result(timeout=10)
+    assert guardada == [{"oferta_id": 1, "lote_id": 1}]
+    with sesiones_pg() as db:
+        assert db.get(Emergencia, 1).estado == EstadoEmergencia.EN_PROCESO
+        assert db.get(OfertaAyuda, 2).adjudicada_en is None
+        assert db.get(OfertaAyuda, 2).observaciones is None
 
 
 @pytest.mark.parametrize("rol,codigo", [(ONG, 403), (OPERADOR, 403), (AUDITOR, 200)])

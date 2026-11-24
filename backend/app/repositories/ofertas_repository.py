@@ -51,7 +51,8 @@ class OfertaRepository:
         return query.order_by(OfertaAyuda.id.desc()).all()
 
     def listar_de_emergencia(
-        self, db: Session, emergencia_id: int, organizacion_id: int | None = None
+        self, db: Session, emergencia_id: int, organizacion_id: int | None = None,
+        bloquear: bool = False,
     ) -> list[OfertaAyuda]:
         consulta = (
             self._consulta_con_relaciones(db)
@@ -59,7 +60,13 @@ class OfertaRepository:
         )
         if organizacion_id is not None:
             consulta = consulta.filter(OfertaAyuda.organizacion_id == organizacion_id)
+        if bloquear:
+            consulta = consulta.populate_existing().with_for_update()
         return consulta.order_by(OfertaAyuda.id.asc()).all()
+
+    def obtener_emergencia_id(self, db: Session, oferta_id: int) -> int | None:
+        """Resuelve el padre sin bloquear la oferta antes de la emergencia."""
+        return db.query(OfertaAyuda.emergencia_id).filter(OfertaAyuda.id == oferta_id).scalar()
 
     def obtener_por_id(
         self, db: Session, oferta_id: int, bloquear: bool = False

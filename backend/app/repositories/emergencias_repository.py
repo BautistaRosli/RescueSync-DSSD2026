@@ -3,10 +3,26 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from ..models import Emergencia
+from ..models import ConfirmacionSeleccion, Emergencia
 
 
 class EmergenciaRepository:
+    def obtener_confirmacion(self, db: Session, emergencia_id: int) -> ConfirmacionSeleccion | None:
+        """Consultar siempre después de bloquear la emergencia correspondiente."""
+        return db.get(ConfirmacionSeleccion, emergencia_id, populate_existing=True)
+
+    def preparar_confirmacion(
+        self, db: Session, emergencia_id: int, caso_id: int, seleccion_json: str
+    ) -> None:
+        db.add(ConfirmacionSeleccion(
+            emergencia_id=emergencia_id, caso_id=str(caso_id), seleccion_json=seleccion_json
+        ))
+
+    def eliminar_confirmacion(self, db: Session, emergencia_id: int) -> None:
+        confirmacion = self.obtener_confirmacion(db, emergencia_id)
+        if confirmacion is not None:
+            db.delete(confirmacion)
+
     def _consulta_con_lotes(self, db: Session):
         return db.query(Emergencia).options(selectinload(Emergencia.lotes))
 

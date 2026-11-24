@@ -69,7 +69,8 @@ CASOS = [
     ("PATCH", "/ofertas/1", {"observaciones": "Cambio"}, [ONG, AUDITOR]),
     ("POST", "/ofertas/1/items/1/finalizar", None, [ONG, AUDITOR]),
     ("GET", "/emergencias/2/ofertas", None, [COORDINADOR, ONG, AUDITOR]),
-    ("GET", "/emergencias/2/ofertas/consolidadas", None, [COORDINADOR, AUDITOR]),
+    # La emergencia 2 está publicada: la ONG consulta la convocatoria consolidada.
+    ("GET", "/emergencias/2/ofertas/consolidadas", None, [COORDINADOR, ONG, AUDITOR]),
     ("POST", "/ofertas/1/adjudicar", None, [COORDINADOR, OPERADOR, AUDITOR]),
     ("GET", "/organizaciones/1/inventario", None, [COORDINADOR, ONG, AUDITOR]),
     ("POST", "/organizaciones/1/inventario", RECURSO, [ONG, AUDITOR]),
@@ -227,6 +228,30 @@ def test_listados_filtran_antes_de_devolver_y_contar(entorno):
         assert datos["total"] == 1 and datos["paginas"] == 1 and datos["items"][0]["id"] == identificador
     for ruta in ("/ofertas", "/emergencias/2/ofertas", "/organizaciones"):
         assert [d["id"] for d in cliente.get("/api/v1" + ruta, headers=cabecera(ONG)).json()] == [1]
+
+
+def test_ong_consulta_ofertas_consolidadas_de_convocatoria_publicada(entorno):
+    cliente, sesiones, externos = entorno
+    with sesiones() as db:
+        assert db.get(Emergencia, 2).publicada is True
+    anterior = estado(sesiones)
+
+    respuesta = cliente.get(
+        "/api/v1/emergencias/2/ofertas/consolidadas", headers=cabecera(ONG)
+    )
+
+    assert respuesta.status_code == 200, respuesta.text
+    assert respuesta.json() == {
+        "emergencia_id": 2,
+        "ofertas": [
+            {"organizacion_id": 1, "organizacion_nombre": "Propia", "items": [
+                {"lote_id": 2, "cantidad_ofrecida": 5, "descripcion": None}
+            ]},
+            {"organizacion_id": 2, "organizacion_nombre": "Ajena", "items": []},
+        ],
+    }
+    assert estado(sesiones) == anterior
+    assert all(mock.call_count == 0 for mock in externos)
 
 
 def test_bandeja_filtra_por_cada_estado_y_omite_el_filtro(entorno):
@@ -445,15 +470,25 @@ def test_oferta_adjudicada_no_se_puede_editar_con_convocatoria_abierta(entorno):
 
 
 def test_rol_y_organizacion_se_resuelven_desde_bd(entorno):
-    cliente, sesiones, _ = entorno
+    cliente, sesiones, externos = entorno
     encabezados = cabecera(COORDINADOR)
     with sesiones() as db:
-        db.get(Usuario, 2).rol_id = 4
+        # El auditor también puede crear organizaciones; el operador no.
+        db.get(Usuario, 2).rol_id = ROLES.index(OPERADOR) + 1
         db.get(Usuario, 3).organizacion_id = 2
         db.commit()
-    assert cliente.post("/api/v1/organizaciones", json={"nombre": "No"}, headers=encabezados).status_code == 403
+    anterior = estado(sesiones)
+    respuesta = cliente.post(
+        "/api/v1/organizaciones",
+        json={"nombre": "No", "cuit": "30-12345678-9", "email": "contacto@example.org"},
+        headers=encabezados,
+    )
+    assert respuesta.status_code == 403, respuesta.text
+    assert respuesta.json()["detail"] == "No tiene permiso para acceder a este recurso"
     assert cliente.get("/api/v1/ofertas/1", headers=cabecera(ONG)).status_code == 403
     assert cliente.get("/api/v1/ofertas/2", headers=cabecera(ONG)).status_code == 200
+    assert estado(sesiones) == anterior
+    assert all(mock.call_count == 0 for mock in externos)
 
 
 @pytest.mark.parametrize("ambiente", [None, "production", "staging"])

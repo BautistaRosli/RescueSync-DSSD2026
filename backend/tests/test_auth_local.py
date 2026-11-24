@@ -211,6 +211,8 @@ def test_seed_demo_solo_development_idempotente(entorno_local, monkeypatch, ambi
         json={"id": 900 if cuit == "30-12345678-5" else 901,
               "cuit": cuit, "razon_social": nombre, "email": email},
     ))
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
     monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
     monkeypatch.setattr(cloud_client, "registrar_ong", registrar)
     with sesiones() as db:
@@ -236,8 +238,11 @@ def test_seed_repara_organizacion_del_usuario_demo_sin_cambiar_password(
     monkeypatch.setenv("APP_ENV", "development")
     registrar = Mock(side_effect=lambda cuit, nombre, email, token: httpx.Response(
         201,
-        json={"id": 901, "cuit": cuit, "razon_social": nombre, "email": email},
+        json={"id": 900 if cuit == "30-12345678-5" else 901,
+              "cuit": cuit, "razon_social": nombre, "email": email},
     ))
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
     monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
     monkeypatch.setattr(cloud_client, "registrar_ong", registrar)
     password_existente = "clave-existente-no-demo"
@@ -281,11 +286,21 @@ def test_usuario_unicef_demo_autentica_y_accede_a_sus_rutas(
         json={"id": 900 if cuit == "30-12345678-5" else 901,
               "cuit": cuit, "razon_social": nombre, "email": email},
     ))
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
     monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
     monkeypatch.setattr(cloud_client, "registrar_ong", registrar)
     with sesiones() as db:
         RolService().sembrar_roles(db)
         AuthService().sembrar_usuarios_iniciales(db)
+        monkeypatch.setattr(cloud_client, "listar_items", Mock(return_value=httpx.Response(200, json=[])))
+        ids_recursos = {}
+
+        def crear_item(nombre, descripcion, token):
+            identificador = ids_recursos.setdefault(nombre, len(ids_recursos) + 41)
+            return httpx.Response(201, json={"id": identificador, "nombre": nombre, "descripcion": descripcion})
+
+        monkeypatch.setattr(cloud_client, "crear_item", crear_item)
         sembrar_datos_demo(db)
         representantes = []
         for email in ("ong@ong.com", "unicef@unicef.org"):
@@ -347,11 +362,21 @@ def test_seed_ofertas_demo_solo_para_estados_adjudicables(
         json={"id": 900 if cuit == "30-12345678-5" else 901,
               "cuit": cuit, "razon_social": nombre, "email": email},
     ))
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
     monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
     monkeypatch.setattr(cloud_client, "registrar_ong", registrar)
     with sesiones() as db:
         RolService().sembrar_roles(db)
         AuthService().sembrar_usuarios_iniciales(db)
+        monkeypatch.setattr(cloud_client, "listar_items", Mock(return_value=httpx.Response(200, json=[])))
+        ids_recursos = {}
+
+        def crear_item(nombre, descripcion, token):
+            identificador = ids_recursos.setdefault(nombre, len(ids_recursos) + 41)
+            return httpx.Response(201, json={"id": identificador, "nombre": nombre, "descripcion": descripcion})
+
+        monkeypatch.setattr(cloud_client, "crear_item", crear_item)
         sembrar_datos_demo(db)
         emergencias = (
             db.query(Emergencia)
@@ -415,6 +440,8 @@ def test_seed_demo_vincula_cloud_y_no_repite_registro(entorno_local, monkeypatch
         json={"id": 900 if cuit == "30-12345678-5" else 901,
               "cuit": cuit, "razon_social": nombre, "email": email},
     ))
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
     monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", obtener_token)
     monkeypatch.setattr(cloud_client, "registrar_ong", registrar)
 
@@ -445,6 +472,8 @@ def test_seed_demo_vincula_cloud_y_no_repite_registro(entorno_local, monkeypatch
 def test_seed_demo_fallo_cloud_no_crea_vinculacion_falsa(entorno_local, monkeypatch):
     _, sesiones, remoto = entorno_local
     monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
     monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
     registrar = Mock(side_effect=cloud_client.AutenticacionAplicacionError())
     monkeypatch.setattr(cloud_client, "registrar_ong", registrar)
@@ -459,10 +488,25 @@ def test_seed_demo_fallo_cloud_no_crea_vinculacion_falsa(entorno_local, monkeypa
     registrar.assert_called_once()
     remoto.assert_not_called()
 
+    # El próximo arranque reintenta la precarga automática sin duplicar locales.
+    registrar.side_effect = lambda cuit, nombre, email, token: httpx.Response(
+        201, json={"id": 900 if cuit == "30-12345678-5" else 901,
+                   "cuit": cuit, "razon_social": nombre, "email": email})
+    with sesiones() as db:
+        servicio = AuthService()
+        servicio.sembrar_usuarios_iniciales(db)
+        servicio.sembrar_usuarios_iniciales(db)
+        assert db.query(Organizacion).count() == 2
+        assert db.query(OrganizacionCloud).count() == 2
+        assert db.query(Usuario).count() == len(USUARIOS_INICIALES) + 1
+    assert registrar.call_count == 3
+
 
 def test_seed_demo_recupera_ong_existente_en_409_y_valida_id(entorno_local, monkeypatch):
     _, sesiones, remoto = entorno_local
     monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
     monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
     registrar = Mock(side_effect=[
         httpx.Response(409, json={"detail": "El CUIT ya existe", "id": 8}),
@@ -503,6 +547,8 @@ def test_seed_demo_recupera_ong_existente_en_409_y_valida_id(entorno_local, monk
 def test_seed_demo_409_sin_id_usa_id_configurado_y_lo_valida(entorno_local, monkeypatch):
     _, sesiones, remoto = entorno_local
     monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("CLOUD_APP_USUARIO", "aplicacion-demo-prueba")
+    monkeypatch.setenv("CLOUD_APP_PASSWORD", "credencial-demo-prueba")
     monkeypatch.setattr(cloud_client, "obtener_token_aplicacion", Mock(return_value="token-demo"))
     monkeypatch.setattr(
         cloud_client,

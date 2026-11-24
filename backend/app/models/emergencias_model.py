@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
@@ -22,6 +22,22 @@ class EstadoEmergencia:
     ESPERANDO_ADJUDICACION = "esperando_adjudicacion"
     EN_PROCESO = "en_proceso"
     RESUELTA = "resuelta"
+
+
+class ConfirmacionSeleccion(Base):
+    """Selección congelada antes de intentar completar la tarea de Bonita.
+
+    Se elimina junto con el avance local confirmado. Su tabla independiente
+    permite incorporarla con create_all sin alterar emergencias existentes.
+    """
+
+    __tablename__ = "confirmaciones_seleccion"
+
+    emergencia_id: Mapped[int] = mapped_column(
+        ForeignKey("emergencias.id", ondelete="CASCADE"), primary_key=True
+    )
+    caso_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    seleccion_json: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class Emergencia(Base):

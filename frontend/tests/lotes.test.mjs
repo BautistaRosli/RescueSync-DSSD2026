@@ -37,7 +37,7 @@ test('El borrador rechaza un ID nacional que no sea entero positivo', () => {
   for (const tipo_recurso_id of ['', ' ', '0', '-1', '1.5', 'texto', 'Infinity']) {
     const resultado = formulario.validarBorradorLote({ ...borradorValido, tipo_recurso_id })
     assert.equal(resultado.datos, null, `Se aceptó el ID ${JSON.stringify(tipo_recurso_id)}`)
-    assert.match(resultado.error, /ID.*entero mayor a 0/)
+    assert.match(resultado.error, /recurso del catálogo nacional/)
   }
 })
 
@@ -55,8 +55,8 @@ test('La edición precarga la equivalencia nacional y deja vacíos los lotes ant
   }
 })
 
-test('Cambiar tipo o unidad exige reindicar el ID y permite confirmar el mismo número', () => {
-  for (const [campo, valor] of [['tipo', 'Agua'], ['unidad', 'cajas']]) {
+test('Cambiar el recurso exige volver a seleccionarlo y cambiar su unidad conserva la referencia', () => {
+  for (const [campo, valor] of [['tipo', 'Agua']]) {
     const cambiado = formulario.cambiarCampoBorradorLote(borradorValido, campo, valor)
     assert.equal(cambiado.tipo_recurso_id, '')
     assert.equal(formulario.validarBorradorLote(cambiado).datos, null)
@@ -65,7 +65,7 @@ test('Cambiar tipo o unidad exige reindicar el ID y permite confirmar el mismo n
   }
   for (const [campo, valor] of [
     ['cantidad', '9'], ['descripcion', 'Otro detalle'],
-    ['tipo', 'Botiquín táctico'], ['unidad', 'unidades'],
+    ['tipo', 'Botiquín táctico'], ['unidad', 'unidades'], ['unidad', 'cajas'],
   ]) {
     const cambiado = formulario.cambiarCampoBorradorLote(borradorValido, campo, valor)
     assert.equal(cambiado.tipo_recurso_id, '10')

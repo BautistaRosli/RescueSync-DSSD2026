@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..dependencias import requiere_roles
@@ -154,7 +154,10 @@ def obtener_ofertas_consolidadas(
 def adjudicar_oferta(
     oferta_id: int,
     background_tasks: BackgroundTasks,
+    para_seleccion: bool = Query(False, description="Preparar una selección de ofertas antes de confirmarla en Bonita"),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(COORDINADOR, OPERADOR, AUDITOR)),
 ):
-    return servicio_ofertas.adjudicar_oferta(db, oferta_id, background_tasks)
+    return servicio_ofertas.adjudicar_oferta(
+        db, oferta_id, background_tasks, para_seleccion=para_seleccion
+    )

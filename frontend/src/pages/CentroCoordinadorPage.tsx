@@ -73,7 +73,7 @@ const DESCRIPCIONES_BANDEJA: Record<PestaniaBandeja, string> = {
     'Emergencias publicadas que reciben ofertas de ayuda. Tocá una fila para desplegar su detalle.',
   esperando_adjudicacion:
     'Emergencias con ofertas listas para ser evaluadas y adjudicadas.',
-  en_proceso: 'Emergencias con una oferta adjudicada y atención en curso.',
+  en_proceso: 'Emergencias con ofertas adjudicadas y atención en curso.',
   resuelta: 'Emergencias cuya atención fue resuelta.',
 }
 
@@ -566,6 +566,7 @@ function PanelAdjudicacion({
   exitoAdjudicar,
   puedeAdjudicar,
   alAdjudicar,
+  alAdjudicarIndividual,
   confirmando,
   seleccionConfirmada,
   errorConfirmar,
@@ -580,6 +581,7 @@ function PanelAdjudicacion({
   exitoAdjudicar: Record<number, string>
   puedeAdjudicar: boolean
   alAdjudicar: (ofertaId: number) => void
+  alAdjudicarIndividual: (ofertaId: number) => void
   confirmando: boolean
   seleccionConfirmada: SeleccionOfertasRespuesta | undefined
   errorConfirmar: string | undefined
@@ -598,7 +600,9 @@ function PanelAdjudicacion({
     <div className={claseSubPanel}>
       <h4 className="text-sm font-bold text-cyan-400">Ofertas recibidas</h4>
       <p className="mt-1 text-xs text-slate-400">
-        Al adjudicar una oferta se le avisa a la ONG por mail.
+        {puedeAdjudicar
+          ? 'Adjudicar prepara la oferta completa para la selección. Puede reunir varias y enviarlas a Bonita con Confirmar selección. Adjudicar solo esta oferta inicia la atención de forma exclusiva.'
+          : 'Las ofertas adjudicadas pueden enviarse a Bonita con Confirmar selección. Si el envío falla, puede reintentarlo.'}
       </p>
 
       {cargando && <p className="mt-3 text-sm text-slate-400">Cargando ofertas...</p>}
@@ -687,24 +691,33 @@ function PanelAdjudicacion({
                 </p>
               )}
 
-              <button
+              {puedeAdjudicar && <button
                 type="button"
                 onClick={() => alAdjudicar(oferta.id)}
                 disabled={
-                  !puedeAdjudicar ||
-                  adjudicando === oferta.id ||
-                  ofertas.some((registro) => registro.adjudicada_en !== null)
+                  bloqueada ||
+                  oferta.adjudicada_en !== null ||
+                  exitoAdjudicar[oferta.id] !== undefined
                 }
                 className={`${claseBotonSecundario} self-start text-sm`}
               >
-                {oferta.adjudicada_en !== null
-                  ? 'Adjudicada'
-                  : !puedeAdjudicar
-                    ? 'Esperando evaluación'
+                {oferta.adjudicada_en !== null || exitoAdjudicar[oferta.id] !== undefined
+                  ? 'Seleccionada'
                   : adjudicando === oferta.id
                     ? 'Adjudicando...'
                     : 'Adjudicar'}
-              </button>
+              </button>}
+
+              {puedeAdjudicar && !hayAdjudicadas && (
+                <button
+                  type="button"
+                  onClick={() => alAdjudicarIndividual(oferta.id)}
+                  disabled={bloqueada || cargando || errorCarga !== undefined}
+                  className={`${claseBotonSecundario} self-start text-sm`}
+                >
+                  Adjudicar solo esta oferta
+                </button>
+              )}
 
               {exitoAdjudicar[oferta.id] !== undefined && (
                 <p role="status" className={claseExito}>{exitoAdjudicar[oferta.id]}</p>
@@ -854,28 +867,44 @@ export function CentroCoordinadorPage() {
     }
   }
 
-  async function manejarAdjudicar(ofertaId: number): Promise<void> {
-    const oferta = Object.values(ofertasPorEmergencia)
-      .flat()
-      .find((registro) => registro.id === ofertaId)
-    if (oferta === undefined) {
-      return
-    }
+  async function manejarAdjudicar(
+    emergenciaId: number,
+    ofertaId: number,
+    paraSeleccion = true,
+  ): Promise<void> {
+    const ofertas = ofertasPorEmergencia[emergenciaId]
+    const oferta = ofertas?.find((registro) => registro.id === ofertaId)
+    if (
+      pestania !== 'esperando_adjudicacion' || oferta === undefined ||
+      operacionesOfertas.current.has(emergenciaId) || confirmadas.current.has(emergenciaId) ||
+      oferta.adjudicada_en !== null || adjudicadasRecientes.current.has(ofertaId) ||
+      (!paraSeleccion && ofertas?.some((registro) =>
+        registro.adjudicada_en !== null || adjudicadasRecientes.current.has(registro.id),
+      ))
+    ) return
 
-    setAdjudicando(ofertaId)
+    operacionesOfertas.current.add(emergenciaId)
+    setAdjudicando((actuales) => ({ ...actuales, [emergenciaId]: ofertaId }))
     setErrorAdjudicar((actuales) => sinClave(actuales, ofertaId))
     setExitoAdjudicar((actuales) => sinClave(actuales, ofertaId))
     try {
-      await adjudicarOferta(ofertaId)
-      await cargarOfertasDeEmergencia(oferta.emergencia_id)
-      setRecargo((actual) => actual + 1)
+      const respuesta = await adjudicarOferta(ofertaId, paraSeleccion)
+      if (respuesta?.oferta_id !== ofertaId || typeof respuesta.mensaje !== 'string') {
+        throw new ApiError(200, 'La respuesta de adjudicación no pudo verificarse.')
+      }
+      adjudicadasRecientes.current.add(ofertaId)
       setExitoAdjudicar((actuales) => ({
         ...actuales,
         [ofertaId]: respuesta.mensaje,
       }))
+      await cargarOfertasDeEmergencia(emergenciaId)
+      if (!paraSeleccion) {
+        cambiarPestania('en_proceso')
+        setRecargo((actual) => actual + 1)
+      }
     } catch (fallo) {
       if (fallo instanceof ApiError && fallo.status === 409) {
-        await cargarOfertasDeEmergencia(oferta.emergencia_id)
+        await cargarOfertasDeEmergencia(emergenciaId)
         setRecargo((actual) => actual + 1)
       }
       setErrorAdjudicar((actuales) => ({
@@ -909,6 +938,8 @@ export function CentroCoordinadorPage() {
       }
       confirmadas.current.add(emergenciaId)
       setSeleccionesConfirmadas((actuales) => ({ ...actuales, [emergenciaId]: respuesta }))
+      cambiarPestania('en_proceso')
+      setRecargo((actual) => actual + 1)
     } catch (fallo) {
       setErrorConfirmar((actuales) => ({
         ...actuales,
@@ -937,7 +968,7 @@ export function CentroCoordinadorPage() {
     // corresponde revisarlas o adjudicarlas.
     if (
       desplegando &&
-      (pestania === 'esperando_ofertas' || pestania === 'esperando_adjudicacion') &&
+      (pestania === 'esperando_ofertas' || pestania === 'esperando_adjudicacion' || pestania === 'en_proceso') &&
       ofertasPorEmergencia[emergenciaId] === undefined
     ) {
       void cargarOfertasDeEmergencia(emergenciaId)
@@ -1384,7 +1415,7 @@ export function CentroCoordinadorPage() {
                       alEliminar={(lote) => void manejarEliminar(lote)}
                     />
 
-                    {(pestania === 'esperando_ofertas' || pestania === 'esperando_adjudicacion') && (
+                    {(pestania === 'esperando_ofertas' || pestania === 'esperando_adjudicacion' || pestania === 'en_proceso') && (
                       <PanelAdjudicacion
                         ofertas={ofertasPorEmergencia[emergencia.id]}
                         lotes={emergencia.lotes}
@@ -1394,12 +1425,12 @@ export function CentroCoordinadorPage() {
                         errorAdjudicar={errorAdjudicar}
                         exitoAdjudicar={exitoAdjudicar}
                         alAdjudicar={(ofertaId) => void manejarAdjudicar(emergencia.id, ofertaId)}
+                        alAdjudicarIndividual={(ofertaId) => void manejarAdjudicar(emergencia.id, ofertaId, false)}
                         confirmando={confirmando[emergencia.id] === true}
                         seleccionConfirmada={seleccionesConfirmadas[emergencia.id]}
                         errorConfirmar={errorConfirmar[emergencia.id]}
                         alConfirmar={() => void manejarConfirmarSeleccion(emergencia.id)}
                         puedeAdjudicar={pestania === 'esperando_adjudicacion'}
-                        alAdjudicar={(ofertaId) => void manejarAdjudicar(ofertaId)}
                       />
                     )}
 

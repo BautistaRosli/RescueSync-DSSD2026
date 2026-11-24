@@ -378,8 +378,9 @@ class EmergenciaService:
     ) -> int:
         """Instancia en Bonita el proceso de convocatoria de la emergencia.
 
-        Instancia el caso y recien despues escribe las variables de caso, que
-        el contrato del proceso deja en null.
+        Envía las cinco variables como entradas del contrato de instanciación;
+        el proceso las usa para inicializar sus variables de caso.
+        Puede iniciarse sin lotes; la publicación exige cargarlos.
 
         Es idempotente: si la emergencia ya tiene un caso, devuelve el mismo.
         """
@@ -391,13 +392,6 @@ class EmergenciaService:
         # Idempotencia: si ya tiene caso, no crear otro
         if emergencia.bonita_case_id:
             return int(emergencia.bonita_case_id)
-
-        # Validar que tenga lotes
-        """if not emergencia.lotes:
-            raise HTTPException(
-                status_code=400,
-                detail="La emergencia no tiene lotes de necesidad cargados",
-            )"""
 
         # Armar variables (simples, con lotes serializados como JSON string)
         variables = {
@@ -430,13 +424,8 @@ class EmergenciaService:
                 detail=f"No se pudo iniciar el proceso en Bonita: {exc}",
             )
 
-        # El contrato del proceso instancia el caso pero deja las variables en
-        # null, asi que se escriben explicitamente recien creado. Va antes de
-        # persistir `bonita_case_id` a proposito: si falla, la emergencia no
-        # queda marcada como instancia y se puede reintentar, en vez de
-        # quedar con un caso de Bonita huerfano y variables en null.
-        
-
+        # Persistir sólo tras la instanciación exitosa para permitir reintentos
+        # cuando Bonita rechaza la solicitud.
         emergencia.bonita_case_id = str(case_id)
         emergencia.bonita_variables_json = json.dumps(variables, default=str)
         self._repository.actualizar(db, emergencia)
