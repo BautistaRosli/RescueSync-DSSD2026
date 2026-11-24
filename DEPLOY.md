@@ -1,117 +1,128 @@
-# Despliegue en Kubernetes — RescueSync Prioridad
+# Despliegue Kubernetes — RescueSync Prioridad
+Guía rápida para ejecutar el microservicio `prioridad-service` en Kubernetes.
+El servicio expone `POST /prioridad`, devuelve una prioridad de **1 a 10** y se publica mediante un `NodePort` en el puerto `30080`. El HPA escala de 1 a 5 réplicas.
 
-Microservicio stateless `POST /prioridad` (entero **1–10**), un único `Service` **NodePort 30080**
-y **HPA de 1 a 5 réplicas**. El resto de RescueSync (`frontend/`, `backend/`, PostgreSQL y Bonita)
-sigue corriendo local como hasta ahora; `docker-compose.yml` es solo para desarrollo y **no** es
-parte de este entregable.
+## 1. Requisitos
 
-## 1. Prerrequisitos
+- Docker y `kubectl` configurado para un clúster (Docker Desktop, Kind, Minikube o cloud).
+- Metrics Server para que funcione el HPA.
+- Acceso a Docker Hub solo si se reconstruye la imagen.
 
-- Docker, `kubectl` apuntando a un clúster (Kind, Minikube, Docker Desktop, EKS, GKE…).
-- **Metrics Server** (obligatorio para el HPA).
-- Solo si reconstruís la imagen: `docker login` con acceso a Docker Hub.
+Comprobar el contexto:
+
+```bash
+kubectl config current-context
+kubectl get nodes
+```
+
+Instalar Metrics Server si el clúster todavía no lo tiene:
 
 ```bash
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 
-# Clústeres locales con certificados self-signed (Docker Desktop, Kind):
+# Necesario en Docker Desktop o Kind si el kubelet usa certificados self-signed:
 kubectl patch deployment metrics-server -n kube-system --type=json \
   -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+
 kubectl rollout status deployment/metrics-server -n kube-system
-kubectl get apiservice v1beta1.metrics.k8s.io   # Available=True
+kubectl get apiservice v1beta1.metrics.k8s.io
 ```
 
-## 2. Imagen en Docker Hub
+## 2. Imagen y secreto
 
-Imagen publicada: `emiliano754/rescuesync-prioridad:1.0.0`.
+La imagen usada por el Deployment es `emiliano754/rescuesync-prioridad:1.0.0` con `imagePullPolicy: Always`.
+
+Crear el secreto real antes de desplegar (el manifiesto contiene un placeholder):
 
 ```bash
-docker build -t emiliano754/rescuesync-prioridad:1.0.0 ./prioridad-service
-docker push emiliano754/rescuesync-prioridad:1.0.0
+kubectl create namespace rescuesync --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic rescuesync-prioridad-secret -n rescuesync \
+  --from-literal=API_KEY_INTERNA='<valor-real>' \
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
-saca el mapeo de gravedad crítica del backend, y que el microservicio acepte gravedad crítica
-## 3. Despliegue y verificación
+
+## 3. Desplegar
+
+Desde la raíz del repositorio:
 
 ```bash
 kubectl apply -f k8s/
-kubectl get pods -n rescuesync          # Running y Ready 1/1
-kubectl get svc -n rescuesync           # NodePort 80:30080/TCP
-kubectl get hpa -n rescuesync           # MINPODS=1  MAXPODS=5
-kubectl describe hpa -n rescuesync rescuesync-prioridad-hpa   # cpu: X%/70%
+kubectl rollout status deployment/rescuesync-prioridad -n rescuesync --timeout=120s
 ```
 
-En Docker Desktop Windows, el wrapper aplica los manifiestos, espera el rollout y deja el puente
-activo **24 h** en un solo paso:
+En Docker Desktop Windows, este script aplica los manifiestos, espera el rollout y mantiene un puente local durante 24 horas:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy-prioridad.ps1
 ```
 
-> El `Secret` versionado contiene solo un placeholder. En producción:
-> `kubectl create secret generic rescuesync-prioridad-secret -n rescuesync --from-literal=API_KEY_INTERNA='<valor-real>'`
+Verificar:
 
-## 4. Acceso local y prueba funcional
+```bash
+kubectl get pods -n rescuesync
+kubectl get svc -n rescuesync
+kubectl get hpa -n rescuesync
+```
 
-**Kind / Minikube / cloud:** `http://<IP-del-nodo>:30080`.
+Resultado esperado: Pod `Running` y `Ready 1/1`, Service `80:30080/TCP` y HPA con mínimo 1 y máximo 5 réplicas.
 
-**Docker Desktop en Windows:** el NodePort no se publica automáticamente en `localhost`; usar el
-script, que lanza el puente desacoplado **24 h por defecto** y lo reinicia si `kubectl` se cae:
+## 4. Probar el servicio
+
+En Kind, Minikube o cloud usar `http://<IP-del-nodo>:30080`.
+
+En Docker Desktop Windows, iniciar el puente:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\port-forward-prioridad.ps1          # 24 h
+powershell -ExecutionPolicy Bypass -File .\scripts\port-forward-prioridad.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\port-forward-prioridad.ps1 -Status
+# Para detenerlo:
 powershell -ExecutionPolicy Bypass -File .\scripts\port-forward-prioridad.ps1 -Stop
 ```
 
-`-Hours 72` cambia el plazo. Alternativa manual (queda atada a esa terminal):
-`kubectl port-forward --address 0.0.0.0 -n rescuesync svc/rescuesync-prioridad-svc 30080:80`.
-
-En otra terminal:
+Healthcheck y prueba de prioridades. El servicio acepta `baja`, `media`, `alta` y `critica`.
 
 ```bash
 curl http://localhost:30080/health
 curl -X POST http://localhost:30080/prioridad \
-  -H "Content-Type: application/json" -d '{"gravedad":"baja","zona":"centro"}'   # prioridad 1
-curl -X POST http://localhost:30080/prioridad \
-  -H "Content-Type: application/json" -d '{"gravedad":"alta","zona":"norte"}'    # prioridad 10
+  -H "Content-Type: application/json" \
+  -d '{"gravedad":"critica","zona":"norte"}'
 ```
 
-## 6. Integración con el backend local
+## 5. Conectar el backend local
 
-El backend consulta el servicio **antes** de persistir la emergencia:
+Configurar `PRIORIDAD_SERVICE_URL` según dónde corre el backend:
 
-- Backend nativo: `PRIORIDAD_SERVICE_URL=http://localhost:30080`.
-- Backend en Docker Compose: `http://host.docker.internal:30080` (ya definido en `docker-compose.yml`).
-- `critica` se envía como `alta`. Si el servicio no responde en 3 s, el backend devuelve **503** y
-  no registra la emergencia.
+| Backend | Valor |
+|---|---|
+| Ejecutado en el host | `http://localhost:30080` |
+| Ejecutado en Docker Compose | `http://host.docker.internal:30080` |
+
+En Docker Compose ya está configurado. Para levantar el entorno:
 
 ```bash
 docker compose up -d --build
-# Luego registrar la emergencia desde el frontend; la confirmación muestra la prioridad 1–10.
 ```
 
-## 7. Demostración de escalado
+El backend consulta prioridad antes de guardar una emergencia. Si el servicio no responde en 3 segundos, devuelve `503` y no persiste la emergencia.
+
+## 6. Escalado opcional
 
 ```bash
 kubectl run -n rescuesync load --image=fortio/fortio:latest --restart=Never -- \
   load -c 30 -qps 0 -t 300s http://rescuesync-prioridad-svc/health
-
-kubectl get hpa -n rescuesync -w    # 1 → 5 réplicas y se mantiene en 5
+kubectl get hpa -n rescuesync -w
 kubectl delete pod -n rescuesync load
-# Al cortar la carga vuelve a 1 (stabilizationWindowSeconds: 300, ~10 min)
 ```
 
-## 7. Limpieza
+## 7. Problemas frecuentes y limpieza
+
+- **HPA en `<unknown>`:** Metrics Server no está listo. Revisar `kubectl get apiservice v1beta1.metrics.k8s.io`.
+- **`ImagePullBackOff`:** comprobar el tag `1.0.0`, `docker login` y `docker push`.
+- **`localhost:30080` no responde:** iniciar `port-forward-prioridad.ps1` en Docker Desktop.
+- **Backend devuelve `503`:** verificar `PRIORIDAD_SERVICE_URL`, el Service y el endpoint `/health`.
+
+Para eliminar todo el despliegue:
 
 ```bash
 kubectl delete namespace rescuesync
 ```
-
-## 8. Troubleshooting
-
-| Síntoma | Causa / solución |
-| :--- | :--- |
-| HPA en `<unknown>` | Metrics Server ausente o no listo. Revisar `kubectl get apiservice v1beta1.metrics.k8s.io`; en local aplicar `--kubelet-insecure-tls`. |
-| `ImagePullBackOff` | Imagen/tag inexistente o sin acceso a Docker Hub. Verificar `1.0.0` y `docker push`. |
-| `localhost:30080` no responde | En Docker Desktop Windows usar el `kubectl port-forward` de la sección 5. |
-| Backend devuelve 503 al registrar | El servicio de prioridad no es alcanzable en `PRIORIDAD_SERVICE_URL` o tardó más de 3 s. |
