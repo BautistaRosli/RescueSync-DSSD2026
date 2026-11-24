@@ -504,10 +504,9 @@ def test_organizaciones_publicas_sin_sesion_devuelven_todas(entorno):
     assert [o["id"] for o in cliente.get("/api/v1/organizaciones", headers=invalido).json()] == [1, 2]
 
 
-def test_organizaciones_con_sesion_conservan_el_alcance_del_rol(entorno):
+def test_organizaciones_con_sesion_devuelven_todas_para_ofertas_conjuntas(entorno):
     cliente = entorno[0]
-    assert [o["id"] for o in cliente.get("/api/v1/organizaciones", headers=cabecera(ONG)).json()] == [1]
-    for rol in (COORDINADOR, AUDITOR, OPERADOR):
+    for rol in (ONG, COORDINADOR, AUDITOR, OPERADOR):
         assert [o["id"] for o in cliente.get("/api/v1/organizaciones", headers=cabecera(rol)).json()] == [1, 2]
 
 
