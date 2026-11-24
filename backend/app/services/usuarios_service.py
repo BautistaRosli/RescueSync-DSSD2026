@@ -31,8 +31,8 @@ from .security_service import generar_token, hashear_password, verificar_passwor
 logger = logging.getLogger(__name__)
 LIMITE_DETALLE_CLOUD = 300
 ONGS_DEMO_CLOUD_POR_CUIT = {
-    "30-12345678-5": 8,
-    "30-87654321-4": 9,
+    "30-12345678-5": 7,
+    "30-87654321-4": 8,
 }
 
 ROLES_INICIALES = [

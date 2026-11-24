@@ -1,5 +1,6 @@
 """Carga idempotente de datos de demostración para desarrollo."""
 
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -24,6 +25,9 @@ from ..utils.recursos import normalizar_nombre_recurso
 
 PREFIJO_DEMO = "[DEMO DASHBOARD]"
 CANTIDAD_EMERGENCIAS_DEMO = 10
+
+logger = logging.getLogger(__name__)
+
 _DESFASES_REGISTRO_DEMO = (
     timedelta(weeks=6, days=1, hours=4),
     timedelta(weeks=6, days=1, hours=12),
@@ -79,9 +83,15 @@ def _resolver_equivalencias_cloud(db: Session, emergencias_demo: list[Emergencia
                     RecursoCloudCrear(nombre=nombre, descripcion=lote.descripcion)
                 )
             except Exception as exc:
-                raise RuntimeError(
-                    f"No se pudo resolver el recurso demo '{nombre}' en Cloud: {exc}"
-                ) from exc
+                # Una indisponibilidad de Cloud no debe abortar el arranque: se
+                # conserva la demo local y se reintenta en el próximo inicio.
+                logger.warning(
+                    "Recursos demo: Cloud no disponible al resolver '%s'; "
+                    "se reintentará en el próximo arranque (%s).",
+                    nombre,
+                    type(exc).__name__,
+                )
+                return hubo_cambios
             lote.referencia_cloud = LoteRecursoCloud(tipo_recurso_id=recurso.id)
             hubo_cambios = True
     return hubo_cambios
