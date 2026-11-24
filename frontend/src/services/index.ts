@@ -30,6 +30,7 @@ export { crearOrganizacion, listarOrganizaciones } from './organizacion'
 export {
   actualizarOferta,
   adjudicarOferta,
+  confirmarSeleccionOfertas,
   crearOferta,
   finalizarItemOferta,
   listarOfertasDeEmergencia,

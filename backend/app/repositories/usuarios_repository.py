@@ -1,11 +1,30 @@
 from typing import Optional
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session, joinedload
 
-from ..models import Organizacion, Rol, Usuario
+from ..models import Organizacion, OrganizacionCloud, Rol, Usuario
 
 
 class OrganizacionRepository:
+    def bloquear_precarga(self, db: Session, clave: int) -> None:
+        """Serializa una creación local o la comprobación final de referencias."""
+        if db.get_bind().dialect.name == "postgresql":
+            db.execute(text("SELECT pg_advisory_xact_lock(2026, :clave)"), {"clave": clave})
+
+    def buscar_precarga(self, db: Session, nombre: str) -> list[Organizacion]:
+        return db.query(Organizacion).filter_by(nombre=nombre).order_by(Organizacion.id).all()
+
+    def obtener_para_vincular(self, db: Session, organizacion_id: int) -> Organizacion:
+        return (db.query(Organizacion).filter_by(id=organizacion_id)
+                .populate_existing().with_for_update().one())
+
+    def referencia_nacional_ocupada(self, db: Session, ong_id: int,
+                                   organizacion_id: int) -> bool:
+        return (db.query(OrganizacionCloud).filter(
+            OrganizacionCloud.ong_id == ong_id,
+            OrganizacionCloud.organizacion_id != organizacion_id).first() is not None)
+
     def obtener_por_id(
         self, db: Session, organizacion_id: int
     ) -> Optional[Organizacion]:

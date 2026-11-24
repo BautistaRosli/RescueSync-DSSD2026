@@ -36,6 +36,7 @@ export type {
   OfertaRead,
   OfertaUpdateRequest,
   OfertasConsolidadas,
+  SeleccionOfertasRespuesta,
 } from './oferta'
 export type {
   OrganizacionCreateRequest,

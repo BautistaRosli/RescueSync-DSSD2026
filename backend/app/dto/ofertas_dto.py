@@ -71,3 +71,9 @@ class AdjudicacionRespuesta(BaseModel):
 
     oferta_id: int
     mensaje: str
+
+
+class SeleccionOfertasRespuesta(BaseModel):
+    emergencia_id: int
+    cantidad_pares: int
+    ya_confirmada: bool = False
