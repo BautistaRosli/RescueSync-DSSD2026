@@ -11,7 +11,6 @@ import {
   ApiError,
   actualizarLote,
   adjudicarOferta,
-  confirmarSeleccionOfertas,
   crearLote,
   eliminarLote,
   listarBandejaEmergencias,
@@ -33,7 +32,6 @@ import type {
   LoteNecesidad,
   NivelGravedad,
   OfertaRead,
-  SeleccionOfertasRespuesta,
   RecursoCloud,
 } from '../types'
 
@@ -566,11 +564,6 @@ function PanelAdjudicacion({
   exitoAdjudicar,
   puedeAdjudicar,
   alAdjudicar,
-  alAdjudicarIndividual,
-  confirmando,
-  seleccionConfirmada,
-  errorConfirmar,
-  alConfirmar,
 }: {
   ofertas: OfertaRead[] | undefined
   lotes: LoteNecesidad[]
@@ -581,18 +574,13 @@ function PanelAdjudicacion({
   exitoAdjudicar: Record<number, string>
   puedeAdjudicar: boolean
   alAdjudicar: (ofertaId: number) => void
-  alAdjudicarIndividual: (ofertaId: number) => void
-  confirmando: boolean
-  seleccionConfirmada: SeleccionOfertasRespuesta | undefined
-  errorConfirmar: string | undefined
-  alConfirmar: () => void
 }) {
   const sinOfertas =
     !cargando && errorCarga === undefined && (ofertas === undefined || ofertas.length === 0)
-  const bloqueada = adjudicando !== null || confirmando || seleccionConfirmada !== undefined
   const hayAdjudicadas = ofertas?.some(
     (oferta) => oferta.adjudicada_en !== null || exitoAdjudicar[oferta.id] !== undefined,
   ) === true
+  const bloqueada = adjudicando !== null || hayAdjudicadas
 
   const lotePorId = new Map(lotes.map((lote) => [lote.id, lote]))
 
@@ -601,8 +589,8 @@ function PanelAdjudicacion({
       <h4 className="text-sm font-bold text-cyan-400">Ofertas recibidas</h4>
       <p className="mt-1 text-xs text-slate-400">
         {puedeAdjudicar
-          ? 'Adjudicar prepara la oferta completa para la selección. Puede reunir varias y enviarlas a Bonita con Confirmar selección. Adjudicar solo esta oferta inicia la atención de forma exclusiva.'
-          : 'Las ofertas adjudicadas pueden enviarse a Bonita con Confirmar selección. Si el envío falla, puede reintentarlo.'}
+          ? 'Adjudicá una sola oferta. Después de confirmar no podrás elegir otra.'
+          : 'La oferta adjudicada inicia la atención de la emergencia.'}
       </p>
 
       {cargando && <p className="mt-3 text-sm text-slate-400">Cargando ofertas...</p>}
@@ -691,31 +679,21 @@ function PanelAdjudicacion({
                 </p>
               )}
 
-              {puedeAdjudicar && <button
-                type="button"
-                onClick={() => alAdjudicar(oferta.id)}
-                disabled={
-                  bloqueada ||
-                  oferta.adjudicada_en !== null ||
-                  exitoAdjudicar[oferta.id] !== undefined
-                }
-                className={`${claseBotonSecundario} self-start text-sm`}
-              >
-                {oferta.adjudicada_en !== null || exitoAdjudicar[oferta.id] !== undefined
-                  ? 'Seleccionada'
-                  : adjudicando === oferta.id
-                    ? 'Adjudicando...'
-                    : 'Adjudicar'}
-              </button>}
-
-              {puedeAdjudicar && !hayAdjudicadas && (
+              {puedeAdjudicar && oferta.adjudicada_en === null && (
                 <button
                   type="button"
-                  onClick={() => alAdjudicarIndividual(oferta.id)}
+                  onClick={() => {
+                    const confirmado = window.confirm(
+                      `¿Adjudicar la oferta #${oferta.id}? Se adjudicará esta oferta y no podrás elegir otra.`,
+                    )
+                    if (confirmado) {
+                      alAdjudicar(oferta.id)
+                    }
+                  }}
                   disabled={bloqueada || cargando || errorCarga !== undefined}
                   className={`${claseBotonSecundario} self-start text-sm`}
                 >
-                  Adjudicar solo esta oferta
+                  {adjudicando === oferta.id ? 'Adjudicando...' : 'Adjudicar'}
                 </button>
               )}
 
@@ -733,27 +711,6 @@ function PanelAdjudicacion({
         </ul>
       )}
 
-      <button
-        type="button"
-        onClick={alConfirmar}
-        disabled={bloqueada || cargando || errorCarga !== undefined || !hayAdjudicadas}
-        className={`${claseBotonSecundario} mt-3 text-sm`}
-      >
-        {confirmando
-          ? 'Confirmando selección...'
-          : seleccionConfirmada !== undefined ? 'Selección confirmada' : 'Confirmar selección'}
-      </button>
-      {seleccionConfirmada !== undefined && (
-        <p role="status" className={`mt-3 ${claseExito}`}>
-          {seleccionConfirmada.ya_confirmada
-            ? 'La selección ya estaba confirmada.'
-            : 'Selección confirmada correctamente.'}
-          {' '}Pares de oferta y lote: {seleccionConfirmada.cantidad_pares}.
-        </p>
-      )}
-      {errorConfirmar !== undefined && (
-        <p role="alert" className={`mt-3 ${claseError}`}>{errorConfirmar}</p>
-      )}
     </div>
   )
 }
@@ -790,14 +747,8 @@ export function CentroCoordinadorPage() {
   const [adjudicando, setAdjudicando] = useState<Record<number, number>>({})
   const [errorAdjudicar, setErrorAdjudicar] = useState<Record<number, string>>({})
   const [exitoAdjudicar, setExitoAdjudicar] = useState<Record<number, string>>({})
-  const [confirmando, setConfirmando] = useState<Record<number, boolean>>({})
-  const [errorConfirmar, setErrorConfirmar] = useState<Record<number, string>>({})
-  const [seleccionesConfirmadas, setSeleccionesConfirmadas] = useState<
-    Record<number, SeleccionOfertasRespuesta>
-  >({})
   const operacionesOfertas = useRef(new Set<number>())
   const adjudicadasRecientes = useRef(new Set<number>())
-  const confirmadas = useRef(new Set<number>())
   const revisionLotes = useRef(0)
   const versionesBusquedaRecursos = useRef<Record<number, number>>({})
   const versionBusquedaEdicion = useRef(0)
@@ -870,13 +821,13 @@ export function CentroCoordinadorPage() {
   async function manejarAdjudicar(
     emergenciaId: number,
     ofertaId: number,
-    paraSeleccion = true,
+    paraSeleccion: boolean,
   ): Promise<void> {
     const ofertas = ofertasPorEmergencia[emergenciaId]
     const oferta = ofertas?.find((registro) => registro.id === ofertaId)
     if (
       pestania !== 'esperando_adjudicacion' || oferta === undefined ||
-      operacionesOfertas.current.has(emergenciaId) || confirmadas.current.has(emergenciaId) ||
+      operacionesOfertas.current.has(emergenciaId) ||
       oferta.adjudicada_en !== null || adjudicadasRecientes.current.has(ofertaId) ||
       (!paraSeleccion && ofertas?.some((registro) =>
         registro.adjudicada_en !== null || adjudicadasRecientes.current.has(registro.id),
@@ -914,40 +865,6 @@ export function CentroCoordinadorPage() {
     } finally {
       operacionesOfertas.current.delete(emergenciaId)
       setAdjudicando((actuales) => sinClave(actuales, emergenciaId))
-    }
-  }
-
-  async function manejarConfirmarSeleccion(emergenciaId: number): Promise<void> {
-    if (operacionesOfertas.current.has(emergenciaId) || confirmadas.current.has(emergenciaId)) return
-    const ofertas = ofertasPorEmergencia[emergenciaId]
-    if (!ofertas?.some((oferta) =>
-      oferta.adjudicada_en !== null || adjudicadasRecientes.current.has(oferta.id),
-    )) return
-
-    operacionesOfertas.current.add(emergenciaId)
-    setConfirmando((actuales) => ({ ...actuales, [emergenciaId]: true }))
-    setErrorConfirmar((actuales) => sinClave(actuales, emergenciaId))
-    try {
-      const respuesta = await confirmarSeleccionOfertas(emergenciaId)
-      if (
-        respuesta?.emergencia_id !== emergenciaId ||
-        !Number.isInteger(respuesta.cantidad_pares) || respuesta.cantidad_pares <= 0 ||
-        typeof respuesta.ya_confirmada !== 'boolean'
-      ) {
-        throw new ApiError(200, 'La respuesta de confirmación no pudo verificarse.')
-      }
-      confirmadas.current.add(emergenciaId)
-      setSeleccionesConfirmadas((actuales) => ({ ...actuales, [emergenciaId]: respuesta }))
-      cambiarPestania('en_proceso')
-      setRecargo((actual) => actual + 1)
-    } catch (fallo) {
-      setErrorConfirmar((actuales) => ({
-        ...actuales,
-        [emergenciaId]: fallo instanceof ApiError ? fallo.detail : describirError(fallo),
-      }))
-    } finally {
-      operacionesOfertas.current.delete(emergenciaId)
-      setConfirmando((actuales) => sinClave(actuales, emergenciaId))
     }
   }
 
@@ -1424,12 +1341,7 @@ export function CentroCoordinadorPage() {
                         adjudicando={adjudicando[emergencia.id] ?? null}
                         errorAdjudicar={errorAdjudicar}
                         exitoAdjudicar={exitoAdjudicar}
-                        alAdjudicar={(ofertaId) => void manejarAdjudicar(emergencia.id, ofertaId)}
-                        alAdjudicarIndividual={(ofertaId) => void manejarAdjudicar(emergencia.id, ofertaId, false)}
-                        confirmando={confirmando[emergencia.id] === true}
-                        seleccionConfirmada={seleccionesConfirmadas[emergencia.id]}
-                        errorConfirmar={errorConfirmar[emergencia.id]}
-                        alConfirmar={() => void manejarConfirmarSeleccion(emergencia.id)}
+                        alAdjudicar={(ofertaId) => void manejarAdjudicar(emergencia.id, ofertaId, false)}
                         puedeAdjudicar={pestania === 'esperando_adjudicacion'}
                       />
                     )}
