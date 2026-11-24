@@ -100,6 +100,8 @@ function App() {
         ) : sesion.rol === ROL_REPRESENTANTE_ONG ? (
           <PanelOngPage sesion={sesion} />
         ) : sesion.rol === ROL_CENTRO_COORDINADOR ? (
+          <CentroCoordinadorPage />
+        ) : ROLES_DASHBOARD.includes(sesion.rol) ? (
           vista === 'registro-ong' ? (
             <RegistroOngPage onVolver={() => setVista(origenRegistroOng)} />
           ) : vista === 'registro' ? (
@@ -124,11 +126,9 @@ function App() {
                   Crear ONG
                 </button>
               </div>
-              <CentroCoordinadorPage />
+              <DashboardEmergenciasPage />
             </section>
           )
-        ) : ROLES_DASHBOARD.includes(sesion.rol) ? (
-          <DashboardEmergenciasPage />
         ) : (
           <section className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
             <h2 className="text-xl font-bold text-amber-400 mb-1">
