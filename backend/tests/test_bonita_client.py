@@ -136,6 +136,50 @@ async def test_set_case_variables_levanta_error_con_status_y_body(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("contrato", [None, {"seleccionInput": [{"oferta_id": 1, "lote_id": 2}]}])
+async def test_ejecutar_tarea_conserva_cuerpo_vacio_y_acepta_contrato(monkeypatch, contrato):
+    cliente, cliente_http = _parchear_cliente(monkeypatch, RespuestaFalsa())
+    peticiones = []
+
+    async def post(url, **kwargs):
+        peticiones.append((url, kwargs))
+        return RespuestaFalsa(status_code=204)
+
+    cliente_http.post = post
+    if contrato is None:
+        await cliente.ejecutar_tarea(99)
+    else:
+        await cliente.ejecutar_tarea(99, contrato)
+    assert peticiones[-1] == ("/API/bpm/userTask/99/execution", {"json": contrato or {}})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("solo_usuarios", [False, True])
+async def test_miembro_actor_conserva_consulta_existente_y_filtra_solo_al_pedirlo(monkeypatch, solo_usuarios):
+    peticiones = []
+
+    def transportar(request):
+        if request.url.path == "/loginservice":
+            return httpx.Response(204)
+        peticiones.append(request)
+        return httpx.Response(200, json=[{"id": "400", "user_id": "12"}])
+
+    cliente = BonitaClient()
+
+    async def crear_cliente():
+        return httpx.AsyncClient(base_url="http://bonita.test", transport=httpx.MockTransport(transportar))
+
+    monkeypatch.setattr(cliente, "_client", crear_cliente)
+    if solo_usuarios:
+        miembro = await cliente.obtener_miembro_actor(7, solo_usuarios=True)
+    else:
+        miembro = await cliente.obtener_miembro_actor(7)
+    assert miembro["user_id"] == "12"
+    esperado = ["actor_id=7", "member_type=user"] if solo_usuarios else ["actor_id=7"]
+    assert peticiones[0].url.params.get_list("f") == esperado
+
+
+@pytest.mark.asyncio
 async def test_set_case_variables_levanta_error_de_conexion(monkeypatch):
     """Un fallo de red se traduce al mismo BonitaClientError."""
     cliente = BonitaClient()

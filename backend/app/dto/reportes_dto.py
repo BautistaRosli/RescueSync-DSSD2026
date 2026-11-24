@@ -65,3 +65,56 @@ class DemandaOfertaReporte(BaseModel):
     tipo_recurso: str
     cantidad_pedida: int
     cantidad_ofrecida: int
+
+from .emergencias_dto import (
+    DemandaOfertaRecurso,
+    EmergenciasPorEstadoGravedad,
+    ParticipacionConsorcios,
+    RankingONG,
+    RecursoAdjudicadoPorMes,
+    EvolucionEmergencias,
+)
+
+
+class ActivasResueltas(BaseModel):
+    activas: int
+    resueltas: int
+
+
+class NecesidadActual(BaseModel):
+    tipo_recurso: str
+    tipo_recurso_id: int | None = None
+    cantidad_requerida: int
+
+
+class TiempoVida(BaseModel):
+    promedio_horas: float
+
+
+class PrioridadAbiertas(BaseModel):
+    promedio_prioridad: float
+    cantidad_emergencias: int
+
+
+__all__ = [
+    "EmergenciaReporte",
+    "SuministroMovilizadoReporte",
+    "ConsorciosReporte",
+    "ProyectoReporte",
+    "CoberturaLoteReporte",
+    "CoberturaLotesReporte",
+    "TiempoPublicacionReporte",
+    "TiempoAdjudicacionReporte",
+    "RankingONGReporte",
+    "DemandaOfertaReporte",
+    "DemandaOfertaRecurso",
+    "EmergenciasPorEstadoGravedad",
+    "ParticipacionConsorcios",
+    "RankingONG",
+    "RecursoAdjudicadoPorMes",
+    "ActivasResueltas",
+    "EvolucionEmergencias",
+    "NecesidadActual",
+    "TiempoVida",
+    "PrioridadAbiertas",
+]

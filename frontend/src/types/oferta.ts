@@ -6,12 +6,19 @@ export interface OfertaItemRead {
   cantidad_ofrecida: number
   descripcion: string | null
   finalizado_en: string | null
+  aportes?: AporteOferta[]
+}
+
+export interface AporteOferta {
+  organizacion_id: number
+  cantidad: number
 }
 
 export interface OfertaItemRequest {
   lote_necesidad_id: number
   cantidad_ofrecida: number
   descripcion?: string | null
+  aportes?: AporteOferta[]
 }
 
 export interface OfertaRead {
@@ -62,4 +69,10 @@ export interface OfertasConsolidadas {
 export interface AdjudicacionRespuesta {
   oferta_id: number
   mensaje: string
+}
+
+export interface SeleccionOfertasRespuesta {
+  emergencia_id: number
+  cantidad_pares: number
+  ya_confirmada: boolean
 }

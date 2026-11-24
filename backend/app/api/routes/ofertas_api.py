@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..dependencias import requiere_roles
@@ -21,16 +21,45 @@ from ...dto.ofertas_dto import (
     OfertaListadoRespuesta,
     OfertaRespuesta,
     OfertasConsolidadas,
+    SeleccionOfertasRespuesta,
 )
 from ...schemas.ofertas_schema import (
     OfertaActualizar,
     OfertaCrear,
 )
 from ...services.ofertas_service import OfertaService
+from ...services.solicitud_evaluacion_service import SolicitudEvaluacionService
+from ...services.seleccion_ofertas_service import SeleccionOfertasService
+from ...dto.solicitud_evaluacion_dto import SolicitudEvaluacion
 
 router = APIRouter(tags=["Ofertas"])
 
 servicio_ofertas = OfertaService()
+
+
+@router.post("/emergencias/{emergencia_id}/confirmar-seleccion", response_model=SeleccionOfertasRespuesta)
+async def confirmar_seleccion(
+    emergencia_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, OPERADOR, AUDITOR)),
+):
+    verificar_emergencia(db, usuario, emergencia_id)
+    return await SeleccionOfertasService().confirmar(db, emergencia_id)
+
+
+@router.get("/emergencias/{emergencia_id}/solicitud-evaluacion", response_model=SolicitudEvaluacion)
+def obtener_solicitud_evaluacion(
+    emergencia_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
+):
+    """Evalúa la convocatoria y la deja en espera de adjudicación.
+
+    Se mantiene ``GET`` por compatibilidad con el proceso Bonita existente;
+    una evaluación válida tiene efecto de escritura y no puede repetirse.
+    """
+    verificar_emergencia(db, usuario, emergencia_id)
+    return SolicitudEvaluacionService().obtener(db, emergencia_id)
 
 
 @router.get("/ofertas", response_model=list[OfertaRespuesta])
@@ -61,7 +90,7 @@ def obtener_oferta(
 def crear_oferta(
     data: OfertaCrear,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(ONG)),
+    usuario: Usuario = Depends(requiere_roles(ONG, AUDITOR)),
 ):
     organizacion_id = filtrar_organizacion(usuario, data.organizacion_id)
     verificar_emergencia(db, usuario, data.emergencia_id)
@@ -75,7 +104,7 @@ def actualizar_oferta(
     oferta_id: int,
     data: OfertaActualizar,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(ONG)),
+    usuario: Usuario = Depends(requiere_roles(ONG, AUDITOR)),
 ):
     verificar_oferta(db, usuario, oferta_id)
     return servicio_ofertas.actualizar_oferta(db, oferta_id, data)
@@ -89,7 +118,7 @@ def finalizar_item(
     oferta_id: int,
     item_id: int,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(ONG)),
+    usuario: Usuario = Depends(requiere_roles(ONG, AUDITOR)),
 ):
     verificar_oferta(db, usuario, oferta_id)
     return servicio_ofertas.finalizar_item(db, oferta_id, item_id)
@@ -125,7 +154,10 @@ def obtener_ofertas_consolidadas(
 def adjudicar_oferta(
     oferta_id: int,
     background_tasks: BackgroundTasks,
+    para_seleccion: bool = Query(False, description="Preparar una selección de ofertas antes de confirmarla en Bonita"),
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR, OPERADOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, OPERADOR, AUDITOR)),
 ):
-    return servicio_ofertas.adjudicar_oferta(db, oferta_id, background_tasks)
+    return servicio_ofertas.adjudicar_oferta(
+        db, oferta_id, background_tasks, para_seleccion=para_seleccion
+    )

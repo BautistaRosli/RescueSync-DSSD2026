@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.integrations import cloud_client
-from app.models import Organizacion
+from app.models import Organizacion, OrganizacionCloud
 from app.services.permisos_service import COORDINADOR, ONG
 from test_permisos_api import cabecera, entorno, estado
 
@@ -57,6 +57,7 @@ def test_registra_ong_cloud_antes_de_guardar_con_token_app(entorno_ong):
         creada = db.query(Organizacion).filter_by(nombre=ALTA_ONG["nombre"]).one()
         assert creada.email == ALTA_ONG["email"] and creada.id != 900
         assert "cuit" not in Organizacion.__table__.columns
+        assert db.get(OrganizacionCloud, creada.id).ong_id == 900
 
 
 @pytest.mark.parametrize("campo,valor", [
@@ -77,17 +78,19 @@ def test_ong_requiere_cuit_y_email_antes_de_cloud(entorno_ong, campo, valor):
     remoto.assert_not_called()
 
 
-@pytest.mark.parametrize("estado_cloud,esperado", [(409, 409), (401, 503), (403, 503),
-                                                     (500, 503), (503, 503), (302, 503)])
-def test_rechazo_cloud_no_crea_local_ni_filtra_detalles(entorno_ong, estado_cloud, esperado):
+@pytest.mark.parametrize("estado_cloud,esperado", [(409, 409), (401, 502), (403, 502),
+                                                     (500, 502), (503, 502), (302, 502)])
+def test_rechazo_cloud_no_crea_local_e_informa_estado_y_detalle(entorno_ong, estado_cloud, esperado):
     cliente, sesiones, remoto = entorno_ong
     remoto.return_value = httpx.Response(estado_cloud, json={"detail": "secreto upstream"})
     anterior = estado(sesiones)
     respuesta = cliente.post("/api/v1/organizaciones", json=ALTA_ONG, headers=cabecera(COORDINADOR))
     assert respuesta.status_code == esperado, respuesta.text
-    assert "secreto" not in respuesta.text
     if estado_cloud == 409:
         assert "CUIT" in respuesta.json()["detail"]
+    else:
+        assert f"estado {estado_cloud}" in respuesta.json()["detail"]
+        assert "secreto upstream" in respuesta.json()["detail"]
     assert estado(sesiones) == anterior
     remoto.assert_called_once()
 
@@ -113,7 +116,8 @@ def test_respuesta_cloud_malformada_no_crea_local(entorno_ong, cuerpo):
     remoto.return_value = httpx.Response(201, json=cuerpo)
     anterior = estado(sesiones)
     respuesta = cliente.post("/api/v1/organizaciones", json=ALTA_ONG, headers=cabecera(COORDINADOR))
-    assert respuesta.status_code == 503, respuesta.text
+    assert respuesta.status_code == 502, respuesta.text
+    assert "respuesta inválida" in respuesta.json()["detail"]
     assert estado(sesiones) == anterior
     remoto.assert_called_once()
 
@@ -123,7 +127,8 @@ def test_json_roto_cloud_no_crea_local(entorno_ong):
     remoto.return_value = httpx.Response(201, content="no-json")
     anterior = estado(sesiones)
     respuesta = cliente.post("/api/v1/organizaciones", json=ALTA_ONG, headers=cabecera(COORDINADOR))
-    assert respuesta.status_code == 503 and estado(sesiones) == anterior
+    assert respuesta.status_code == 502 and "respuesta inválida" in respuesta.json()["detail"]
+    assert estado(sesiones) == anterior
 
 
 @pytest.mark.parametrize("encabezados,esperado", [({}, 401),

@@ -84,7 +84,12 @@ export function InventarioPage({ organizacionId }: Props) {
             const lote = lotesPorId[item.lote_necesidad_id]
             if (lote === undefined) continue
             const clave = lote.tipo.trim().toLowerCase()
-            totales[clave] = (totales[clave] ?? 0) + item.cantidad_ofrecida
+            const cantidad = oferta.es_conjunta
+              ? (item.aportes ?? [])
+                  .filter((aporte) => aporte.organizacion_id === organizacionId)
+                  .reduce((total, aporte) => total + aporte.cantidad, 0)
+              : item.cantidad_ofrecida
+            totales[clave] = (totales[clave] ?? 0) + cantidad
           }
         }
 
@@ -371,7 +376,7 @@ export function InventarioPage({ organizacionId }: Props) {
                 <div className="mt-2 flex flex-wrap gap-2">
                   <span className={claseBadge}>Comprometido: {usado}</span>
                   <span
-                    className={disponible < 0 ? claseBadgeAviso : claseBadge}
+                    className={usado > recurso.cantidad_total ? claseBadgeAviso : claseBadge}
                   >
                     Disponible: {disponible}
                   </span>

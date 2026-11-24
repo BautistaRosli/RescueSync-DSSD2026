@@ -23,6 +23,7 @@ from ...dto.emergencias_dto import (
 from ...schemas.emergencias_schema import (
     EmergenciaActualizar,
     EmergenciaCrear,
+    ESTADOS_EMERGENCIA_VALIDOS,
 )
 from ...services.emergencias_service import EmergenciaService
 
@@ -49,15 +50,25 @@ def listar_emergencias(
 @router.get("/bandeja", response_model=EmergenciasPaginadas)
 def listar_bandeja_emergencias(
     publicada: bool,
+    estado: Optional[str] = Query(default=None),
     pagina: int = Query(default=1, ge=1),
     por_pagina: int = Query(default=POR_PAGINA_MAXIMO, ge=1, le=POR_PAGINA_MAXIMO),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(OPERADOR, COORDINADOR, ONG, AUDITOR)),
 ):
     """Bandeja del Centro Coordinador, paginada por bucket de publicacion."""
+    if estado is not None and estado not in ESTADOS_EMERGENCIA_VALIDOS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "estado debe ser uno de: "
+                + ", ".join(sorted(ESTADOS_EMERGENCIA_VALIDOS))
+            ),
+        )
     return servicio_emergencias.listar_emergencias_paginadas(
         db,
         publicada=filtrar_publicada(usuario, publicada),
+        estado=estado,
         pagina=pagina,
         por_pagina=por_pagina,
     )
@@ -86,7 +97,7 @@ async def crear_emergencia(
     data: EmergenciaCrear,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(OPERADOR)),
+    usuario: Usuario = Depends(requiere_roles(OPERADOR, AUDITOR)),
 ):
     respuesta = await servicio_emergencias.crear_emergencia(
         db, data, background_tasks=background_tasks
@@ -110,7 +121,7 @@ def actualizar_emergencia(
     emergencia_id: int,
     data: EmergenciaActualizar,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     return servicio_emergencias.actualizar_emergencia(
         db, emergencia_id, data
@@ -121,7 +132,7 @@ def actualizar_emergencia(
 async def publicar_emergencia(
     emergencia_id: int,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     await servicio_emergencias.iniciar_proceso_bonita(db, emergencia_id)
     return servicio_emergencias.publicar_emergencia(db, emergencia_id)
@@ -131,7 +142,7 @@ async def publicar_emergencia(
 async def iniciar_proceso_bonita(
     emergencia_id: int,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     case_id = await servicio_emergencias.iniciar_proceso_bonita(
         db, emergencia_id

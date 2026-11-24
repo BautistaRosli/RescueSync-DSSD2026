@@ -80,3 +80,33 @@ def registrar_ong(cuit: str, razon_social: str, email: str, token: str) -> httpx
         headers={"Authorization": f"Bearer {token}"},
         timeout=TIEMPO_LIMITE,
     )
+
+
+def obtener_ong(ong_id: int, token: str) -> httpx.Response:
+    url = os.getenv("CLOUD_API_URL", "http://127.0.0.1:8002").rstrip("/")
+    return httpx.get(
+        f"{url}/ongs/{ong_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=TIEMPO_LIMITE,
+    )
+
+
+def listar_items(token: str) -> httpx.Response:
+    """Obtiene el catálogo nacional de recursos de Cloud."""
+    url = os.getenv("CLOUD_API_URL", "http://127.0.0.1:8002").rstrip("/")
+    return httpx.get(
+        f"{url}/items",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=TIEMPO_LIMITE,
+    )
+
+
+def crear_item(nombre: str, descripcion: str | None, token: str) -> httpx.Response:
+    """Crea un recurso en el catálogo nacional de Cloud."""
+    url = os.getenv("CLOUD_API_URL", "http://127.0.0.1:8002").rstrip("/")
+    return httpx.post(
+        f"{url}/items",
+        json={"nombre": nombre, "descripcion": descripcion},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=TIEMPO_LIMITE,
+    )

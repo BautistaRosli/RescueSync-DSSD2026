@@ -14,6 +14,7 @@ class LoteNecesidadBase(BaseModel):
     cantidad: int = Field(gt=0)
     unidad: Optional[str] = None
     descripcion: Optional[str] = None
+    tipo_recurso_id: Optional[int] = Field(default=None, gt=0)
 
 
 class LoteNecesidadCrear(LoteNecesidadBase):
@@ -25,6 +26,7 @@ class LoteNecesidadActualizar(BaseModel):
     cantidad: Optional[int] = Field(default=None, gt=0)
     unidad: Optional[str] = None
     descripcion: Optional[str] = None
+    tipo_recurso_id: Optional[int] = Field(default=None, gt=0)
 
     @field_validator("cantidad")
     @classmethod

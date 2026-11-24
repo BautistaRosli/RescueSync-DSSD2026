@@ -6,6 +6,7 @@ import type {
   OfertaRead,
   OfertaUpdateRequest,
   OfertasConsolidadas,
+  SeleccionOfertasRespuesta,
 } from '../types'
 
 export async function listarOfertasDeOrganizacion(
@@ -42,13 +43,23 @@ export async function obtenerOfertasConsolidadas(
   )
 }
 
-// El endpoint de adjudicación no declara cuerpo (solo usa el id de la ruta),
-// pero apiPost exige el parámetro cuerpo, así que le mandamos un objeto vacío
-// que FastAPI ignora.
 export async function adjudicarOferta(
   ofertaId: number,
+  paraSeleccion = false,
 ): Promise<AdjudicacionRespuesta> {
-  return apiPost<AdjudicacionRespuesta>(`/ofertas/${ofertaId}/adjudicar`, {})
+  return apiPost<AdjudicacionRespuesta>(
+    `/ofertas/${ofertaId}/adjudicar${paraSeleccion ? '?para_seleccion=true' : ''}`,
+    undefined,
+  )
+}
+
+export async function confirmarSeleccionOfertas(
+  emergenciaId: number,
+): Promise<SeleccionOfertasRespuesta> {
+  return apiPost<SeleccionOfertasRespuesta>(
+    `/emergencias/${emergenciaId}/confirmar-seleccion`,
+    undefined,
+  )
 }
 
 // Finalizar una actividad tampoco declara cuerpo (los ids viajan en la ruta),
