@@ -482,7 +482,7 @@ export function FormularioOfertaPage({
                       htmlFor={`oferta-cantidad-${lote.id}`}
                       className={claseEtiqueta}
                     >
-                      Cantidad
+                      Cantidad total
                     </label>
                     <input
                       id={`oferta-cantidad-${lote.id}`}
