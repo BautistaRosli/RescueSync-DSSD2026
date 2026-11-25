@@ -43,6 +43,7 @@ class EmergenciaRepository:
         pagina: int,
         por_pagina: int,
         estado: Optional[str] = None,
+        casos_bonita: set[str] | None = None,
     ) -> list[Emergencia]:
         """Pagina un bucket de emergencias.
 
@@ -61,6 +62,8 @@ class EmergenciaRepository:
         )
         if estado is not None:
             query = query.filter(Emergencia.estado == estado)
+        if casos_bonita is not None:
+            query = query.filter(Emergencia.bonita_case_id.in_(casos_bonita))
         return (
             query
             .order_by(*columnas)
@@ -74,13 +77,26 @@ class EmergenciaRepository:
         db: Session,
         publicada: bool,
         estado: Optional[str] = None,
+        casos_bonita: set[str] | None = None,
     ) -> int:
         query = db.query(func.count(Emergencia.id)).filter(
             Emergencia.publicada == publicada
         )
         if estado is not None:
             query = query.filter(Emergencia.estado == estado)
+        if casos_bonita is not None:
+            query = query.filter(Emergencia.bonita_case_id.in_(casos_bonita))
         return query.scalar() or 0
+
+    def listar_casos_por_estado(self, db: Session, estado: str) -> set[str]:
+        """Lee sólo los casos candidatos, sin materializar emergencias ni lotes."""
+        return {
+            caso_id for (caso_id,) in db.query(Emergencia.bonita_case_id).filter(
+                Emergencia.publicada.is_(True), Emergencia.estado == estado,
+                Emergencia.bonita_case_id.isnot(None),
+            ).distinct()
+            if caso_id and caso_id.isdecimal() and int(caso_id) > 0
+        }
 
     def obtener_por_id(
         self, db: Session, emergencia_id: int, bloquear: bool = False

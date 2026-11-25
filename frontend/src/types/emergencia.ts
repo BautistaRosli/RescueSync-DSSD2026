@@ -7,6 +7,8 @@ export type EstadoEmergencia =
   | 'en_proceso'
   | 'resuelta'
 
+export type EtapaBonitaBandeja = 'esperando_ofertas' | 'esperando_evaluacion' | 'esperando_adjudicacion'
+
 export interface EmergenciaCreateRequest {
   nivel_gravedad: NivelGravedad
   zona_afectada: string
@@ -54,6 +56,7 @@ export interface LoteNecesidadUpdateRequest {
 export interface BandaEmergenciasParams {
   publicada?: boolean
   estado?: EstadoEmergencia
+  etapa_bonita?: EtapaBonitaBandeja
   pagina: number
   por_pagina: number
 }
@@ -149,4 +152,21 @@ export interface BandaEmergencias {
   por_pagina: number
   total: number
   paginas: number
+}
+
+
+export type AccionEvaluacionProyecto = 'REABRIR' | 'REFORMULAR' | 'CONTINUAR_PARCIAL'
+
+export interface EvaluacionProyectoRead {
+  tarea_id: number | null
+  seleccion_oferta_lista?: boolean
+}
+
+export interface EvaluacionProyectoRequest {
+  tarea_id: number
+  accion: AccionEvaluacionProyecto
+}
+
+export interface EvaluacionProyectoAceptada {
+  tarea_id: number
 }

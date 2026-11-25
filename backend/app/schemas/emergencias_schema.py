@@ -17,6 +17,8 @@ ESTADOS_EMERGENCIA_VALIDOS = {
     if not nombre.startswith("_") and isinstance(valor, str)
 }
 
+EtapaBonita = Literal["esperando_ofertas", "esperando_evaluacion", "esperando_adjudicacion"]
+
 
 def validar_nivel_gravedad(valor: Optional[str]) -> Optional[str]:
     if valor is None:
@@ -51,6 +53,20 @@ class CursoAccionEntrada(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     accion: Literal["REABRIR", "REFORMULAR", "CONTINUAR_PARCIAL"]
+
+
+class EvaluacionProyectoEntrada(CursoAccionEntrada):
+    """Decisión sobre una tarea exacta de Evaluar proyecto."""
+
+    tarea_id: int = Field(strict=True, gt=0)
+
+
+class EvaluacionProyectoRespuesta(BaseModel):
+    tarea_id: Optional[int]
+
+
+class EvaluacionProyectoConSeleccionRespuesta(EvaluacionProyectoRespuesta):
+    seleccion_oferta_lista: bool
 
 
 class EmergenciaCrear(EmergenciaBase):

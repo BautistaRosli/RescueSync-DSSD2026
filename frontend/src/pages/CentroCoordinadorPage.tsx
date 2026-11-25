@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   BORRADOR_VACIO,
@@ -9,6 +9,9 @@ import {
 import type { BorradorLote } from './formularioLote'
 import {
   ApiError,
+  obtenerEmergencia,
+  obtenerEvaluacionProyecto,
+  evaluarProyecto,
   actualizarLote,
   adjudicarOferta,
   confirmarSeleccionOfertas,
@@ -27,8 +30,10 @@ import {
   claseSubPanel,
 } from '../ui/clases'
 import type {
+  AccionEvaluacionProyecto,
   BandaEmergencias,
   EstadoEmergencia,
+  EvaluacionProyectoRead,
   EmergenciaRead,
   LoteNecesidad,
   NivelGravedad,
@@ -36,7 +41,7 @@ import type {
 } from '../types'
 import type { OfertaCoordinadorRead } from '../types/oferta'
 
-type PestaniaBandeja = EstadoEmergencia
+type PestaniaBandeja = EstadoEmergencia | 'esperando_evaluacion'
 
 const NIVELES_GRAVEDAD: { valor: NivelGravedad; etiqueta: string }[] = [
   { valor: 'baja', etiqueta: 'Baja' },
@@ -60,6 +65,7 @@ const PESTANIAS_BANDEJA: {
 }[] = [
   { valor: 'esperando_lotes', etiqueta: 'Esperando lotes', titulo: 'Emergencias esperando lotes' },
   { valor: 'esperando_ofertas', etiqueta: 'Esperando ofertas', titulo: 'Emergencias esperando ofertas' },
+  { valor: 'esperando_evaluacion', etiqueta: 'Esperando Evaluacion', titulo: 'Emergencias esperando evaluación' },
   { valor: 'esperando_adjudicacion', etiqueta: 'Esperando adjudicación', titulo: 'Emergencias esperando adjudicación' },
   { valor: 'en_proceso', etiqueta: 'En proceso', titulo: 'Emergencias en proceso' },
   { valor: 'resuelta', etiqueta: 'Resueltas', titulo: 'Emergencias resueltas' },
@@ -71,9 +77,21 @@ const DESCRIPCIONES_BANDEJA: Record<PestaniaBandeja, string> = {
   esperando_ofertas:
     'Emergencias publicadas que reciben ofertas de ayuda. Tocá una fila para desplegar su detalle.',
   esperando_adjudicacion:
-    'Emergencias con ofertas listas para ser evaluadas y adjudicadas.',
+    'Emergencias listas para seleccionar y adjudicar ofertas.',
+  esperando_evaluacion:
+    'Emergencias cuya convocatoria terminó y requieren decidir cómo continuar el proyecto.',
   en_proceso: 'Emergencias con ofertas adjudicadas y atención en curso.',
   resuelta: 'Emergencias cuya atención fue resuelta.',
+}
+
+interface EstadoEvaluacionProyecto {
+  tareaId: number | null
+  accion: AccionEvaluacionProyecto | ''
+  cargando: boolean
+  enviando: boolean
+  pendiente: boolean
+  requiereConsulta: boolean
+  error?: string
 }
 
 const POR_PAGINA = 10
@@ -564,7 +582,9 @@ function PanelAdjudicacion({
   errorAdjudicar,
   exitoAdjudicar,
   puedeAdjudicar,
+  puedeConfirmar,
   confirmando,
+  evaluando,
   confirmada,
   errorConfirmar,
   exitoConfirmar,
@@ -579,7 +599,9 @@ function PanelAdjudicacion({
   errorAdjudicar: Record<number, string>
   exitoAdjudicar: Record<number, string>
   puedeAdjudicar: boolean
+  puedeConfirmar: boolean
   confirmando: boolean
+  evaluando: boolean
   confirmada: boolean
   errorConfirmar: string | undefined
   exitoConfirmar: string | undefined
@@ -591,7 +613,7 @@ function PanelAdjudicacion({
   const hayAdjudicadas = ofertas?.some(
     (oferta) => oferta.adjudicada_en !== null || exitoAdjudicar[oferta.id] !== undefined,
   ) === true
-  const bloqueada = adjudicando !== null || confirmando || confirmada
+  const bloqueada = adjudicando !== null || confirmando || confirmada || evaluando
 
   const lotePorId = new Map(lotes.map((lote) => [lote.id, lote]))
 
@@ -752,7 +774,7 @@ function PanelAdjudicacion({
         </ul>
       )}
 
-      {ofertas !== undefined && ofertas.length > 0 && (
+      {puedeConfirmar && ofertas !== undefined && ofertas.length > 0 && (
         <button
           type="button"
           onClick={alConfirmar}
@@ -771,6 +793,7 @@ function PanelAdjudicacion({
 
 export function CentroCoordinadorPage() {
   const [pestania, setPestania] = useState<PestaniaBandeja>('esperando_lotes')
+  const pestaniaActual = useRef<PestaniaBandeja>('esperando_lotes')
   const [pagina, setPagina] = useState(1)
   const [bandeja, setBandeja] = useState<BandaEmergencias | null>(null)
   const [cargando, setCargando] = useState(true)
@@ -805,6 +828,9 @@ export function CentroCoordinadorPage() {
   const [confirmadas, setConfirmadas] = useState<Record<number, boolean>>({})
   const [errorConfirmar, setErrorConfirmar] = useState<Record<number, string>>({})
   const [exitoConfirmar, setExitoConfirmar] = useState<Record<number, string>>({})
+  const [evaluacionesProyecto, setEvaluacionesProyecto] = useState<Record<number, EstadoEvaluacionProyecto>>({})
+  const evaluacionesVigentes = useRef<Record<number, EstadoEvaluacionProyecto>>({})
+  const versionesEvaluacion = useRef<Record<number, number>>({})
   const operacionesOfertas = useRef(new Set<number>())
   const adjudicadasRecientes = useRef(new Set<number>())
   const confirmadasRecientes = useRef(new Set<number>())
@@ -812,6 +838,17 @@ export function CentroCoordinadorPage() {
   const revisionLotes = useRef(0)
   const versionesBusquedaRecursos = useRef<Record<number, number>>({})
   const versionBusquedaEdicion = useRef(0)
+
+  const actualizarEvaluacionProyecto = useCallback((emergenciaId: number, cambios: Partial<EstadoEvaluacionProyecto>) => {
+    const estado: EstadoEvaluacionProyecto = {
+      ...(evaluacionesVigentes.current[emergenciaId] ?? {
+        tareaId: null, accion: '', cargando: false, enviando: false, pendiente: false, requiereConsulta: false,
+      }),
+      ...cambios,
+    }
+    evaluacionesVigentes.current[emergenciaId] = estado
+    setEvaluacionesProyecto((actuales) => ({ ...actuales, [emergenciaId]: estado }))
+  }, [])
 
   useEffect(() => {
     let vigente = true
@@ -823,7 +860,9 @@ export function CentroCoordinadorPage() {
       try {
         const datos = await listarBandejaEmergencias({
           publicada: pestania !== 'esperando_lotes',
-          estado: pestania,
+          ...(pestania === 'esperando_ofertas' || pestania === 'esperando_evaluacion' || pestania === 'esperando_adjudicacion'
+            ? { etapa_bonita: pestania }
+            : { estado: pestania }),
           pagina,
           por_pagina: POR_PAGINA,
         })
@@ -836,6 +875,18 @@ export function CentroCoordinadorPage() {
           return
         }
         setBandeja(datos)
+        if (pestania === 'esperando_adjudicacion') {
+          for (const emergencia of datos.items) {
+            if (evaluacionesVigentes.current[emergencia.id] !== undefined &&
+              !operacionesOfertas.current.has(emergencia.id)) {
+              // La bandeja vigente confirma la tarea de selección de este caso.
+              versionesEvaluacion.current[emergencia.id] = (versionesEvaluacion.current[emergencia.id] ?? 0) + 1
+              actualizarEvaluacionProyecto(emergencia.id, {
+                tareaId: null, accion: '', pendiente: false, cargando: false, requiereConsulta: false, error: undefined,
+              })
+            }
+          }
+        }
         if (datos.paginas > 0 && datos.pagina > datos.paginas) {
           setPagina(datos.paginas)
         }
@@ -855,25 +906,115 @@ export function CentroCoordinadorPage() {
     return () => {
       vigente = false
     }
-  }, [pestania, pagina, recargo])
+  }, [pestania, pagina, recargo, actualizarEvaluacionProyecto])
 
-  function cambiarPestania(valor: PestaniaBandeja) {
-    setPagina(1)
-    setPestania(valor)
+  const cargarEvaluacionProyecto = useCallback(async (emergenciaId: number, incluirSeleccion = false): Promise<EvaluacionProyectoRead | undefined> => {
+    if (operacionesOfertas.current.has(emergenciaId)) return
+    const version = (versionesEvaluacion.current[emergenciaId] ?? 0) + 1
+    versionesEvaluacion.current[emergenciaId] = version
+    actualizarEvaluacionProyecto(emergenciaId, { cargando: true })
+    try {
+      const respuesta = await obtenerEvaluacionProyecto(emergenciaId, incluirSeleccion)
+      if (versionesEvaluacion.current[emergenciaId] !== version) return
+      const cambioTarea = evaluacionesVigentes.current[emergenciaId]?.tareaId !== respuesta.tarea_id
+      actualizarEvaluacionProyecto(emergenciaId, {
+        tareaId: respuesta.tarea_id, requiereConsulta: false, error: undefined,
+        ...(cambioTarea ? { accion: '' as const } : {}),
+      })
+      return respuesta
+    } catch (fallo) {
+      if (versionesEvaluacion.current[emergenciaId] !== version) return
+      actualizarEvaluacionProyecto(emergenciaId, { requiereConsulta: true, error: describirError(fallo) })
+    } finally {
+      if (versionesEvaluacion.current[emergenciaId] === version) actualizarEvaluacionProyecto(emergenciaId, { cargando: false })
+    }
+  }, [actualizarEvaluacionProyecto])
+
+  useEffect(() => {
+    if (pestania !== 'esperando_evaluacion') return
+    for (const emergencia of bandeja?.items ?? []) {
+      if (desplegadas.has(emergencia.id)) void cargarEvaluacionProyecto(emergencia.id)
+    }
+  }, [bandeja, desplegadas, pestania, cargarEvaluacionProyecto])
+
+  function evaluacionBloquea(emergenciaId: number): boolean {
+    const evaluacion = evaluacionesVigentes.current[emergenciaId]
+    return evaluacion !== undefined && (evaluacion.cargando || evaluacion.enviando || evaluacion.pendiente ||
+      evaluacion.tareaId !== null)
   }
 
-  async function cargarOfertasDeEmergencia(emergenciaId: number): Promise<void> {
+  async function actualizarEstadoProyecto(emergenciaId: number): Promise<void> {
+    if (operacionesOfertas.current.has(emergenciaId) || evaluacionesVigentes.current[emergenciaId]?.cargando) return
+    actualizarEvaluacionProyecto(emergenciaId, { cargando: true })
+    try {
+      const emergencia = await obtenerEmergencia(emergenciaId)
+      const evaluacion = await cargarEvaluacionProyecto(emergenciaId, true)
+      if (evaluacion?.tarea_id === null && (evaluacion.seleccion_oferta_lista === true ||
+        emergencia.estado === 'esperando_ofertas' || emergencia.estado === 'esperando_lotes')) {
+        actualizarEvaluacionProyecto(emergenciaId, { pendiente: false })
+        if (evaluacion.seleccion_oferta_lista === true) {
+          await cargarOfertasDeEmergencia(emergenciaId)
+          cambiarPestania('esperando_adjudicacion')
+        } else if (emergencia.estado !== null) {
+          cambiarPestania(emergencia.estado)
+        }
+        setRecargo((actual) => actual + 1)
+      }
+    } catch (fallo) {
+      actualizarEvaluacionProyecto(emergenciaId, { requiereConsulta: true, error: describirError(fallo) })
+    } finally {
+      actualizarEvaluacionProyecto(emergenciaId, { cargando: false })
+    }
+  }
+
+  async function manejarEvaluarProyecto(emergenciaId: number, tareaId: number): Promise<void> {
+    const evaluacion = evaluacionesVigentes.current[emergenciaId]
+    if (pestaniaActual.current !== 'esperando_evaluacion' || operacionesOfertas.current.has(emergenciaId) ||
+      evaluacion?.tareaId !== tareaId || evaluacion.cargando || evaluacion.enviando ||
+      evaluacion.pendiente || evaluacion.requiereConsulta || evaluacion.accion === '') return
+    operacionesOfertas.current.add(emergenciaId)
+    versionesEvaluacion.current[emergenciaId] = (versionesEvaluacion.current[emergenciaId] ?? 0) + 1
+    actualizarEvaluacionProyecto(emergenciaId, { enviando: true, error: undefined })
+    let aceptada = false
+    try {
+      const respuesta = await evaluarProyecto(emergenciaId, { tarea_id: tareaId, accion: evaluacion.accion })
+      if (respuesta.tarea_id !== tareaId) throw new ApiError(202, 'La respuesta de evaluación no pudo verificarse.')
+      aceptada = true
+      actualizarEvaluacionProyecto(emergenciaId, { tareaId: null, pendiente: true })
+    } catch (fallo) {
+      actualizarEvaluacionProyecto(emergenciaId, { requiereConsulta: true, error: describirError(fallo) })
+    } finally {
+      operacionesOfertas.current.delete(emergenciaId)
+      actualizarEvaluacionProyecto(emergenciaId, { enviando: false })
+    }
+    if (aceptada) await actualizarEstadoProyecto(emergenciaId)
+  }
+
+  function cambiarPestania(valor: PestaniaBandeja) {
+    pestaniaActual.current = valor
+    setPagina(1)
+    setPestania(valor)
+    if (valor === 'esperando_ofertas' || valor === 'esperando_adjudicacion' || valor === 'en_proceso') {
+      for (const emergenciaId of desplegadas) {
+        if (ofertasVigentes.current[emergenciaId] === undefined) void cargarOfertasDeEmergencia(emergenciaId)
+      }
+    }
+  }
+
+  async function cargarOfertasDeEmergencia(emergenciaId: number): Promise<boolean> {
     setCargandoOfertas((actuales) => ({ ...actuales, [emergenciaId]: true }))
     try {
       const ofertas = await listarOfertasDeEmergencia(emergenciaId)
       ofertasVigentes.current[emergenciaId] = ofertas
       setOfertasPorEmergencia((actuales) => ({ ...actuales, [emergenciaId]: ofertas }))
       setErrorOfertas((actuales) => sinClave(actuales, emergenciaId))
+      return true
     } catch (fallo) {
       setErrorOfertas((actuales) => ({
         ...actuales,
         [emergenciaId]: describirError(fallo),
       }))
+      return false
     } finally {
       setCargandoOfertas((actuales) => ({ ...actuales, [emergenciaId]: false }))
     }
@@ -887,8 +1028,8 @@ export function CentroCoordinadorPage() {
     const ofertas = ofertasVigentes.current[emergenciaId]
     const oferta = ofertas?.find((registro) => registro.id === ofertaId)
     if (
-      pestania !== 'esperando_adjudicacion' || oferta === undefined ||
-      operacionesOfertas.current.has(emergenciaId) ||
+      pestaniaActual.current !== 'esperando_adjudicacion' || oferta === undefined ||
+      operacionesOfertas.current.has(emergenciaId) || evaluacionBloquea(emergenciaId) ||
       confirmadasRecientes.current.has(emergenciaId) ||
       (paraSeleccion && !oferta.puede_seleccionar) ||
       oferta.adjudicada_en !== null || adjudicadasRecientes.current.has(ofertaId) ||
@@ -934,7 +1075,8 @@ export function CentroCoordinadorPage() {
   async function manejarConfirmarSeleccion(emergenciaId: number): Promise<void> {
     const ofertas = ofertasVigentes.current[emergenciaId]
     if (
-      operacionesOfertas.current.has(emergenciaId) || confirmadasRecientes.current.has(emergenciaId) ||
+      (pestaniaActual.current !== 'esperando_adjudicacion' && pestaniaActual.current !== 'en_proceso') ||
+      operacionesOfertas.current.has(emergenciaId) || evaluacionBloquea(emergenciaId) || confirmadasRecientes.current.has(emergenciaId) ||
       !ofertas?.some((oferta) => oferta.adjudicada_en !== null || adjudicadasRecientes.current.has(oferta.id))
     ) return
 
@@ -1390,7 +1532,7 @@ export function CentroCoordinadorPage() {
                       Gravedad: {etiquetaDeGravedad(emergencia.nivel_gravedad)}
                     </span>
                     <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-300">
-                      Estado: {etiquetaDeEstado(emergencia.estado)}
+                      Estado: {pestania === 'esperando_evaluacion' ? 'Esperando Evaluacion' : etiquetaDeEstado(emergencia.estado)}
                     </span>
                     <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-300">
                       Lotes: {emergencia.lotes.length}
@@ -1434,6 +1576,45 @@ export function CentroCoordinadorPage() {
                       alEliminar={(lote) => void manejarEliminar(lote)}
                     />
 
+                    {pestania === 'esperando_evaluacion' && (
+                      <div className={claseSubPanel}>
+                        {evaluacionesProyecto[emergencia.id]?.tareaId != null && !evaluacionesProyecto[emergencia.id]?.pendiente && (
+                          <>
+                            <h4 className="text-sm font-bold text-cyan-400">Evaluar proyecto</h4>
+                            <label htmlFor={`evaluacion-proyecto-${emergencia.id}`} className={claseEtiqueta}>Decisión</label>
+                            <select
+                              id={`evaluacion-proyecto-${emergencia.id}`}
+                              value={evaluacionesProyecto[emergencia.id].accion}
+                              disabled={evaluacionesProyecto[emergencia.id].cargando || evaluacionesProyecto[emergencia.id].enviando || evaluacionesProyecto[emergencia.id].requiereConsulta}
+                              onChange={(evento) => actualizarEvaluacionProyecto(emergencia.id, { accion: evento.target.value as AccionEvaluacionProyecto })}
+                              className={claseCampo}
+                            >
+                              <option value="" disabled>Elegir una decisión</option>
+                              <option value="REABRIR">Reabrir convocatoria</option>
+                              <option value="REFORMULAR">Reformular pedido</option>
+                              <option value="CONTINUAR_PARCIAL">Continuar con cobertura parcial</option>
+                            </select>
+                            <button
+                              type="button"
+                              disabled={evaluacionesProyecto[emergencia.id].cargando || evaluacionesProyecto[emergencia.id].enviando || evaluacionesProyecto[emergencia.id].requiereConsulta || evaluacionesProyecto[emergencia.id].accion === ''}
+                              onClick={() => void manejarEvaluarProyecto(emergencia.id, evaluacionesProyecto[emergencia.id].tareaId!)}
+                              className={`${claseBotonSecundario} mt-3 text-sm`}
+                            >
+                              {evaluacionesProyecto[emergencia.id].enviando ? 'Enviando decisión...' : 'Confirmar decisión'}
+                            </button>
+                          </>
+                        )}
+                        {evaluacionesProyecto[emergencia.id]?.error && <p role="alert" className={claseError}>{evaluacionesProyecto[emergencia.id].error}</p>}
+                        {evaluacionesProyecto[emergencia.id]?.pendiente && <p role="status" className="text-sm text-slate-300">Decisión enviada. Esperando el siguiente paso del proceso.</p>}
+                        {evaluacionesProyecto[emergencia.id]?.cargando && <p className="text-sm text-slate-400">Consultando etapa del proyecto...</p>}
+                        <button
+                          type="button"
+                          disabled={evaluacionesProyecto[emergencia.id]?.cargando || evaluacionesProyecto[emergencia.id]?.enviando}
+                          onClick={() => void actualizarEstadoProyecto(emergencia.id)}
+                          className={`${claseBotonSecundario} mt-3 text-sm`}
+                        >Actualizar estado</button>
+                      </div>
+                    )}
                     {(pestania === 'esperando_ofertas' || pestania === 'esperando_adjudicacion' || pestania === 'en_proceso') && (
                       <PanelAdjudicacion
                         ofertas={ofertasPorEmergencia[emergencia.id]}
@@ -1444,12 +1625,14 @@ export function CentroCoordinadorPage() {
                         errorAdjudicar={errorAdjudicar}
                         exitoAdjudicar={exitoAdjudicar}
                         alAdjudicar={(ofertaId, paraSeleccion) => void manejarAdjudicar(emergencia.id, ofertaId, paraSeleccion)}
+                        evaluando={pestania === 'esperando_ofertas' || evaluacionBloquea(emergencia.id)}
                         confirmando={confirmando[emergencia.id] === true}
                         confirmada={confirmadas[emergencia.id] === true}
                         errorConfirmar={errorConfirmar[emergencia.id]}
                         exitoConfirmar={exitoConfirmar[emergencia.id]}
                         alConfirmar={() => void manejarConfirmarSeleccion(emergencia.id)}
                         puedeAdjudicar={pestania === 'esperando_adjudicacion'}
+                        puedeConfirmar={pestania === 'esperando_adjudicacion' || pestania === 'en_proceso'}
                       />
                     )}
 
