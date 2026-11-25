@@ -759,6 +759,8 @@ def test_confirmaciones_simultaneas_reconocen_un_solo_avance_del_motor(seleccion
                         lambda *args, **kwargs: emergencia)
     monkeypatch.setattr("app.services.seleccion_ofertas_service.OfertaRepository.listar_de_emergencia",
                         lambda *args, **kwargs: ofertas)
+    monkeypatch.setattr("app.services.evaluacion_cloud_service.EvaluacionCloudService.ultima",
+                        lambda *args, **kwargs: None)
     motor = seleccion[2]
     motor["concurrente"] = True
 

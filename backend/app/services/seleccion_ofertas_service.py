@@ -48,8 +48,13 @@ class SeleccionOfertasService:
         except (TypeError, ValueError):
             conflicto("El identificador del caso de Bonita no es válido")
 
-    async def _evaluacion(self, caso_id, emergencia_id):
-        evaluacion = await self._leer_json(caso_id, "evaluacionJson")
+    async def _evaluacion(self, caso_id, emergencia_id, db=None):
+        from .evaluacion_cloud_service import EvaluacionCloudService
+
+        evaluacion = (await run_in_threadpool(EvaluacionCloudService.obtener, db, emergencia_id, caso_id)
+                      if db is not None else None)
+        if evaluacion is None:
+            evaluacion = await self._leer_json(caso_id, "evaluacionJson")
         if evaluacion is None:
             conflicto("La evaluación del caso aún no está disponible")
         if (not isinstance(evaluacion, dict)
@@ -96,7 +101,7 @@ class SeleccionOfertasService:
             if not oferta.items:
                 conflicto("La oferta seleccionada no tiene ítems")
             caso_id = self._caso_id(emergencia)
-            cantidades = await self._evaluacion(caso_id, emergencia.id)
+            cantidades = await self._evaluacion(caso_id, emergencia.id, db)
             pares = {(oferta.id, item.lote_necesidad_id) for item in oferta.items}
             self._validar_pares(pares, cantidades)
             if await self._tarea_seleccion(caso_id) is None:
@@ -126,7 +131,7 @@ class SeleccionOfertasService:
             ):
                 conflicto("La emergencia aún no tiene una evaluación vigente para seleccionar")
             caso_id = self._caso_id(emergencia)
-            cantidades = await self._evaluacion(caso_id, emergencia_id)
+            cantidades = await self._evaluacion(caso_id, emergencia_id, db)
             tarea = await self._tarea_seleccion(caso_id)
         except (HTTPException, BonitaClientError, httpx.RequestError, KeyError, TypeError, ValueError):
             # La ausencia de resultado y la indisponibilidad no equivalen a cero.
@@ -229,7 +234,7 @@ class SeleccionOfertasService:
                 return await self._guardar_confirmacion(db, emergencia, respuesta, True, ofertas)
             if emergencia.estado == EstadoEmergencia.RESUELTA:
                 conflicto("La emergencia resuelta no puede confirmar una nueva selección")
-            cantidades = await self._evaluacion(caso_id, emergencia_id)
+            cantidades = await self._evaluacion(caso_id, emergencia_id, db)
             self._validar_pares(pares, cantidades)
             tarea = await self._tarea_seleccion(caso_id)
             if tarea is None:

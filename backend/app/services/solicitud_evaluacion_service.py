@@ -1,12 +1,17 @@
 """Proyección de ofertas locales; nunca deduce equivalencias nacionales."""
 
+import json
+from uuid import uuid4
+
 from fastapi import HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..dto.solicitud_evaluacion_dto import SolicitudEvaluacion
 from ..models import (
     AporteOfertaItem,
     EstadoEmergencia,
+    EvaluacionCloud,
     LoteRecursoCloud,
     OrganizacionCloud,
 )
@@ -16,6 +21,20 @@ from .emergencias_service import EmergenciaService
 
 class SolicitudEvaluacionService:
     def obtener(self, db: Session, emergencia_id: int) -> SolicitudEvaluacion:
+        return self._obtener(db, emergencia_id)
+
+    def preparar(self, db: Session, emergencia_id: int):
+        return self._obtener(db, emergencia_id, protocolo=True)
+
+    def _obtener(self, db: Session, emergencia_id: int, protocolo=False):
+        try:
+            return self._construir(db, emergencia_id, protocolo)
+        except SQLAlchemyError:
+            raise HTTPException(503, "No se pudo preparar la evaluación; vuelva a intentar") from None
+        finally:
+            db.rollback()
+
+    def _construir(self, db: Session, emergencia_id: int, protocolo: bool):
         """Construye la solicitud y cierra la convocatoria de ofertas.
 
         La ruta HTTP se conserva como ``GET`` por compatibilidad con Bonita,
@@ -26,6 +45,15 @@ class SolicitudEvaluacionService:
         emergencia = EmergenciaService().obtener_emergencia_entidad(
             db, emergencia_id, bloquear=True
         )
+        if protocolo:
+            from .evaluacion_cloud_service import EvaluacionCloudService
+            from .seleccion_ofertas_service import SeleccionOfertasService
+            caso_id = SeleccionOfertasService._caso_id(emergencia)
+            anterior = EvaluacionCloudService.ultima(db, emergencia_id)
+            if (anterior is not None and anterior.vigente and anterior.caso_id == str(caso_id)
+                    and emergencia.estado == EstadoEmergencia.ESPERANDO_ADJUDICACION):
+                return {"solicitud_id": anterior.solicitud_id, "caso_id": caso_id,
+                        "solicitud": json.loads(anterior.solicitud_json)}
         if emergencia.estado != EstadoEmergencia.ESPERA_OFERTAS:
             raise HTTPException(
                 409,
@@ -87,5 +115,14 @@ class SolicitudEvaluacionService:
             ofertas=filas,
         )
         emergencia.estado = EstadoEmergencia.ESPERANDO_ADJUDICACION
+        if protocolo:
+            EvaluacionCloudService.invalidar(db, emergencia_id)
+            solicitud_id = str(uuid4())
+            db.add(EvaluacionCloud(
+                emergencia_id=emergencia_id, solicitud_id=solicitud_id, caso_id=str(caso_id),
+                solicitud_json=respuesta.model_dump_json(), vigente=True,
+            ))
         db.commit()
+        if protocolo:
+            return {"solicitud_id": solicitud_id, "caso_id": caso_id, "solicitud": respuesta}
         return respuesta
