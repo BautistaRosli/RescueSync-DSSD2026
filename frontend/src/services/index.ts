@@ -36,6 +36,7 @@ export {
   confirmarSeleccionOfertas,
   crearOferta,
   finalizarItemOferta,
+  finalizarOferta,
   listarOfertasDeEmergencia,
   listarOfertasDeOrganizacion,
   obtenerOfertasConsolidadas,
@@ -48,6 +49,7 @@ export {
 } from './inventario'
 export {
   obtenerReporteCoberturaLotes,
+  obtenerReporteBonita,
   obtenerReporteConsorcios,
   obtenerReporteDemandaOferta,
   obtenerReporteEmergencias,
