@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..models import EstadoEmergencia, NivelGravedad
 
@@ -44,6 +44,13 @@ class EmergenciaBase(BaseModel):
     nivel_gravedad: str
     zona_afectada: str
     descripcion_inicial: str
+
+
+class CursoAccionEntrada(BaseModel):
+    """Decisión enviada por el conector ON_FINISH de Evaluar proyecto."""
+
+    model_config = ConfigDict(extra="forbid")
+    accion: Literal["REABRIR", "REFORMULAR", "CONTINUAR_PARCIAL"]
 
 
 class EmergenciaCrear(EmergenciaBase):

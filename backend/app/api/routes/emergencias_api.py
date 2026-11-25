@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from ..dependencias import requiere_roles
@@ -24,8 +24,10 @@ from ...schemas.emergencias_schema import (
     EmergenciaActualizar,
     EmergenciaCrear,
     ESTADOS_EMERGENCIA_VALIDOS,
+    CursoAccionEntrada,
 )
 from ...services.emergencias_service import EmergenciaService
+from ...services.curso_accion_service import CursoAccionService
 
 router = APIRouter(prefix="/emergencias", tags=["Emergencias"])
 
@@ -135,7 +137,24 @@ async def publicar_emergencia(
     usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     await servicio_emergencias.iniciar_proceso_bonita(db, emergencia_id)
-    return servicio_emergencias.publicar_emergencia(db, emergencia_id)
+    return await CursoAccionService().publicar(db, emergencia_id)
+
+
+@router.post("/{emergencia_id}/curso-accion", status_code=204, response_class=Response)
+def aplicar_curso_accion(
+    emergencia_id: int,
+    data: CursoAccionEntrada,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
+):
+    """Aplica la decisión del supervisor al finalizar Evaluar proyecto.
+
+    Usa el mismo Bearer que solicitud-evaluacion y no consulta esa tarea:
+    el conector ON_FINISH todavía está ejecutándose dentro de Bonita.
+    """
+    verificar_emergencia(db, usuario, emergencia_id)
+    CursoAccionService().aplicar(db, emergencia_id, data.accion)
+    return Response(status_code=204)
 
 
 @router.post("/{emergencia_id}/bonita/iniciar")

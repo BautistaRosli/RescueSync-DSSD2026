@@ -21,6 +21,7 @@ from app.repositories import EmergenciaRepository, OfertaRepository
 from app.schemas import LoteNecesidadCrear, OfertaActualizar, OfertaCrear, UsuarioCrear
 from app.services import AuthService, EmergenciaService, LoteService, OfertaService, RolService
 from app.services.usuarios_service import ROLES_INICIALES
+from app.services.curso_accion_service import CursoAccionService
 
 
 @pytest.fixture
@@ -147,6 +148,78 @@ def test_publicacion_impide_escritura_que_leyo_estado_anterior(sesiones_pg):
             EmergenciaService().publicar_emergencia(db, 1)
         continuar.set()
         pendiente.result(timeout=10)
+
+
+def test_curso_accion_serializa_callbacks_repetidos(sesiones_pg):
+    from app.models import CursoAccionEmergencia
+
+    with sesiones_pg() as db:
+        emergencia = db.get(Emergencia, 1)
+        emergencia.estado = EstadoEmergencia.ESPERANDO_ADJUDICACION
+        emergencia.publicada = True
+        emergencia.bonita_case_id = "42"
+        db.commit()
+    barrera = Barrier(2)
+
+    def aplicar(_):
+        with sesiones_pg() as db:
+            barrera.wait(timeout=5)
+            CursoAccionService().aplicar(db, 1, "REABRIR")
+
+    with ThreadPoolExecutor(max_workers=2) as ejecutor:
+        list(ejecutor.map(aplicar, range(2)))
+    with sesiones_pg() as db:
+        assert db.get(Emergencia, 1).estado == EstadoEmergencia.ESPERA_OFERTAS
+        assert db.query(CursoAccionEmergencia).count() == 1
+
+
+def test_republicaciones_concurrentes_completan_una_sola_tarea(sesiones_pg, monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.integrations.bonita.client import bonita_client
+    from app.models import CursoAccionEmergencia
+
+    with sesiones_pg() as db:
+        emergencia = db.get(Emergencia, 1)
+        emergencia.estado = EstadoEmergencia.ESPERANDO_ADJUDICACION
+        emergencia.publicada = True
+        emergencia.bonita_case_id = "42"
+        db.commit()
+        CursoAccionService().aplicar(db, 1, "REFORMULAR")
+
+    async def ejecutar():
+        completada = False
+        ejecuciones = []
+
+        async def completar(identificador):
+            nonlocal completada
+            ejecuciones.append(identificador)
+            await asyncio.sleep(0.1)
+            completada = True
+
+        async def archivada(*args):
+            return completada
+
+        monkeypatch.setattr(bonita_client, "obtener_tarea_pendiente", AsyncMock(return_value={
+            "id": "101", "caseId": "42", "name": "Generar lotes", "actorId": "7",
+            "state": "ready", "assigned_id": "0",
+        }))
+        monkeypatch.setattr(bonita_client, "obtener_miembro_actor", AsyncMock(return_value={"user_id": "12"}))
+        monkeypatch.setattr(bonita_client, "asignar_tarea", AsyncMock())
+        monkeypatch.setattr(bonita_client, "ejecutar_tarea", completar)
+        monkeypatch.setattr(bonita_client, "tarea_completada", archivada)
+
+        async def publicar():
+            with sesiones_pg() as db:
+                return await CursoAccionService().publicar(db, 1)
+
+        respuestas = await asyncio.wait_for(asyncio.gather(publicar(), publicar()), timeout=5)
+        assert all(respuesta.publicada for respuesta in respuestas)
+        assert ejecuciones == ["101"]
+
+    asyncio.run(ejecutar())
+    with sesiones_pg() as db:
+        assert db.get(Emergencia, 1).publicada
+        assert db.get(CursoAccionEmergencia, 1).publicacion_completada
 
 
 def test_publicacion_espera_una_escritura_de_lotes_ya_validada(sesiones_pg, monkeypatch):

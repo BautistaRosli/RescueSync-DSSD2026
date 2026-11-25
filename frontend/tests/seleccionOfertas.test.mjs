@@ -24,6 +24,30 @@ const moduloHttp = await transpilar('../src/services/http.ts')
 const { ApiError } = await import(moduloHttp)
 const servicios = await import(await transpilar('../src/services/oferta.ts', { './http': moduloHttp }))
 
+test('Las ofertas del coordinador usan la consulta por emergencia con la evaluación Cloud', async () => {
+  const fetchOriginal = globalThis.fetch
+  const almacenamiento = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => null } })
+  const respuesta = [{ id: 12, puede_seleccionar: false, estado_seleccion: 'sin_seleccionar', items: [{ cantidad_verificada: 0 }] }]
+  const peticiones = []
+  globalThis.fetch = async (url, opciones) => {
+    peticiones.push({ url, metodo: opciones.method })
+    return new Response(JSON.stringify(respuesta))
+  }
+  try {
+    assert.deepEqual(await servicios.listarOfertasDeEmergencia(7), respuesta)
+    await servicios.listarOfertasDeOrganizacion(8)
+    assert.deepEqual(peticiones, [
+      { url: 'http://localhost:8000/api/v1/emergencias/7/ofertas', metodo: 'GET' },
+      { url: 'http://localhost:8000/api/v1/ofertas', metodo: 'GET' },
+    ])
+  } finally {
+    globalThis.fetch = fetchOriginal
+    if (almacenamiento) Object.defineProperty(globalThis, 'localStorage', almacenamiento)
+    else delete globalThis.localStorage
+  }
+})
+
 test('Adjudicar conserva el modo individual y prepara selecciones sin enviar cuerpo', async () => {
   const fetchOriginal = globalThis.fetch
   const almacenamiento = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
@@ -94,12 +118,18 @@ function diferida() {
   return { promesa, resolver, rechazar }
 }
 
-async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true } = {}) {
+async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true, evaluaciones = [3], puedeSeleccionar = true, estadoSeleccion = 'seleccionada_para_confirmar' } = {}) {
   const estados = [], referencias = [], efectos = [], dependencias = []
   let indiceEstado = 0, indiceRef = 0, indiceEfecto = 0
   const oferta = (id, emergencia_id, adjudicada_en = null) => ({
     id, emergencia_id, adjudicada_en, organizacion_id: id, organizaciones: [],
-    fecha_hora_oferta: '2026-11-21T10:00:00Z', items: [{ id, lote_necesidad_id: id }],
+    fecha_hora_oferta: '2026-11-21T10:00:00Z',
+    estado_seleccion: adjudicada_en ? estadoSeleccion : 'sin_seleccionar',
+    puede_seleccionar: adjudicada_en === null && puedeSeleccionar,
+    items: evaluaciones.map((cantidad_verificada, indice) => ({
+      id: id * 10 + indice, lote_necesidad_id: id * 10 + indice,
+      cantidad_ofrecida: 8, cantidad_verificada, descripcion: null, finalizado_en: null,
+    })),
   })
   const emergencias = [1, 2].map((id) => ({
     id, nombre: `Emergencia ${id}`, descripcion: '', ubicacion: '', gravedad: 'baja',
@@ -110,9 +140,10 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
     1: [oferta(11, 1, conMarca ? '2026-11-20T10:00:00Z' : null), oferta(12, 1), oferta(13, 1)],
     2: [oferta(21, 2)],
   }
-  const llamadas = { adjudicar: [], confirmar: [] }
+  const llamadas = { adjudicar: [], confirmar: [], listar: [] }
   const control = {
-    adjudicar: async (id) => ({ oferta_id: id, mensaje: 'Correo enviado.' }),
+    ofertas,
+    adjudicar: async (id) => ({ oferta_id: id, mensaje: 'Seleccionada para confirmar' }),
     confirmar: async (id) => ({ emergencia_id: id, cantidad_pares: 2, ya_confirmada: false }),
     useState(inicial) {
       const indice = indiceEstado++
@@ -136,13 +167,15 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
       const items = emergencias.filter((emergencia) => emergencia.estado === estado)
       return { items, paginas: 1, pagina: 1, total: items.length }
     },
-    async listarOfertasDeEmergencia(id) { return ofertas[id] },
+    async listarOfertasDeEmergencia(id) { llamadas.listar.push(id); return structuredClone(ofertas[id]) },
     async adjudicarOferta(id, paraSeleccion) {
       llamadas.adjudicar.push({ id, paraSeleccion })
       const respuesta = await control.adjudicar(id)
       if (respuesta.oferta_id === id) {
         const registro = Object.values(ofertas).flat().find((oferta) => oferta.id === id)
         registro.adjudicada_en = '2026-11-21T10:00:00Z'
+        registro.puede_seleccionar = false
+        registro.estado_seleccion = paraSeleccion ? 'seleccionada_para_confirmar' : 'adjudicada'
         if (!paraSeleccion) emergencias.find((item) => item.id === registro.emergencia_id).estado = 'en_proceso'
       }
       return respuesta
@@ -150,7 +183,13 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
     async confirmarSeleccionOfertas(id) {
       llamadas.confirmar.push(id)
       const respuesta = await control.confirmar(id)
-      if (respuesta.emergencia_id === id) emergencias.find((item) => item.id === id).estado = 'en_proceso'
+      if (respuesta.emergencia_id === id) {
+        emergencias.find((item) => item.id === id).estado = 'en_proceso'
+        for (const oferta of ofertas[id]) {
+          oferta.puede_seleccionar = false
+          if (oferta.adjudicada_en) oferta.estado_seleccion = 'adjudicada'
+        }
+      }
       return respuesta
     },
   }
@@ -198,15 +237,21 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
   const filas = renderizar().filter((nodo) => nodo.type === 'button' && nodo.props['aria-expanded'] === false)
   for (const fila of filas) fila.props.onClick()
   await asentar()
-  return { control, llamadas, botones, renderizar, texto, asentar, limpiar: () => delete globalThis[clave] }
+  const ventanaOriginal = globalThis.window
+  globalThis.window = { confirm: () => true }
+  return { control, llamadas, botones, renderizar, texto, asentar, limpiar: () => {
+    delete globalThis[clave]
+    if (ventanaOriginal === undefined) delete globalThis.window
+    else globalThis.window = ventanaOriginal
+  } }
 }
 
 test('La selección bloquea duplicados, respeta adjudicaciones persistidas y permite reintentar por emergencia', async () => {
   const pagina = await montarPagina()
   try {
     assert.equal(pagina.botones('Confirmar selección').length, 2)
-    assert.equal(pagina.botones('Seleccionada').length, 1)
-    pagina.botones('Seleccionada')[0].props.onClick()
+    assert.equal(pagina.botones('Seleccionada para confirmar').length, 1)
+    assert.equal(pagina.botones('Seleccionada para confirmar')[0].props.disabled, true)
     assert.deepEqual(pagina.llamadas.adjudicar, [])
     assert.equal(pagina.botones('Confirmar selección')[1].props.disabled, true)
     pagina.botones('Confirmar selección')[1].props.onClick()
@@ -222,7 +267,7 @@ test('La selección bloquea duplicados, respeta adjudicaciones persistidas y per
     assert.equal(pagina.botones('Confirmar selección')[0].props.disabled, true)
     pendiente.resolver({ oferta_id: 12, mensaje: 'Correo enviado.' })
     await pagina.asentar()
-    assert.equal(pagina.botones('Seleccionada').length, 2)
+    assert.equal(pagina.botones('Seleccionada para confirmar').length, 2)
     adjudicar.props.onClick()
     assert.deepEqual(pagina.llamadas.adjudicar, [{ id: 12, paraSeleccion: true }])
     const confirmacion = diferida()
@@ -261,12 +306,12 @@ test('Una adjudicación rechazada no marca la oferta y una respuesta de otra sel
     pagina.control.adjudicar = async () => { throw new ApiError(409, 'No se pudo adjudicar.') }
     pagina.botones('Adjudicar')[0].props.onClick()
     await pagina.asentar()
-    assert.equal(pagina.botones('Seleccionada').length, 1)
+    assert.equal(pagina.botones('Seleccionada para confirmar').length, 1)
     assert.ok(pagina.renderizar().some((nodo) => nodo.props?.role === 'alert' && pagina.texto(nodo) === 'No se pudo adjudicar.'))
     pagina.control.adjudicar = async () => ({ oferta_id: 99, mensaje: 'Correo enviado.' })
     pagina.botones('Adjudicar')[0].props.onClick()
     await pagina.asentar()
-    assert.equal(pagina.botones('Seleccionada').length, 1)
+    assert.equal(pagina.botones('Seleccionada para confirmar').length, 1)
     assert.ok(pagina.renderizar().some((nodo) => nodo.props?.role === 'alert' && /respuesta de adjudicación/.test(pagina.texto(nodo))))
     pagina.control.confirmar = async () => ({ emergencia_id: 99, cantidad_pares: 2, ya_confirmada: false })
     pagina.botones('Confirmar selección')[0].props.onClick()
@@ -328,7 +373,7 @@ test('Se pueden preparar varias ofertas y el modo individual desaparece al marca
   try {
     pagina.botones('Adjudicar')[0].props.onClick()
     await pagina.asentar()
-    assert.equal(pagina.botones('Seleccionada').length, 1)
+    assert.equal(pagina.botones('Seleccionada para confirmar').length, 1)
     // La segunda emergencia continúa ofreciendo el recorrido individual.
     assert.equal(pagina.botones('Adjudicar solo esta oferta').length, 1)
     pagina.botones('Adjudicar')[0].props.onClick()
@@ -336,7 +381,80 @@ test('Se pueden preparar varias ofertas y el modo individual desaparece al marca
     assert.deepEqual(pagina.llamadas.adjudicar, [
       { id: 11, paraSeleccion: true }, { id: 12, paraSeleccion: true },
     ])
-    assert.equal(pagina.botones('Seleccionada').length, 2)
+    assert.equal(pagina.botones('Seleccionada para confirmar').length, 2)
     assert.ok(pagina.renderizar().some((nodo) => nodo.props?.children && pagina.texto(nodo).includes('Estado: Esperando adjudicación')))
+  } finally { pagina.limpiar() }
+})
+
+test('La evaluación muestra cero, pendiente o valor real y respeta la habilitación del servidor', async () => {
+  for (const { evaluaciones, puedeSeleccionar, mensaje } of [
+    { evaluaciones: [0], puedeSeleccionar: false, mensaje: 'Verificado por Cloud: 0' },
+    { evaluaciones: [null], puedeSeleccionar: false, mensaje: 'Pendiente de evaluación' },
+    { evaluaciones: [4, 0], puedeSeleccionar: false, mensaje: 'Verificado por Cloud: 4' },
+    { evaluaciones: [4], puedeSeleccionar: false, mensaje: 'La selección no está habilitada en la etapa actual.' },
+    { evaluaciones: [4], puedeSeleccionar: true, mensaje: 'Verificado por Cloud: 4' },
+  ]) {
+    const pagina = await montarPagina({ conMarca: false, evaluaciones, puedeSeleccionar })
+    try {
+      assert.ok(pagina.renderizar().some((nodo) => nodo.type === 'span' || nodo.type === 'p'
+        ? pagina.texto(nodo) === mensaje : false), mensaje)
+      const boton = pagina.botones('Adjudicar')[0]
+      assert.equal(boton.props.disabled, !puedeSeleccionar)
+      boton.props.onClick()
+      assert.equal(pagina.llamadas.adjudicar.length, puedeSeleccionar ? 1 : 0)
+      await pagina.asentar()
+    } finally { pagina.limpiar() }
+  }
+})
+
+test('Una marca provisional sobrevive a la recarga y la confirmación refresca su estado final', async () => {
+  const pagina = await montarPagina({ puedeSeleccionar: false })
+  try {
+    assert.equal(pagina.botones('Seleccionada para confirmar').length, 1)
+    assert.equal(pagina.renderizar().filter((nodo) => nodo.type === 'p' && /Oferta adjudicada/.test(pagina.texto(nodo))).length, 0)
+    assert.equal(pagina.botones('Confirmar selección')[0].props.disabled, false)
+    pagina.botones('Confirmar selección')[0].props.onClick()
+    await pagina.asentar()
+    await pagina.asentar()
+    assert.ok(pagina.llamadas.listar.filter((id) => id === 1).length >= 2)
+    assert.equal(pagina.botones('Seleccionada para confirmar').length, 0)
+    assert.ok(pagina.renderizar().some((nodo) => nodo.type === 'p' && /Oferta adjudicada/.test(pagina.texto(nodo))))
+  } finally { pagina.limpiar() }
+  const final = await montarPagina({ estado: 'en_proceso', estadoSeleccion: 'adjudicada', puedeSeleccionar: false })
+  try {
+    assert.equal(final.botones('Seleccionada para confirmar').length, 0)
+    assert.ok(final.renderizar().some((nodo) => nodo.type === 'p' && /Oferta adjudicada/.test(final.texto(nodo))))
+  } finally { final.limpiar() }
+})
+
+test('Un handler anterior respeta la habilitación actual después de un rechazo y recarga', async () => {
+  const pagina = await montarPagina({ conMarca: false })
+  try {
+    const anterior = pagina.botones('Adjudicar')[1]
+    pagina.control.adjudicar = async () => {
+      pagina.control.ofertas[1][1].puede_seleccionar = false
+      throw new ApiError(409, 'Lote #110 pendiente de evaluación.')
+    }
+    pagina.botones('Adjudicar')[0].props.onClick()
+    await pagina.asentar()
+    assert.ok(pagina.renderizar().some((nodo) => nodo.props?.role === 'alert' && pagina.texto(nodo) === 'Lote #110 pendiente de evaluación.'))
+    assert.equal(pagina.botones('Seleccionada para confirmar').length, 0)
+    anterior.props.onClick()
+    assert.deepEqual(pagina.llamadas.adjudicar, [{ id: 11, paraSeleccion: true }])
+  } finally { pagina.limpiar() }
+})
+
+test('La selección provisional no repite mensajes y se reemplaza por la adjudicación final', async () => {
+  const pagina = await montarPagina({ conMarca: false })
+  try {
+    pagina.botones('Adjudicar')[0].props.onClick()
+    await pagina.asentar()
+    assert.equal(pagina.renderizar().filter((nodo) => nodo.type === 'p' && pagina.texto(nodo) === 'Seleccionada para confirmar').length, 0)
+    assert.equal(pagina.botones('Seleccionada para confirmar').length, 1)
+    pagina.botones('Confirmar selección')[0].props.onClick()
+    await pagina.asentar()
+    await pagina.asentar()
+    assert.equal(pagina.renderizar().filter((nodo) => nodo.props?.role === 'status' && pagina.texto(nodo) === 'Seleccionada para confirmar').length, 0)
+    assert.ok(pagina.renderizar().some((nodo) => nodo.type === 'p' && /Oferta adjudicada/.test(pagina.texto(nodo))))
   } finally { pagina.limpiar() }
 })

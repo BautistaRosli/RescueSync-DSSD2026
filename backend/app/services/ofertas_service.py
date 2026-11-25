@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -23,6 +24,7 @@ from ..repositories import (
     UsuarioRepository,
 )
 from ..schemas import OfertaActualizar, OfertaCrear
+from ..dto.ofertas_dto import OfertaItemListadoRespuesta
 from .emergencias_service import EmergenciaService
 from .usuarios_service import OrganizacionService
 
@@ -152,7 +154,15 @@ class OfertaService:
         selección cada marca es idempotente y no adelanta la etapa local.
         Ambos recorridos toman los bloqueos en orden emergencia → oferta.
         """
+        if para_seleccion:
+            from .seleccion_ofertas_service import SeleccionOfertasService
+
+            return asyncio.run(SeleccionOfertasService().preparar(db, oferta_id, self))
         emergencia, oferta = self._bloquear_oferta(db, oferta_id)
+        self._validar_adjudicacion(db, emergencia, oferta, para_seleccion=False)
+        return self._marcar_oferta(db, emergencia, oferta, background_tasks, False)
+
+    def _validar_adjudicacion(self, db, emergencia, oferta, para_seleccion):
         if emergencia.estado != EstadoEmergencia.ESPERANDO_ADJUDICACION:
             raise HTTPException(
                 status_code=409,
@@ -161,7 +171,7 @@ class OfertaService:
         if oferta.adjudicada_en is not None:
             if para_seleccion:
                 return AdjudicacionRespuesta(
-                    oferta_id=oferta_id, mensaje="Notificación de adjudicación enviada"
+                    oferta_id=oferta.id, mensaje="Seleccionada para confirmar"
                 )
             raise HTTPException(
                 status_code=409,
@@ -187,15 +197,19 @@ class OfertaService:
                 status_code=400,
                 detail="La oferta no tiene ítems cargados",
             )
+
+    def _marcar_oferta(self, db, emergencia, oferta, background_tasks, para_seleccion):
         if oferta.adjudicada_en is None:
             oferta.adjudicada_en = datetime.now(timezone.utc)
             if not para_seleccion:
                 emergencia.estado = EstadoEmergencia.EN_PROCESO
             self._repository.actualizar(db, oferta)
-        self._programar_notificacion_adjudicacion(db, oferta, background_tasks)
+        if not para_seleccion:
+            self._programar_notificacion_adjudicacion(db, oferta, background_tasks)
         return AdjudicacionRespuesta(
-            oferta_id=oferta_id,
-            mensaje="Notificación de adjudicación enviada",
+            oferta_id=oferta.id,
+            mensaje=("Seleccionada para confirmar" if para_seleccion
+                     else "Notificación de adjudicación enviada"),
         )
 
     def _bloquear_oferta(self, db: Session, oferta_id: int):
@@ -226,6 +240,13 @@ class OfertaService:
         sesion de la request todavia abierta. La background task recibe solo
         primitivos porque su sesion ya fue cerrada.
         """
+        background_tasks.add_task(
+            notificar_adjudicacion, *self._datos_notificacion_adjudicacion(db, oferta)
+        )
+
+    def _datos_notificacion_adjudicacion(self, db: Session, oferta: OfertaAyuda,
+                                        fecha_hora_adjudicacion=None) -> tuple:
+        """Resuelve los mismos destinatarios y datos para ambos caminos de aviso."""
         organizacion = self._organizaciones.obtener_organizacion_entidad(
             db, oferta.organizacion_id
         )
@@ -242,14 +263,13 @@ class OfertaService:
         lotes_adjudicados = [
             item.lote_necesidad.tipo for item in oferta.items
         ]
-        background_tasks.add_task(
-            notificar_adjudicacion,
+        return (
             list(destinatarios),
             oferta.id,
             oferta.emergencia_id,
             oferta.emergencia.zona_afectada,
             lotes_adjudicados,
-            datetime.now(timezone.utc),
+            fecha_hora_adjudicacion or datetime.now(timezone.utc),
         )
 
     def finalizar_item(
@@ -391,7 +411,7 @@ class OfertaService:
                 for organizacion in oferta.organizaciones
             ],
             items=[
-                OfertaItemRespuesta(
+                OfertaItemListadoRespuesta(
                     id=item.id,
                     lote_necesidad_id=item.lote_necesidad_id,
                     cantidad_ofrecida=item.cantidad_ofrecida,

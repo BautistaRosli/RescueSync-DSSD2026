@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -46,6 +46,10 @@ class OfertaRespuesta(BaseModel):
     items: List[OfertaItemRespuesta] = []
 
 
+class OfertaItemListadoRespuesta(OfertaItemRespuesta):
+    cantidad_verificada: Optional[int] = None
+
+
 class OfertaListadoRespuesta(BaseModel):
     id: int
     emergencia_id: int
@@ -56,7 +60,9 @@ class OfertaListadoRespuesta(BaseModel):
     es_conjunta: bool = False
     adjudicada_en: Optional[datetime] = None
     organizaciones: List[OrganizacionResumen] = []
-    items: List[OfertaItemRespuesta] = []
+    items: List[OfertaItemListadoRespuesta] = []
+    puede_seleccionar: bool = False
+    estado_seleccion: Literal["sin_seleccionar", "seleccionada_para_confirmar", "adjudicada"] = "sin_seleccionar"
 
 
 class OfertaItemConsolidado(BaseModel):

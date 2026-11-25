@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -21,6 +22,7 @@ from .api.routes import (
 from .database import Base, SessionLocal, engine
 from .services.datos_demo_service import sembrar_datos_demo
 from .services.usuarios_service import AuthService, RolService
+from .services.notificaciones_adjudicacion_service import consumir_avisos
 
 with engine.begin() as conexion:
     if conexion.dialect.name == "postgresql":
@@ -44,7 +46,14 @@ async def lifespan(app: FastAPI):
         raise
     finally:
         db.close()
-    yield
+    detener_avisos = asyncio.Event()
+    consumidor = asyncio.create_task(consumir_avisos(detener_avisos, SessionLocal))
+    try:
+        yield
+    finally:
+        detener_avisos.set()
+        # Espera el intento en curso para no liberar el lock antes de SMTP.
+        await consumidor
 
 
 app = FastAPI(title="RescueSync API", lifespan=lifespan)

@@ -104,3 +104,21 @@ class OfertaItem(Base):
     lote_necesidad: Mapped["LoteNecesidad"] = relationship(
         back_populates="items"
     )
+
+
+class AvisoAdjudicacion(Base):
+    """Aviso durable de una selección confirmada; la entrega conserva su fila."""
+
+    __tablename__ = "avisos_adjudicacion"
+
+    oferta_id: Mapped[int] = mapped_column(
+        ForeignKey("ofertas_ayuda.id", ondelete="CASCADE"), primary_key=True
+    )
+    creada_en: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    intentos: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    proximo_intento_en: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    enviada_en: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
