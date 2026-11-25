@@ -33,6 +33,7 @@ export {
   confirmarSeleccionOfertas,
   crearOferta,
   finalizarItemOferta,
+  finalizarOferta,
   listarOfertasDeEmergencia,
   listarOfertasDeOrganizacion,
   obtenerOfertasConsolidadas,

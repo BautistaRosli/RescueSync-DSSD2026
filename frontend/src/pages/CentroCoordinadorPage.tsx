@@ -14,6 +14,7 @@ import {
   confirmarSeleccionOfertas,
   crearLote,
   eliminarLote,
+  finalizarOferta,
   listarBandejaEmergencias,
   listarOfertasDeEmergencia,
   listarRecursosCloud,
@@ -561,14 +562,18 @@ function PanelAdjudicacion({
   cargando,
   errorCarga,
   adjudicando,
+  finalizando,
   errorAdjudicar,
   exitoAdjudicar,
+  errorFinalizar,
+  exitoFinalizar,
   puedeAdjudicar,
   confirmando,
   confirmada,
   errorConfirmar,
   exitoConfirmar,
   alAdjudicar,
+  alFinalizar,
   alConfirmar,
 }: {
   ofertas: OfertaCoordinadorRead[] | undefined
@@ -576,14 +581,18 @@ function PanelAdjudicacion({
   cargando: boolean
   errorCarga: string | undefined
   adjudicando: number | null
+  finalizando: number | null
   errorAdjudicar: Record<number, string>
   exitoAdjudicar: Record<number, string>
+  errorFinalizar: Record<number, string>
+  exitoFinalizar: Record<number, string>
   puedeAdjudicar: boolean
   confirmando: boolean
   confirmada: boolean
   errorConfirmar: string | undefined
   exitoConfirmar: string | undefined
   alAdjudicar: (ofertaId: number, paraSeleccion: boolean) => void
+  alFinalizar: (ofertaId: number) => void
   alConfirmar: () => void
 }) {
   const sinOfertas =
@@ -591,7 +600,7 @@ function PanelAdjudicacion({
   const hayAdjudicadas = ofertas?.some(
     (oferta) => oferta.adjudicada_en !== null || exitoAdjudicar[oferta.id] !== undefined,
   ) === true
-  const bloqueada = adjudicando !== null || confirmando || confirmada
+  const bloqueada = adjudicando !== null || finalizando !== null || confirmando || confirmada
 
   const lotePorId = new Map(lotes.map((lote) => [lote.id, lote]))
 
@@ -742,6 +751,38 @@ function PanelAdjudicacion({
                 <p role="status" className={claseExito}>{exitoAdjudicar[oferta.id]}</p>
               )}
 
+              {(() => {
+                const estaAdjudicada = oferta.estado_seleccion === 'adjudicada' ||
+                  oferta.adjudicada_en !== null || exitoAdjudicar[oferta.id] !== undefined
+                const itemsFinalizados = oferta.items.length > 0 &&
+                  oferta.items.every((item) => item.finalizado_en !== null)
+
+                if (!estaAdjudicada || !itemsFinalizados) {
+                  return null
+                }
+
+                return (
+                  <div className="flex flex-col gap-2 rounded-lg border border-cyan-500/40 bg-cyan-500/10 p-3">
+                    {exitoFinalizar[oferta.id] === undefined && (
+                      <button
+                        type="button"
+                        onClick={() => alFinalizar(oferta.id)}
+                        disabled={bloqueada || cargando || errorCarga !== undefined}
+                        className={`${claseBotonSecundario} self-start text-sm`}
+                      >
+                        {finalizando === oferta.id ? 'Cerrando oferta...' : 'Cerrar oferta y liberar recursos'}
+                      </button>
+                    )}
+                    {exitoFinalizar[oferta.id] !== undefined && (
+                      <p role="status" className={claseExito}>{exitoFinalizar[oferta.id]}</p>
+                    )}
+                    {errorFinalizar[oferta.id] !== undefined && (
+                      <p role="alert" className={claseError}>{errorFinalizar[oferta.id]}</p>
+                    )}
+                  </div>
+                )
+              })()}
+
               {errorAdjudicar[oferta.id] !== undefined && (
                 <p role="alert" className={claseError}>
                   {errorAdjudicar[oferta.id]}
@@ -799,8 +840,11 @@ export function CentroCoordinadorPage() {
   const [cargandoOfertas, setCargandoOfertas] = useState<Record<number, boolean>>({})
   const [errorOfertas, setErrorOfertas] = useState<Record<number, string>>({})
   const [adjudicando, setAdjudicando] = useState<Record<number, number>>({})
+  const [finalizando, setFinalizando] = useState<Record<number, number>>({})
   const [errorAdjudicar, setErrorAdjudicar] = useState<Record<number, string>>({})
   const [exitoAdjudicar, setExitoAdjudicar] = useState<Record<number, string>>({})
+  const [errorFinalizar, setErrorFinalizar] = useState<Record<number, string>>({})
+  const [exitoFinalizar, setExitoFinalizar] = useState<Record<number, string>>({})
   const [confirmando, setConfirmando] = useState<Record<number, boolean>>({})
   const [confirmadas, setConfirmadas] = useState<Record<number, boolean>>({})
   const [errorConfirmar, setErrorConfirmar] = useState<Record<number, string>>({})
@@ -967,6 +1011,43 @@ export function CentroCoordinadorPage() {
     } finally {
       operacionesOfertas.current.delete(emergenciaId)
       setConfirmando((actuales) => sinClave(actuales, emergenciaId))
+    }
+  }
+
+  async function manejarFinalizarOferta(emergenciaId: number, ofertaId: number): Promise<void> {
+    const oferta = ofertasVigentes.current[emergenciaId]?.find((registro) => registro.id === ofertaId)
+    if (
+      oferta === undefined ||
+      operacionesOfertas.current.has(emergenciaId) ||
+      (oferta.estado_seleccion !== 'adjudicada' && oferta.adjudicada_en === null) ||
+      oferta.items.length === 0 ||
+      !oferta.items.every((item) => item.finalizado_en !== null)
+    ) return
+
+    operacionesOfertas.current.add(emergenciaId)
+    setFinalizando((actuales) => ({ ...actuales, [emergenciaId]: ofertaId }))
+    setErrorFinalizar((actuales) => sinClave(actuales, ofertaId))
+    setExitoFinalizar((actuales) => sinClave(actuales, ofertaId))
+    try {
+      const respuesta = await finalizarOferta(ofertaId)
+      if (
+        respuesta?.oferta_id !== ofertaId ||
+        respuesta.estado !== 'finalizada' ||
+        typeof respuesta.mensaje !== 'string'
+      ) {
+        throw new ApiError(200, 'La respuesta de cierre de oferta no pudo verificarse.')
+      }
+      setExitoFinalizar((actuales) => ({
+        ...actuales,
+        [ofertaId]: `${respuesta.mensaje} Bonita continúa para liberar los recursos Cloud.`,
+      }))
+      await cargarOfertasDeEmergencia(emergenciaId)
+      setRecargo((actual) => actual + 1)
+    } catch (fallo) {
+      setErrorFinalizar((actuales) => ({ ...actuales, [ofertaId]: describirError(fallo) }))
+    } finally {
+      operacionesOfertas.current.delete(emergenciaId)
+      setFinalizando((actuales) => sinClave(actuales, emergenciaId))
     }
   }
 
@@ -1441,9 +1522,13 @@ export function CentroCoordinadorPage() {
                         cargando={cargandoOfertas[emergencia.id] === true}
                         errorCarga={errorOfertas[emergencia.id]}
                         adjudicando={adjudicando[emergencia.id] ?? null}
+                        finalizando={finalizando[emergencia.id] ?? null}
                         errorAdjudicar={errorAdjudicar}
                         exitoAdjudicar={exitoAdjudicar}
+                        errorFinalizar={errorFinalizar}
+                        exitoFinalizar={exitoFinalizar}
                         alAdjudicar={(ofertaId, paraSeleccion) => void manejarAdjudicar(emergencia.id, ofertaId, paraSeleccion)}
+                        alFinalizar={(ofertaId) => void manejarFinalizarOferta(emergencia.id, ofertaId)}
                         confirmando={confirmando[emergencia.id] === true}
                         confirmada={confirmadas[emergencia.id] === true}
                         errorConfirmar={errorConfirmar[emergencia.id]}

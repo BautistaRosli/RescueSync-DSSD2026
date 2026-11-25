@@ -3,10 +3,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import BackgroundTasks, HTTPException
+import httpx
 from sqlalchemy.orm import Session
 
 from ..dto import (
     AdjudicacionRespuesta,
+    FinalizacionOfertaRespuesta,
     OfertaConsolidada,
     OfertaItemConsolidado,
     OfertaItemRespuesta,
@@ -16,6 +18,7 @@ from ..dto import (
     OrganizacionResumen,
 )
 from ..integrations.email.service import notificar_adjudicacion
+from ..integrations.bonita.client import BonitaClientError, BonitaTaskConflictError, bonita_client
 from ..models import AporteOfertaItem, EstadoEmergencia, OfertaAyuda, OfertaItem, Organizacion
 from ..repositories import (
     OfertaItemRepository,
@@ -29,6 +32,8 @@ from .emergencias_service import EmergenciaService
 from .usuarios_service import OrganizacionService
 
 NOMBRE_ROL_REPRESENTANTE_ONG = "REPRESENTANTE_ONG"
+NOMBRE_TAREA_MARCAR_ACTIVIDADES_FINALIZADAS = "Marcar actividades finalizadas"
+NOMBRE_TAREA_SUPERVISAR_PROYECTO = "Supervisar proyecto"
 
 
 class OfertaService:
@@ -272,7 +277,7 @@ class OfertaService:
             fecha_hora_adjudicacion or datetime.now(timezone.utc),
         )
 
-    def finalizar_item(
+    async def finalizar_item(
         self, db: Session, oferta_id: int, item_id: int
     ) -> OfertaItemRespuesta:
         """Cierra la actividad del ítem indicado (etapa 7 del flujo).
@@ -280,7 +285,7 @@ class OfertaService:
         Es idempotente: si el ítem ya estaba finalizado se devuelve con la
         fecha original, sin reescribirla.
         """
-        oferta = self._obtener_oferta_entidad(db, oferta_id)
+        emergencia, oferta = self._bloquear_oferta(db, oferta_id)
         item = next(
             (item for item in oferta.items if item.id == item_id), None
         )
@@ -291,7 +296,161 @@ class OfertaService:
         if item.finalizado_en is None:
             item.finalizado_en = datetime.now(timezone.utc)
             self._repository.actualizar(db, oferta)
+
+        if (
+            oferta.adjudicada_en is not None
+            and oferta.items
+            and all(item_oferta.finalizado_en is not None for item_oferta in oferta.items)
+        ):
+            try:
+                await self._ejecutar_tarea_ong(emergencia, oferta)
+            except BonitaTaskConflictError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Bonita rechazó la finalización de la ONG; vuelva a intentarlo",
+                ) from exc
+            except (BonitaClientError, httpx.RequestError) as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="No se pudo procesar en Bonita la finalización de la ONG",
+                ) from exc
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Bonita devolvió una respuesta inválida al finalizar la ONG",
+                ) from exc
         return OfertaItemRespuesta.model_validate(item)
+
+    async def _ejecutar_tarea_ong(self, emergencia, oferta) -> None:
+        """Completa la tarea de la ONG cuando cerró todos sus ítems."""
+        await self._ejecutar_tarea_humana(
+            emergencia,
+            NOMBRE_TAREA_MARCAR_ACTIVIDADES_FINALIZADAS,
+            tolerar_tarea_no_disponible=True,
+        )
+
+    async def _ejecutar_tarea_humana(
+        self,
+        emergencia,
+        nombre_tarea: str,
+        *,
+        tolerar_tarea_no_disponible: bool = False,
+    ) -> bool:
+        """Ejecuta una tarea Bonita por nombre sin repetirla.
+
+        Devuelve ``False`` si la tarea todavía no fue creada y esa ausencia es
+        tolerable para el caso de uso. Si ya fue archivada como completada,
+        devuelve ``True`` sin volver a ejecutarla.
+        """
+        if not emergencia.bonita_case_id:
+            raise BonitaClientError("La emergencia no tiene un caso de Bonita asociado")
+        caso_id = int(emergencia.bonita_case_id)
+        if caso_id <= 0:
+            raise ValueError("El identificador del caso de Bonita no es válido")
+
+        tarea = await bonita_client.obtener_tarea_pendiente(
+            caso_id, nombre_tarea
+        )
+        if tarea is None:
+            completada = await bonita_client.tarea_completada_por_nombre(
+                caso_id, nombre_tarea
+            )
+            if completada:
+                return True
+            if tolerar_tarea_no_disponible:
+                return False
+            raise BonitaTaskConflictError(
+                f"La tarea Bonita '{nombre_tarea}' aún no está habilitada"
+            )
+        if (
+            not isinstance(tarea, dict)
+            or str(tarea.get("caseId")) != str(caso_id)
+            or tarea.get("name") != nombre_tarea
+        ):
+            raise ValueError(f"Bonita devolvió una tarea inválida para '{nombre_tarea}'")
+
+        asignado = int(tarea.get("assigned_id") or 0)
+        try:
+            if asignado <= 0:
+                actor_id = int(tarea["actorId"])
+                miembro = await bonita_client.obtener_miembro_actor(
+                    actor_id, solo_usuarios=True
+                )
+                if not miembro or int(miembro.get("user_id", 0)) <= 0:
+                    raise BonitaClientError(
+                        f"La tarea '{nombre_tarea}' no tiene un usuario autorizado"
+                    )
+                usuario_id = int(miembro["user_id"])
+                await bonita_client.asignar_tarea(tarea["id"], usuario_id)
+            await bonita_client.ejecutar_tarea(tarea["id"])
+        except (BonitaClientError, httpx.RequestError):
+            if await bonita_client.tarea_completada_por_nombre(
+                caso_id, nombre_tarea
+            ):
+                return True
+            raise
+        return True
+
+    async def finalizar_oferta(
+        self, db: Session, oferta_id: int
+    ) -> FinalizacionOfertaRespuesta:
+        """Ejecuta la supervisión del coordinador y continúa la liberación."""
+        emergencia, oferta = self._bloquear_oferta(db, oferta_id)
+        try:
+            if oferta.adjudicada_en is None:
+                raise HTTPException(status_code=409, detail="La oferta no está adjudicada")
+            if not oferta.items:
+                raise HTTPException(status_code=409, detail="La oferta adjudicada no tiene ítems")
+            if any(item.finalizado_en is None for item in oferta.items):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "codigo": "TAREA_NO_HABILITADA",
+                        "habilitada": False,
+                        "tarea": NOMBRE_TAREA_SUPERVISAR_PROYECTO,
+                        "mensaje": (
+                            "La tarea 'Supervisar proyecto' aún no está habilitada: "
+                            "todos los ítems de la oferta adjudicada deben estar finalizados"
+                        ),
+                    },
+                )
+            if not emergencia.bonita_case_id:
+                raise HTTPException(status_code=409, detail="La emergencia no tiene un caso de Bonita asociado")
+            try:
+                caso_id = int(emergencia.bonita_case_id)
+                if caso_id <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=409, detail="El identificador del caso de Bonita no es válido")
+
+            try:
+                await self._ejecutar_tarea_humana(
+                    emergencia,
+                    NOMBRE_TAREA_SUPERVISAR_PROYECTO,
+                )
+            except BonitaTaskConflictError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "codigo": "TAREA_NO_HABILITADA",
+                        "habilitada": False,
+                        "tarea": NOMBRE_TAREA_SUPERVISAR_PROYECTO,
+                        "mensaje": str(exc),
+                    },
+                ) from exc
+            return FinalizacionOfertaRespuesta(
+                oferta_id=oferta.id,
+                estado="finalizada",
+                ya_finalizada=True,
+                tarea_bonita=NOMBRE_TAREA_SUPERVISAR_PROYECTO,
+                mensaje="Bonita ejecutó 'Supervisar proyecto' y continuará con 'Liberación de recursos'",
+            )
+        except (BonitaClientError, httpx.RequestError):
+            raise HTTPException(status_code=503, detail="No se pudo completar la oferta en Bonita")
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=503, detail="Bonita devolvió una respuesta inválida al finalizar la oferta")
+        finally:
+            db.rollback()
 
     def existe_referencia_a_lote(self, db: Session, lote_id: int) -> bool:
         """Informa si alguna oferta usa el lote indicado."""

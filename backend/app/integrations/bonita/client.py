@@ -310,6 +310,28 @@ class BonitaClient:
                        and tarea.get("name") == nombre and tarea.get("state") == "completed"
                        for tarea in response.json())
 
+    async def tarea_completada_por_nombre(self, case_id: int, nombre: str) -> bool:
+        """Comprueba si el caso ya completó una tarea humana por nombre."""
+        async with await self._client() as client:
+            await self.login(client)
+            response = await client.get(
+                "/API/bpm/archivedHumanTask",
+                params={"p": 0, "c": 50, "f": [f"caseId={case_id}", f"name={nombre}"]},
+            )
+            if response.status_code != 200:
+                raise BonitaClientError(
+                    f"Error consultando la tarea archivada '{nombre}' (HTTP {response.status_code})"
+                )
+            tareas = response.json()
+            if not isinstance(tareas, list):
+                raise BonitaClientError("Respuesta inválida consultando la tarea archivada")
+            return any(
+                str(tarea.get("caseId")) == str(case_id)
+                and tarea.get("name") == nombre
+                and tarea.get("state") == "completed"
+                for tarea in tareas
+            )
+
     async def obtener_variable_caso(self, case_id: int, nombre: str) -> str | None:
         """Lee el valor textual, incluyendo casos ya archivados por el motor."""
         async with await self._client() as client:

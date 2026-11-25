@@ -2,6 +2,7 @@ import { apiGet, apiPatch, apiPost } from './http'
 import type { OfertaCoordinadorRead } from '../types/oferta'
 import type {
   AdjudicacionRespuesta,
+  FinalizarOfertaRespuesta,
   OfertaCreateRequest,
   OfertaItemRead,
   OfertaRead,
@@ -74,4 +75,10 @@ export async function finalizarItemOferta(
     `/ofertas/${ofertaId}/items/${itemId}/finalizar`,
     {},
   )
+}
+
+export async function finalizarOferta(
+  ofertaId: number,
+): Promise<FinalizarOfertaRespuesta> {
+  return apiPost<FinalizarOfertaRespuesta>(`/ofertas/${ofertaId}/finalizar`, undefined)
 }

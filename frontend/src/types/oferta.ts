@@ -77,6 +77,13 @@ export interface AdjudicacionRespuesta {
   mensaje: string
 }
 
+export interface FinalizarOfertaRespuesta {
+  oferta_id: number
+  estado: 'finalizada'
+  ya_finalizada?: boolean
+  mensaje: string
+}
+
 export interface SeleccionOfertasRespuesta {
   emergencia_id: number
   cantidad_pares: number

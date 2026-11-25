@@ -10,7 +10,7 @@ export type {
 export type { RecursoInventario, RecursoInventarioRequest } from './inventario'
 export type { LoteRead } from './lote'
 export type {
-  AdjudicacionRespuesta, AporteOferta, OfertaConsolidada, OfertaCreateRequest,
+  AdjudicacionRespuesta, AporteOferta, FinalizarOfertaRespuesta, OfertaConsolidada, OfertaCreateRequest,
   OfertaItemConsolidado, OfertaItemRead, OfertaItemRequest, OfertaRead,
   OfertaUpdateRequest, OfertasConsolidadas, SeleccionOfertasRespuesta,
 } from './oferta'
