@@ -303,7 +303,6 @@ test('La selección bloquea duplicados, respeta adjudicaciones persistidas y per
     await pagina.asentar()
     await pagina.asentar()
     assert.deepEqual(pagina.llamadas.confirmar, [1, 1])
-    assert.equal(pagina.botones('Selección confirmada')[0].props.disabled, true)
     assert.ok(pagina.renderizar().some((nodo) => nodo.props?.role === 'status' && /ya estaba confirmada/.test(pagina.texto(nodo))))
     assert.equal(pagina.botones('Confirmar selección').length, 0)
     assert.equal(pagina.botones('Adjudicar').length, 0)
@@ -340,7 +339,7 @@ test('Una adjudicación rechazada no marca la oferta y una respuesta de otra sel
   } finally { pagina.limpiar() }
 })
 
-test('La adjudicación individual es exclusiva, bloquea doble clic y permite enviar a Bonita en proceso', async () => {
+test('La adjudicación individual es exclusiva, bloquea doble clic y no ofrece confirmar en proceso', async () => {
   const pagina = await montarPagina({ conMarca: false })
   try {
     const pendiente = diferida()
@@ -355,30 +354,20 @@ test('La adjudicación individual es exclusiva, bloquea doble clic y permite env
     await pagina.asentar()
     assert.equal(pagina.botones('Adjudicar').length, 0)
     assert.equal(pagina.botones('Adjudicar solo esta oferta').length, 0)
-    assert.equal(pagina.botones('Confirmar selección')[0].props.disabled, false)
+    assert.equal(pagina.botones('Confirmar selección').length, 0)
     assert.ok(pagina.renderizar().some((nodo) => nodo.props?.role === 'status' && /Adjudicación individual registrada/.test(pagina.texto(nodo))))
-    pagina.botones('Confirmar selección')[0].props.onClick()
-    await pagina.asentar()
-    await pagina.asentar()
-    assert.deepEqual(pagina.llamadas.confirmar, [1])
-    assert.equal(pagina.botones('Selección confirmada').length, 1)
+    assert.deepEqual(pagina.llamadas.confirmar, [])
   } finally { pagina.limpiar() }
 })
 
-test('Las adjudicaciones persistidas permiten confirmar en proceso', async () => {
-  for (const estado of ['en_proceso']) {
-    const pagina = await montarPagina({ estado })
-    try {
-      assert.equal(pagina.botones('Adjudicar solo esta oferta').length, 0)
-      assert.equal(pagina.botones('Confirmar selección')[0].props.disabled, false)
-      pagina.control.confirmar = async () => { throw new ApiError(409, 'Selección rechazada.') }
-      pagina.botones('Confirmar selección')[0].props.onClick()
-      await pagina.asentar()
-      assert.equal(pagina.botones('Confirmar selección')[0].props.disabled, false)
-      assert.ok(pagina.renderizar().some((nodo) => nodo.props?.role === 'alert' && pagina.texto(nodo) === 'Selección rechazada.'))
-      assert.deepEqual(pagina.llamadas.adjudicar, [])
-    } finally { pagina.limpiar() }
-  }
+test('En proceso no ofrece confirmar la selección aunque existan adjudicaciones persistidas', async () => {
+  const pagina = await montarPagina({ estado: 'en_proceso' })
+  try {
+    assert.equal(pagina.botones('Adjudicar solo esta oferta').length, 0)
+    assert.equal(pagina.botones('Confirmar selección').length, 0)
+    assert.deepEqual(pagina.llamadas.adjudicar, [])
+    assert.deepEqual(pagina.llamadas.confirmar, [])
+  } finally { pagina.limpiar() }
 })
 
 test('Se pueden preparar varias ofertas y el modo individual desaparece al marcar la primera', async () => {

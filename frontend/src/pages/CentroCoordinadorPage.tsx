@@ -1632,7 +1632,7 @@ export function CentroCoordinadorPage() {
                         exitoConfirmar={exitoConfirmar[emergencia.id]}
                         alConfirmar={() => void manejarConfirmarSeleccion(emergencia.id)}
                         puedeAdjudicar={pestania === 'esperando_adjudicacion'}
-                        puedeConfirmar={pestania === 'esperando_adjudicacion' || pestania === 'en_proceso'}
+                        puedeConfirmar={pestania === 'esperando_adjudicacion'}
                       />
                     )}
 
