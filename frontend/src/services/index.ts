@@ -1,6 +1,9 @@
 export { ApiError } from './http'
 export { iniciarSesion, registrar, cerrarSesion, restaurarSesion } from './auth'
 export {
+  obtenerEmergencia,
+  obtenerEvaluacionProyecto,
+  evaluarProyecto,
   registrarEmergencia,
   listarEmergencias,
   listarBandejaEmergencias,

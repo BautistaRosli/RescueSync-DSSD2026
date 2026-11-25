@@ -274,3 +274,128 @@ async def test_tarea_completada_exige_identidad_y_estado_exactos(monkeypatch, ca
     assert await cliente.tarea_completada(42, "101", "Generar lotes") is completada
     assert peticiones[0].url.path == "/API/bpm/archivedHumanTask"
     assert peticiones[0].url.params.get_list("f") == ["sourceObjectId=101", "caseId=42"]
+
+
+def cliente_de_transporte(monkeypatch, transportar):
+    cliente = BonitaClient()
+
+    async def crear_cliente():
+        return httpx.AsyncClient(base_url="http://bonita.test", transport=httpx.MockTransport(transportar))
+
+    monkeypatch.setattr(cliente, "_client", crear_cliente)
+    return cliente
+
+
+@pytest.mark.asyncio
+async def test_casos_con_tarea_lista_pagina_y_exige_nombre_estado_caso(monkeypatch):
+    peticiones = []
+    tarea = {"caseId": "42", "name": "Evaluar proyecto", "state": "ready"}
+
+    def transportar(request):
+        peticiones.append(request)
+        if request.url.path == "/loginservice":
+            return httpx.Response(204)
+        assert request.url.params.get_list("f") == ["name=Evaluar proyecto", "state=ready"]
+        cantidad = int(request.url.params["c"])
+        if request.url.params["p"] == "0":
+            return httpx.Response(200, json=[tarea] * cantidad)
+        return httpx.Response(200, json=[{**tarea, "caseId": "43"}, {**tarea, "state": "completed"},
+                                         {**tarea, "name": "Otra"}, {**tarea, "caseId": None},
+                                         {**tarea, "caseId": "invalido"}])
+
+    cliente = cliente_de_transporte(monkeypatch, transportar)
+    assert await cliente.obtener_casos_con_tarea_lista("Evaluar proyecto") == {"42", "43"}
+    assert [r.url.params["p"] for r in peticiones if r.url.path != "/loginservice"] == ["0", "1"]
+    assert sum(r.url.path == "/loginservice" for r in peticiones) == 1
+
+
+@pytest.mark.asyncio
+async def test_timer_vigente_vencido_y_reapertura_usan_proxima_ejecucion_y_una_sesion(monkeypatch):
+    from datetime import datetime, timezone
+
+    ahora = datetime.now(timezone.utc)
+    instante = int(ahora.timestamp() * 1000)
+    peticiones = []
+
+    def transportar(request):
+        peticiones.append(request)
+        if request.url.path == "/loginservice":
+            return httpx.Response(204)
+        assert request.url.path == "/API/bpm/timerEventTrigger"
+        caso = request.url.params["caseId"]
+        registros = {
+            "41": [{"eventInstanceName": "TImer ofertas", "executionDate": instante + 60000}],
+            "42": [{"eventInstanceName": "TImer ofertas", "executionDate": instante - 1}],
+            # Una convocatoria reabierta tiene una nueva ejecución, no usa fecha_publicacion.
+            "43": [{"eventInstanceName": "TImer ofertas", "executionDate": instante + 120000}],
+            "44": [{"eventInstanceName": "Otro timer", "executionDate": instante + 60000}],
+            "45": [],
+        }
+        return httpx.Response(200, json=registros[caso])
+
+    cliente = cliente_de_transporte(monkeypatch, transportar)
+    assert await cliente.obtener_casos_con_ofertas_abiertas({"41", "42", "43", "44", "45"}, ahora=ahora) == {"41", "43"}
+    assert sum(r.url.path == "/loginservice" for r in peticiones) == 1
+    assert {r.url.params["caseId"] for r in peticiones if r.url.path != "/loginservice"} == {"41", "42", "43", "44", "45"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("modo", ["tareas", "temporizadores"])
+@pytest.mark.parametrize("respuesta", [httpx.Response(500), httpx.Response(200, json={"error": True}),
+                                      httpx.Response(200, text="json inválido")])
+async def test_consultas_etapa_no_fabrican_resultados_ante_error(monkeypatch, modo, respuesta):
+    def transportar(request):
+        return httpx.Response(204) if request.url.path == "/loginservice" else respuesta
+
+    cliente = cliente_de_transporte(monkeypatch, transportar)
+    with pytest.raises(BonitaClientError):
+        if modo == "tareas":
+            await cliente.obtener_casos_con_tarea_lista("Evaluar proyecto")
+        else:
+            await cliente.obtener_casos_con_ofertas_abiertas({"42"})
+
+
+@pytest.mark.asyncio
+async def test_temporizadores_paginan_y_rechazan_fecha_invalida(monkeypatch):
+    peticiones = []
+
+    def transportar(request):
+        if request.url.path == "/loginservice":
+            return httpx.Response(204)
+        peticiones.append(request)
+        assert request.url.params["caseId"] == "42"
+        if request.url.params["p"] == "0":
+            return httpx.Response(200, json=[{"eventInstanceName": "Otro"}] * int(request.url.params["c"]))
+        return httpx.Response(200, json=[{"eventInstanceName": "TImer ofertas", "executionDate": "invalido"}])
+
+    cliente = cliente_de_transporte(monkeypatch, transportar)
+    with pytest.raises(BonitaClientError, match="fecha inválida"):
+        await cliente.obtener_casos_con_ofertas_abiertas({"42"})
+    assert [r.url.params["p"] for r in peticiones] == ["0", "1"]
+
+
+@pytest.mark.asyncio
+async def test_temporizadores_acotan_concurrencia_y_esperan_lecturas_ante_error(monkeypatch):
+    import asyncio
+
+    activas = 0
+    maximo = 0
+    terminadas = 0
+    logins = 0
+
+    async def transportar(request):
+        nonlocal activas, maximo, terminadas, logins
+        if request.url.path == "/loginservice":
+            logins += 1
+            return httpx.Response(204)
+        activas += 1
+        maximo = max(maximo, activas)
+        await asyncio.sleep(0)
+        activas -= 1
+        terminadas += 1
+        return httpx.Response(500) if request.url.params["caseId"] == "1" else httpx.Response(200, json=[])
+
+    cliente = cliente_de_transporte(monkeypatch, transportar)
+    with pytest.raises(BonitaClientError):
+        await cliente.obtener_casos_con_ofertas_abiertas({str(i) for i in range(1, 12)})
+    assert 1 < maximo <= 5 and terminadas == 11 and activas == 0 and logins == 1

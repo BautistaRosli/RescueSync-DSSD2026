@@ -1,7 +1,8 @@
 export type { AuthResponse, LoginRequest, RegistroRequest, UsuarioRead } from './auth'
 export type {
-  BandaEmergencias, BandaEmergenciasParams, DashboardEmergencias,
-  DemandaVsOfertaPorRecurso, EstadoEmergencia, EmergenciaPorEstadoYGravedad,
+  AccionEvaluacionProyecto, EvaluacionProyectoRead, EvaluacionProyectoRequest,
+  EvaluacionProyectoAceptada, BandaEmergencias, BandaEmergenciasParams, DashboardEmergencias,
+  DemandaVsOfertaPorRecurso, EstadoEmergencia, EtapaBonitaBandeja, EmergenciaPorEstadoYGravedad,
   EmergenciaCreateRequest, EmergenciaCreada, EmergenciaRead, EmergenciaRespuesta,
   EvolucionAbiertasResueltas, RankingOng, ParticipacionConsorcios,
   RecursoAdjudicadoPorMes, LoteNecesidad, LoteNecesidadCreateRequest,

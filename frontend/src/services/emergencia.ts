@@ -1,5 +1,8 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from './http'
 import type {
+  EvaluacionProyectoRead,
+  EvaluacionProyectoRequest,
+  EvaluacionProyectoAceptada,
   BandaEmergencias,
   BandaEmergenciasParams,
   DashboardEmergencias,
@@ -28,7 +31,7 @@ export async function obtenerDashboardEmergencias(): Promise<DashboardEmergencia
 export async function listarBandejaEmergencias(
   params: BandaEmergenciasParams,
 ): Promise<BandaEmergencias> {
-  const { publicada, estado, pagina, por_pagina } = params
+  const { publicada, estado, etapa_bonita, pagina, por_pagina } = params
   const consulta = new URLSearchParams({
     pagina: String(pagina),
     por_pagina: String(por_pagina),
@@ -38,6 +41,9 @@ export async function listarBandejaEmergencias(
   }
   if (estado !== undefined) {
     consulta.set('estado', estado)
+  }
+  if (etapa_bonita !== undefined) {
+    consulta.set('etapa_bonita', etapa_bonita)
   }
   return apiGet<BandaEmergencias>(
     `/emergencias/bandeja?${consulta.toString()}`,
@@ -66,4 +72,20 @@ export async function actualizarLote(
 
 export async function eliminarLote(loteId: number): Promise<void> {
   return apiDelete(`/lotes/${loteId}`)
+}
+
+
+export async function obtenerEmergencia(emergenciaId: number): Promise<EmergenciaRead> {
+  return apiGet<EmergenciaRead>(`/emergencias/${emergenciaId}`)
+}
+
+export async function obtenerEvaluacionProyecto(emergenciaId: number, incluirSeleccion = false): Promise<EvaluacionProyectoRead> {
+  return apiGet<EvaluacionProyectoRead>(`/emergencias/${emergenciaId}/evaluacion-proyecto${incluirSeleccion ? '?incluir_seleccion=true' : ''}`)
+}
+
+export async function evaluarProyecto(
+  emergenciaId: number,
+  datos: EvaluacionProyectoRequest,
+): Promise<EvaluacionProyectoAceptada> {
+  return apiPost<EvaluacionProyectoAceptada>(`/emergencias/${emergenciaId}/evaluacion-proyecto`, datos)
 }

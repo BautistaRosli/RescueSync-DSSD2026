@@ -35,13 +35,7 @@ class CursoAccionService:
             if emergencia.estado != EstadoEmergencia.ESPERANDO_ADJUDICACION or not emergencia.publicada:
                 raise HTTPException(409, "La emergencia no está esperando la decisión de evaluación")
             if accion != "CONTINUAR_PARCIAL":
-                seleccion = EmergenciaRepository().obtener_confirmacion(db, emergencia_id)
-                adjudicada = db.query(OfertaAyuda.id).filter(
-                    OfertaAyuda.emergencia_id == emergencia_id,
-                    OfertaAyuda.adjudicada_en.is_not(None),
-                ).first()
-                if seleccion is not None or adjudicada is not None:
-                    raise HTTPException(409, "La emergencia tiene una selección en curso; no se puede retroceder")
+                self.validar_retroceso(db, emergencia_id)
             emergencia.estado = estado
             emergencia.publicada = publicada
             # fecha_publicacion conserva la publicación histórica al reformular.
@@ -57,6 +51,17 @@ class CursoAccionService:
             raise HTTPException(503, "No se pudo guardar el curso de acción; vuelva a intentar") from None
         finally:
             db.rollback()
+
+    @staticmethod
+    def validar_retroceso(db: Session, emergencia_id: int) -> None:
+        """Comparte la barrera de selección con el envío a Evaluar proyecto."""
+        seleccion = EmergenciaRepository().obtener_confirmacion(db, emergencia_id)
+        adjudicada = db.query(OfertaAyuda.id).filter(
+            OfertaAyuda.emergencia_id == emergencia_id,
+            OfertaAyuda.adjudicada_en.is_not(None),
+        ).first()
+        if seleccion is not None or adjudicada is not None:
+            raise HTTPException(409, "La emergencia tiene una selección en curso; no se puede retroceder")
 
     async def publicar(self, db: Session, emergencia_id: int) -> EmergenciaRespuesta:
         """El primer ciclo mantiene su barrera al crear; los siguientes, al publicar.

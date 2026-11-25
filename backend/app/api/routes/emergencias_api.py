@@ -3,9 +3,10 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from ..dependencias import requiere_roles
-from ...models import Usuario
+from ...models import EstadoEmergencia, Usuario
 from ...services.permisos_service import (
     OPERADOR,
     COORDINADOR,
@@ -25,9 +26,14 @@ from ...schemas.emergencias_schema import (
     EmergenciaCrear,
     ESTADOS_EMERGENCIA_VALIDOS,
     CursoAccionEntrada,
+    EvaluacionProyectoEntrada,
+    EvaluacionProyectoRespuesta,
+    EvaluacionProyectoConSeleccionRespuesta,
+    EtapaBonita,
 )
 from ...services.emergencias_service import EmergenciaService
 from ...services.curso_accion_service import CursoAccionService
+from ...services.evaluacion_proyecto_service import EvaluacionProyectoService
 
 router = APIRouter(prefix="/emergencias", tags=["Emergencias"])
 
@@ -50,9 +56,10 @@ def listar_emergencias(
 
 
 @router.get("/bandeja", response_model=EmergenciasPaginadas)
-def listar_bandeja_emergencias(
+async def listar_bandeja_emergencias(
     publicada: bool,
     estado: Optional[str] = Query(default=None),
+    etapa_bonita: Optional[EtapaBonita] = Query(default=None, description="Etapa real de Bonita; sólo coordinador y publicadas"),
     pagina: int = Query(default=1, ge=1),
     por_pagina: int = Query(default=POR_PAGINA_MAXIMO, ge=1, le=POR_PAGINA_MAXIMO),
     db: Session = Depends(get_db),
@@ -67,7 +74,15 @@ def listar_bandeja_emergencias(
                 + ", ".join(sorted(ESTADOS_EMERGENCIA_VALIDOS))
             ),
         )
-    return servicio_emergencias.listar_emergencias_paginadas(
+    if etapa_bonita is not None:
+        if usuario.rol.nombre != COORDINADOR:
+            raise HTTPException(403, "Sólo el Centro Coordinador puede consultar las etapas de Bonita")
+        estado_esperado = (EstadoEmergencia.ESPERA_OFERTAS if etapa_bonita == "esperando_ofertas"
+                           else EstadoEmergencia.ESPERANDO_ADJUDICACION)
+        if not publicada or estado not in (None, estado_esperado):
+            raise HTTPException(422, "etapa_bonita requiere publicada=true y un estado compatible")
+        return await servicio_emergencias.listar_bandeja_por_etapa(db, etapa_bonita, pagina, por_pagina)
+    return await run_in_threadpool(servicio_emergencias.listar_emergencias_paginadas,
         db,
         publicada=filtrar_publicada(usuario, publicada),
         estado=estado,
@@ -155,6 +170,30 @@ def aplicar_curso_accion(
     verificar_emergencia(db, usuario, emergencia_id)
     CursoAccionService().aplicar(db, emergencia_id, data.accion)
     return Response(status_code=204)
+
+
+@router.get("/{emergencia_id}/evaluacion-proyecto", response_model=EvaluacionProyectoConSeleccionRespuesta | EvaluacionProyectoRespuesta)
+async def obtener_evaluacion_proyecto(
+    emergencia_id: int,
+    incluir_seleccion: bool = Query(default=False, description="Incluye si Seleccionar oferta está lista en el caso actual"),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+):
+    """Consulta la tarea de evaluación pendiente del caso actual."""
+    verificar_emergencia(db, usuario, emergencia_id)
+    return await EvaluacionProyectoService().consultar(db, emergencia_id, incluir_seleccion=incluir_seleccion)
+
+
+@router.post("/{emergencia_id}/evaluacion-proyecto", response_model=EvaluacionProyectoRespuesta, status_code=202)
+async def ejecutar_evaluacion_proyecto(
+    emergencia_id: int,
+    data: EvaluacionProyectoEntrada,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+):
+    """Ejecuta Evaluar proyecto; su conector aplica el curso de acción."""
+    verificar_emergencia(db, usuario, emergencia_id)
+    return await EvaluacionProyectoService().ejecutar(db, emergencia_id, data)
 
 
 @router.post("/{emergencia_id}/bonita/iniciar")

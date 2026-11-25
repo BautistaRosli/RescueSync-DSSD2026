@@ -4,6 +4,7 @@ import math
 from datetime import datetime, timezone
 from typing import Optional
 
+import httpx
 from fastapi import BackgroundTasks, HTTPException
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session, selectinload
@@ -37,6 +38,7 @@ from ..schemas import (
     EmergenciaActualizar,
     EmergenciaCrear,
 )
+from ..schemas.emergencias_schema import EtapaBonita
 
 logger = logging.getLogger(__name__)
 
@@ -63,20 +65,45 @@ class EmergenciaService:
         estado: Optional[str] = None,
         pagina: int = 1,
         por_pagina: int = 10,
+        casos_bonita: set[str] | None = None,
     ) -> EmergenciasPaginadas:
         """Bandeja paginada: bucket de no publicadas o de publicadas."""
-        total = self._repository.contar_por_publicada(
-            db, publicada, estado=estado
-        )
-        emergencias = self._repository.listar_paginado(
-            db, publicada, pagina, por_pagina, estado=estado
-        )
+        filtros = {"estado": estado}
+        if casos_bonita is not None:
+            filtros["casos_bonita"] = casos_bonita
+        total = self._repository.contar_por_publicada(db, publicada, **filtros)
+        emergencias = self._repository.listar_paginado(db, publicada, pagina, por_pagina, **filtros)
         return EmergenciasPaginadas(
             items=[EmergenciaRespuesta.model_validate(e) for e in emergencias],
             pagina=pagina,
             por_pagina=por_pagina,
             total=total,
             paginas=math.ceil(total / por_pagina) if total else 0,
+        )
+
+    async def listar_bandeja_por_etapa(
+        self, db: Session, etapa: EtapaBonita, pagina: int, por_pagina: int,
+    ) -> EmergenciasPaginadas:
+        """Bonita determina la etapa; SQL filtra antes de contar y paginar."""
+        estado = (EstadoEmergencia.ESPERA_OFERTAS if etapa == "esperando_ofertas"
+                  else EstadoEmergencia.ESPERANDO_ADJUDICACION)
+        try:
+            if etapa == "esperando_ofertas":
+                candidatos = await run_in_threadpool(self._repository.listar_casos_por_estado, db, estado)
+                casos = await bonita_client.obtener_casos_con_ofertas_abiertas(candidatos)
+            else:
+                evaluando = await bonita_client.obtener_casos_con_tarea_lista("Evaluar proyecto")
+                if etapa == "esperando_evaluacion":
+                    casos = evaluando
+                else:
+                    seleccionando = await bonita_client.obtener_casos_con_tarea_lista("Seleccionar oferta")
+                    # Una lectura durante la transición no adelanta la selección.
+                    casos = seleccionando - evaluando
+        except (BonitaClientError, httpx.RequestError):
+            raise HTTPException(503, "No se pudo consultar la etapa de las emergencias en Bonita") from None
+        return await run_in_threadpool(
+            self.listar_emergencias_paginadas, db, True, estado, pagina, por_pagina,
+            casos_bonita=casos,
         )
 
     def obtener_dashboard(

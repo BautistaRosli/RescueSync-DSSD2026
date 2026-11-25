@@ -1,5 +1,6 @@
+import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 import httpx
 
@@ -275,6 +276,82 @@ class BonitaClient:
                 )
             tareas = response.json()
             return tareas[0] if tareas else None
+
+    @staticmethod
+    async def _listar_recurso_paginado(
+        client: httpx.AsyncClient, recurso: str, parametros: dict,
+    ) -> list[dict]:
+        """Pagina recursos de lectura y rechaza respuestas incompletas o inválidas."""
+        registros = []
+        pagina = 0
+        por_pagina = 100
+        while True:
+            try:
+                response = await client.get(
+                    f"/API/bpm/{recurso}", params={**parametros, "p": pagina, "c": por_pagina},
+                )
+                if response.status_code != 200:
+                    raise BonitaClientError(f"Error consultando {recurso} (HTTP {response.status_code})")
+                lote = response.json()
+            except (httpx.RequestError, ValueError) as exc:
+                raise BonitaClientError(f"No se pudo consultar {recurso} en Bonita") from exc
+            if not isinstance(lote, list) or any(not isinstance(fila, dict) for fila in lote):
+                raise BonitaClientError(f"Bonita devolvió una lista inválida de {recurso}")
+            registros.extend(lote)
+            if len(lote) < por_pagina:
+                return registros
+            pagina += 1
+
+    async def obtener_casos_con_tarea_lista(self, nombre_tarea: str) -> set[str]:
+        """Busca todas las tareas ready; vuelve a comprobar los filtros del motor."""
+        async with await self._client() as client:
+            await self.login(client)
+            tareas = await self._listar_recurso_paginado(
+                client, "userTask", {"f": [f"name={nombre_tarea}", "state=ready"]},
+            )
+        return {
+            str(tarea["caseId"]) for tarea in tareas
+            if tarea.get("name") == nombre_tarea and tarea.get("state") == "ready"
+            and str(tarea.get("caseId", "")).isdecimal() and int(tarea["caseId"]) > 0
+        }
+
+    async def obtener_casos_con_ofertas_abiertas(
+        self, casos: set[str], ahora: datetime | None = None,
+    ) -> set[str]:
+        """La próxima ejecución del timer determina si la ronda admite ofertas."""
+        if not casos:
+            return set()
+        limite = asyncio.Semaphore(5)
+        async with await self._client() as client:
+            await self.login(client)
+
+            async def consultar(caso_id: str) -> tuple[str, list[dict]]:
+                async with limite:
+                    registros = await self._listar_recurso_paginado(
+                        client, "timerEventTrigger", {"caseId": caso_id},
+                    )
+                return caso_id, registros
+
+            # Esperar todas las lecturas antes de cerrar la sesión también si falla una.
+            resultados = await asyncio.gather(
+                *(consultar(caso_id) for caso_id in sorted(casos)), return_exceptions=True,
+            )
+            for resultado in resultados:
+                if isinstance(resultado, BaseException):
+                    raise resultado
+        # Medir después de la consulta evita reabrir un timer vencido durante el HTTP.
+        instante = (ahora or datetime.now(timezone.utc)).timestamp() * 1000
+        abiertos = set()
+        for caso_id, registros in resultados:
+            for registro in registros:
+                if registro.get("eventInstanceName") != "TImer ofertas":
+                    continue
+                ejecucion = registro.get("executionDate")
+                if type(ejecucion) is not int:
+                    raise BonitaClientError("Bonita devolvió una fecha inválida del temporizador de ofertas")
+                if ejecucion > instante:
+                    abiertos.add(caso_id)
+        return abiertos
 
     async def obtener_miembro_actor(self, actor_id: int, solo_usuarios: bool = False) -> dict | None:
         """Devuelve el primer usuario miembro del actor Bonita, o None si no tiene."""
