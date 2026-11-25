@@ -53,6 +53,35 @@ def test_finalizar_oferta_solo_continua_con_confirmacion_de_bonita(entorno, monk
     ejecutar.assert_awaited_once_with("100")
 
 
+def test_consultar_estado_finalizacion_consulta_bonita(entorno, monkeypatch):
+    cliente, sesiones, _ = entorno
+    preparar_oferta(sesiones)
+    monkeypatch.setattr(
+        bonita_client,
+        "tarea_completada_por_nombre",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        bonita_client,
+        "obtener_tarea_pendiente",
+        AsyncMock(return_value={"id": "100", "caseId": "42", "name": "Supervisar proyecto"}),
+    )
+
+    respuesta = cliente.get(
+        "/api/v1/ofertas/1/finalizacion", headers=cabecera(COORDINADOR)
+    )
+
+    assert respuesta.status_code == 200, respuesta.text
+    assert respuesta.json() == {
+        "oferta_id": 1,
+        "items_finalizados": True,
+        "tarea_ong_completada": True,
+        "supervisar_proyecto_pendiente": True,
+        "habilitada": True,
+        "mensaje": "La tarea 'Supervisar proyecto' está habilitada",
+    }
+
+
 def test_finalizar_oferta_responde_409_hasta_confirmacion_de_bonita(entorno, monkeypatch):
     cliente, sesiones, _ = entorno
     preparar_oferta(sesiones)

@@ -18,6 +18,7 @@ from ...services.permisos_service import (
 from ...database import get_db
 from ...dto.ofertas_dto import (
     AdjudicacionRespuesta,
+    EstadoFinalizacionOfertaRespuesta,
     FinalizacionOfertaRespuesta,
     OfertaItemRespuesta,
     OfertaListadoRespuesta,
@@ -136,6 +137,19 @@ async def finalizar_oferta(
     usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
 ):
     return await servicio_ofertas.finalizar_oferta(db, oferta_id)
+
+
+@router.get(
+    "/ofertas/{oferta_id}/finalizacion",
+    response_model=EstadoFinalizacionOfertaRespuesta,
+)
+async def consultar_estado_finalizacion(
+    oferta_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, ONG, AUDITOR)),
+):
+    verificar_oferta(db, usuario, oferta_id)
+    return await servicio_ofertas.consultar_estado_finalizacion(db, oferta_id)
 
 
 @router.get(

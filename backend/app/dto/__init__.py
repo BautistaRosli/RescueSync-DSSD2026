@@ -13,6 +13,7 @@ from .inventario_dto import RecursoInventarioRespuesta
 from .lotes_dto import LoteNecesidadRespuesta
 from .ofertas_dto import (
     AdjudicacionRespuesta,
+    EstadoFinalizacionOfertaRespuesta,
     FinalizacionOfertaRespuesta,
     OfertaConsolidada,
     OfertaItemConsolidado,
@@ -32,6 +33,7 @@ from .usuarios_dto import (
 
 __all__ = [
     "AdjudicacionRespuesta",
+    "EstadoFinalizacionOfertaRespuesta",
     "FinalizacionOfertaRespuesta",
     "AuthRespuesta",
     "EmergenciaRespuesta",
