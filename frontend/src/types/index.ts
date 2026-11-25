@@ -11,7 +11,7 @@ export type {
 export type { RecursoInventario, RecursoInventarioRequest } from './inventario'
 export type { LoteRead } from './lote'
 export type {
-  AdjudicacionRespuesta, AporteOferta, OfertaConsolidada, OfertaCreateRequest,
+  AdjudicacionRespuesta, AporteOferta, FinalizarOfertaRespuesta, OfertaConsolidada, OfertaCreateRequest,
   OfertaItemConsolidado, OfertaItemRead, OfertaItemRequest, OfertaRead,
   OfertaUpdateRequest, OfertasConsolidadas, SeleccionOfertasRespuesta,
 } from './oferta'
@@ -20,7 +20,8 @@ export type { Rol } from './rol'
 export type { RecursoCloud, RecursoCloudCreateRequest } from './recursosCloud'
 export type {
   ActivasResueltas, FiltrosReportes, FormatoReporte, NecesidadActual,
-  PrioridadAbiertas, ReporteCoberturaLote, ReporteCoberturaLotes,
+  PrioridadAbiertas, ReporteBonita, ReporteBonitaCasos, ReporteBonitaTiempoEtapa,
+  ReporteCoberturaLote, ReporteCoberturaLotes,
   ReporteConsorcios, ReporteDemandaOferta, ReporteEmergenciaGravedad,
   ReporteProyecto, ReporteRankingOng, ReporteSuministroMovilizado,
   ReporteTiempoAdjudicacion, ReporteTiempoPublicacion, ReportesDashboard,

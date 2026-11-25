@@ -200,6 +200,56 @@ async def test_set_case_variables_levanta_error_de_conexion(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_obtener_metricas_reporte_consulta_bonita_y_calcula_duraciones(monkeypatch):
+    peticiones = []
+
+    def transportar(request):
+        peticiones.append(request)
+        if request.url.path == "/loginservice":
+            return httpx.Response(204)
+        if request.url.path == "/API/bpm/process":
+            return httpx.Response(200, json=[{"id": "17"}])
+        if request.url.path == "/API/bpm/archivedHumanTask":
+            filtros = request.url.params.get_list("f")
+            if "name=Decidir curso de accion" in filtros:
+                return httpx.Response(200, json=[{"id": "9"}])
+            if "name=Decidir curso de acción" in filtros:
+                return httpx.Response(200, json=[])
+            return httpx.Response(200, json=[{
+                "name": "Generar lotes",
+                "ready_date": "2026-01-01T10:00:00Z",
+                "completed_date": "2026-01-01T12:30:00Z",
+            }])
+        if request.url.path == "/API/bpm/case":
+            return httpx.Response(200, json=[{"id": "1"}, {"id": "2"}])
+        if request.url.path == "/API/bpm/archivedCase":
+            return httpx.Response(200, json=[{"id": "3"}])
+        return httpx.Response(404)
+
+    cliente = BonitaClient()
+
+    async def crear_cliente():
+        return httpx.AsyncClient(
+            base_url="http://bonita.test", transport=httpx.MockTransport(transportar)
+        )
+
+    monkeypatch.setattr(cliente, "_client", crear_cliente)
+    resultado = await cliente.obtener_metricas_reporte()
+
+    assert resultado["casos"] == {"abiertos": 2, "cerrados": 1}
+    assert resultado["convocatorias_camino_alternativo"] == 1
+    assert resultado["tiempos_por_etapa"][0] == {
+        "etapa": "Generar lotes", "promedio_horas": 2.5, "cantidad": 1
+    }
+    assert any(
+        request.url.path == "/API/bpm/archivedHumanTask"
+        and "processId=17" in request.url.params.get_list("f")
+        and "name=Decidir curso de accion" in request.url.params.get_list("f")
+        for request in peticiones
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("cambio,completada", [({}, True), ({"sourceObjectId": "99"}, False),
                                               ({"caseId": "9"}, False), ({"name": "Otra"}, False),
                                               ({"state": "aborted"}, False)])
@@ -216,7 +266,9 @@ async def test_tarea_completada_exige_identidad_y_estado_exactos(monkeypatch, ca
     cliente = BonitaClient()
 
     async def crear_cliente():
-        return httpx.AsyncClient(base_url="http://bonita.test", transport=httpx.MockTransport(transportar))
+        return httpx.AsyncClient(
+            base_url="http://bonita.test", transport=httpx.MockTransport(transportar)
+        )
 
     monkeypatch.setattr(cliente, "_client", crear_cliente)
     assert await cliente.tarea_completada(42, "101", "Generar lotes") is completada

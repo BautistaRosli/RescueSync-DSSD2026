@@ -89,6 +89,14 @@ class AdjudicacionRespuesta(BaseModel):
     mensaje: str
 
 
+class FinalizacionOfertaRespuesta(BaseModel):
+    oferta_id: int
+    estado: Literal["finalizada"]
+    ya_finalizada: bool = False
+    tarea_bonita: Literal["Supervisar proyecto"] = "Supervisar proyecto"
+    mensaje: str
+
+
 class SeleccionOfertasRespuesta(BaseModel):
     emergencia_id: int
     cantidad_pares: int

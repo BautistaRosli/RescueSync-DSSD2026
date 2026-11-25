@@ -101,6 +101,114 @@ class BonitaClient:
             )
         return str(processes[0]["id"])
 
+    async def obtener_metricas_reporte(self) -> dict[str, Any]:
+        """Consulta en Bonita las métricas requeridas por el dashboard."""
+        try:
+            async with await self._client() as client:
+                await self.login(client)
+                process_id = await self.get_process_id(client)
+                tareas_archivadas = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/archivedHumanTask",
+                    [f"processId={process_id}"],
+                )
+                convocatorias_sin_tilde = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/archivedHumanTask",
+                    [f"processId={process_id}", "name=Decidir curso de accion"],
+                )
+                convocatorias_con_tilde = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/archivedHumanTask",
+                    [f"processId={process_id}", "name=Decidir curso de acción"],
+                )
+                casos_abiertos = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/case",
+                    [f"processDefinitionId={process_id}"],
+                )
+                casos_cerrados = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/archivedCase",
+                    [f"processDefinitionId={process_id}"],
+                )
+        except httpx.RequestError as exc:
+            raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
+
+        etapas = {
+            "Generar lotes": [],
+            "Publicar pedido": [],
+            "Seleccionar oferta": [],
+            "Evaluar proyecto": [],
+        }
+        convocatorias = len(convocatorias_sin_tilde) + len(convocatorias_con_tilde)
+        for tarea in tareas_archivadas:
+            nombre = str(tarea.get("name", ""))
+            if nombre in etapas:
+                inicio = self._fecha_tarea(tarea, "ready")
+                fin = self._fecha_tarea(tarea, "completed")
+                if inicio is not None and fin is not None and fin >= inicio:
+                    etapas[nombre].append((fin - inicio).total_seconds() / 3600)
+        return {
+            "tiempos_por_etapa": [
+                {
+                    "etapa": etapa,
+                    "promedio_horas": sum(duraciones) / len(duraciones) if duraciones else 0.0,
+                    "cantidad": len(duraciones),
+                }
+                for etapa, duraciones in etapas.items()
+            ],
+            "casos": {
+                "abiertos": len(casos_abiertos),
+                "cerrados": len(casos_cerrados),
+            },
+            "convocatorias_camino_alternativo": convocatorias,
+        }
+
+    async def _obtener_coleccion(
+        self,
+        client: httpx.AsyncClient,
+        recurso: str,
+        filtros: list[str],
+    ) -> list[dict[str, Any]]:
+        try:
+            response = await client.get(
+                recurso,
+                params={"p": 0, "c": 2000, "f": filtros},
+            )
+        except httpx.RequestError as exc:
+            raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
+        if response.status_code != 200:
+            raise BonitaClientError(
+                f"Error consultando {recurso} (HTTP {response.status_code})"
+            )
+        try:
+            datos = response.json()
+        except ValueError as exc:
+            raise BonitaClientError(f"Respuesta inválida consultando {recurso}") from exc
+        if not isinstance(datos, list):
+            raise BonitaClientError(f"Respuesta inválida consultando {recurso}")
+        return datos
+
+    @staticmethod
+    def _fecha_tarea(tarea: dict[str, Any], tipo: str) -> datetime | None:
+        nombres = {
+            "ready": ("ready_date", "readyDate", "reached_state_date", "reachedStateDate"),
+            "completed": (
+                "completed_date", "completedDate", "end_date", "endDate",
+                "last_update_date", "lastUpdateDate",
+            ),
+        }[tipo]
+        for nombre in nombres:
+            valor = tarea.get(nombre)
+            if not valor:
+                continue
+            try:
+                return datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+        return None
+
     async def set_case_variables(
         self, case_id: int, variables: dict[str, Any]
     ) -> list[str]:
@@ -278,6 +386,28 @@ class BonitaClient:
                        and str(tarea.get("caseId")) == str(case_id)
                        and tarea.get("name") == nombre and tarea.get("state") == "completed"
                        for tarea in response.json())
+
+    async def tarea_completada_por_nombre(self, case_id: int, nombre: str) -> bool:
+        """Comprueba si el caso ya completó una tarea humana por nombre."""
+        async with await self._client() as client:
+            await self.login(client)
+            response = await client.get(
+                "/API/bpm/archivedHumanTask",
+                params={"p": 0, "c": 50, "f": [f"caseId={case_id}", f"name={nombre}"]},
+            )
+            if response.status_code != 200:
+                raise BonitaClientError(
+                    f"Error consultando la tarea archivada '{nombre}' (HTTP {response.status_code})"
+                )
+            tareas = response.json()
+            if not isinstance(tareas, list):
+                raise BonitaClientError("Respuesta inválida consultando la tarea archivada")
+            return any(
+                str(tarea.get("caseId")) == str(case_id)
+                and tarea.get("name") == nombre
+                and tarea.get("state") == "completed"
+                for tarea in tareas
+            )
 
     async def obtener_variable_caso(self, case_id: int, nombre: str) -> str | None:
         """Lee el valor textual, incluyendo casos ya archivados por el motor."""
