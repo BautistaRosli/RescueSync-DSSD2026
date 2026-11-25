@@ -36,6 +36,8 @@ class CursoAccionService:
                 raise HTTPException(409, "La emergencia no está esperando la decisión de evaluación")
             if accion != "CONTINUAR_PARCIAL":
                 self.validar_retroceso(db, emergencia_id)
+                from .evaluacion_cloud_service import EvaluacionCloudService
+                EvaluacionCloudService.invalidar(db, emergencia_id)
             emergencia.estado = estado
             emergencia.publicada = publicada
             # fecha_publicacion conserva la publicación histórica al reformular.

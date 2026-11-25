@@ -34,10 +34,35 @@ from ...services.ofertas_service import OfertaService
 from ...services.solicitud_evaluacion_service import SolicitudEvaluacionService
 from ...services.seleccion_ofertas_service import SeleccionOfertasService
 from ...dto.solicitud_evaluacion_dto import SolicitudEvaluacion
+from ...schemas.evaluacion_cloud_schema import RecepcionEvaluacionCloud, SolicitudEvaluacionPreparada
+from ...services.evaluacion_cloud_service import EvaluacionCloudService
 
 router = APIRouter(tags=["Ofertas"])
 
 servicio_ofertas = OfertaService()
+
+
+@router.post("/emergencias/{emergencia_id}/solicitud-evaluacion", response_model=SolicitudEvaluacionPreparada)
+def preparar_solicitud_evaluacion(
+    emergencia_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
+):
+    """Prepara una ronda correlacionada; los reintentos conservan el mismo token."""
+    verificar_emergencia(db, usuario, emergencia_id)
+    return SolicitudEvaluacionService().preparar(db, emergencia_id)
+
+
+@router.post("/emergencias/{emergencia_id}/evaluacion-cloud", status_code=204)
+def recibir_evaluacion_cloud(
+    emergencia_id: int,
+    datos: RecepcionEvaluacionCloud,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
+):
+    """Conserva íntegra la respuesta Cloud del caso y ronda preparados."""
+    verificar_emergencia(db, usuario, emergencia_id)
+    EvaluacionCloudService().recibir(db, emergencia_id, datos)
 
 
 @router.post("/emergencias/{emergencia_id}/confirmar-seleccion", response_model=SeleccionOfertasRespuesta)
