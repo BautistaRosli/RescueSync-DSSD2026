@@ -48,7 +48,7 @@ def test_finalizar_oferta_solo_continua_con_confirmacion_de_bonita(entorno, monk
     assert respuesta.json() == {
         "oferta_id": 1, "estado": "finalizada", "ya_finalizada": True,
         "tarea_bonita": "Supervisar proyecto",
-        "mensaje": "Bonita ejecutó 'Supervisar proyecto' y continuará con 'Liberación de recursos'",
+        "mensaje": "Se registró el cierre de la oferta.",
     }
     ejecutar.assert_awaited_once_with("100")
 

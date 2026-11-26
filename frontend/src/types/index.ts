@@ -6,7 +6,7 @@ export type {
   EmergenciaCreateRequest, EmergenciaCreada, EmergenciaRead, EmergenciaRespuesta,
   EvolucionAbiertasResueltas, RankingOng, ParticipacionConsorcios,
   RecursoAdjudicadoPorMes, LoteNecesidad, LoteNecesidadCreateRequest,
-  LoteNecesidadUpdateRequest, NivelGravedad,
+  LoteNecesidadUpdateRequest, NivelGravedad, SincronizacionCierresRespuesta,
 } from './emergencia'
 export type { RecursoInventario, RecursoInventarioRequest } from './inventario'
 export type { LoteRead } from './lote'

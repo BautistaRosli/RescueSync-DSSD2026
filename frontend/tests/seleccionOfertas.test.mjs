@@ -119,8 +119,8 @@ function diferida() {
   return { promesa, resolver, rechazar }
 }
 
-async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true, evaluaciones = [3], puedeSeleccionar = true, estadoSeleccion = 'seleccionada_para_confirmar', tareas = {}, sinOfertas = false, consultaEvaluacion } = {}) {
-  const estados = [], referencias = [], efectos = [], dependencias = []
+async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true, evaluaciones = [3], puedeSeleccionar = true, estadoSeleccion = 'seleccionada_para_confirmar', tareas = {}, sinOfertas = false, consultaEvaluacion, sincronizar, itemsFinalizados = false } = {}) {
+  const estados = [], referencias = [], efectos = [], dependencias = [], limpiezas = []
   let indiceEstado = 0, indiceRef = 0, indiceEfecto = 0
   const oferta = (id, emergencia_id, adjudicada_en = null) => ({
     id, emergencia_id, adjudicada_en, organizacion_id: id, organizaciones: [],
@@ -129,7 +129,7 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
     puede_seleccionar: adjudicada_en === null && puedeSeleccionar,
     items: evaluaciones.map((cantidad_verificada, indice) => ({
       id: id * 10 + indice, lote_necesidad_id: id * 10 + indice,
-      cantidad_ofrecida: 8, cantidad_verificada, descripcion: null, finalizado_en: null,
+      cantidad_ofrecida: 8, cantidad_verificada, descripcion: null, finalizado_en: itemsFinalizados ? '2026-11-21T10:00:00Z' : null,
     })),
   })
   const emergencias = [1, 2].map((id) => ({
@@ -142,7 +142,7 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
     2: [oferta(21, 2)],
   }
   if (sinOfertas) ofertas[1] = []
-  const llamadas = { adjudicar: [], confirmar: [], listar: [], consultarEvaluacion: [], consultarSeleccion: [], evaluar: [], bandeja: [] }
+  const llamadas = { adjudicar: [], confirmar: [], finalizar: [], sincronizar: [], listar: [], consultarEvaluacion: [], consultarSeleccion: [], evaluar: [], bandeja: [], orden: [] }
   const control = {
     ofertas, emergencias, tareas, seleccionLista: {},
     consultarEvaluacion: consultaEvaluacion ?? (async (id, incluirSeleccion) => ({ tarea_id: tareas[id] ?? null, ...(incluirSeleccion ? { seleccion_oferta_lista: control.seleccionLista[id] === true } : {}) })),
@@ -152,6 +152,14 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
     async evaluarProyecto(id, datos) { llamadas.evaluar.push({ id, datos }); return control.evaluar(id, datos) },
     adjudicar: async (id) => ({ oferta_id: id, mensaje: 'Seleccionada para confirmar' }),
     confirmar: async (id) => ({ emergencia_id: id, cantidad_pares: 2, ya_confirmada: false }),
+    finalizar: async (id) => ({ oferta_id: id, estado: 'finalizada', mensaje: 'Bonita continúa para liberar recursos Cloud.' }),
+    sincronizar: sincronizar ?? (async () => ({ emergencias_resueltas: [] })),
+    async sincronizarCierresEmergencias() {
+      llamadas.sincronizar.push(true)
+      llamadas.orden.push('sincronizar')
+      return control.sincronizar(emergencias)
+    },
+    async finalizarOferta(id) { llamadas.finalizar.push(id); return control.finalizar(id) },
     useState(inicial) {
       const indice = indiceEstado++
       if (!(indice in estados)) estados[indice] = typeof inicial === 'function' ? inicial() : inicial
@@ -172,11 +180,12 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
       const indice = indiceEfecto++
       if (!dependencias[indice] || deps.some((valor, i) => valor !== dependencias[indice][i])) {
         dependencias[indice] = deps
-        efectos.push(efecto)
+        efectos.push(() => { limpiezas[indice]?.(); limpiezas[indice] = efecto() })
       }
     },
     async listarBandejaEmergencias(params) {
       llamadas.bandeja.push(params)
+      llamadas.orden.push(`bandeja:${params.estado ?? params.etapa_bonita}`)
       const items = emergencias.filter((emergencia) => params.etapa_bonita ? emergencia.etapa === params.etapa_bonita : emergencia.estado === params.estado)
       return { items, paginas: 1, pagina: 1, total: items.length }
     },
@@ -215,6 +224,7 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
     'actualizarLote', 'adjudicarOferta', 'confirmarSeleccionOfertas', 'crearLote',
     'eliminarLote', 'listarBandejaEmergencias', 'listarOfertasDeEmergencia', 'publicarEmergencia',
     'listarRecursosCloud', 'crearRecursoCloud', 'obtenerEmergencia', 'obtenerEvaluacionProyecto', 'evaluarProyecto',
+    'finalizarOferta', 'sincronizarCierresEmergencias',
   ]
   const moduloServicios = urlModulo(`export {ApiError} from ${JSON.stringify(moduloHttp)};\n` +
     nombresServicios.map((nombre) =>
@@ -253,11 +263,193 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
   const ventanaOriginal = globalThis.window
   globalThis.window = { confirm: () => true }
   return { control, llamadas, botones, renderizar, texto, asentar, limpiar: () => {
+    for (const limpiar of limpiezas) limpiar?.()
     delete globalThis[clave]
     if (ventanaOriginal === undefined) delete globalThis.window
     else globalThis.window = ventanaOriginal
   } }
 }
+
+test('Sincronizar cierres usa POST autenticado sin cuerpo y conserva el error de servicio', async () => {
+  const fetchOriginal = globalThis.fetch
+  const almacenamiento = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => 'token-prueba' } })
+  let fallar = false
+  globalThis.fetch = async (url, opciones) => {
+    assert.equal(url, 'http://localhost:8000/api/v1/emergencias/sincronizar-cierres')
+    assert.equal(opciones.method, 'POST')
+    assert.equal(opciones.body, undefined)
+    assert.equal(opciones.headers.Authorization, 'Bearer token-prueba')
+    return new Response(JSON.stringify(fallar ? { detail: 'Bonita no disponible.' } : { emergencias_resueltas: [1] }), { status: fallar ? 503 : 200 })
+  }
+  try {
+    assert.deepEqual(await serviciosEmergencia.sincronizarCierresEmergencias(), { emergencias_resueltas: [1] })
+    fallar = true
+    await assert.rejects(serviciosEmergencia.sincronizarCierresEmergencias(), { status: 503 })
+  } finally {
+    globalThis.fetch = fetchOriginal
+    if (almacenamiento) Object.defineProperty(globalThis, 'localStorage', almacenamiento)
+    else delete globalThis.localStorage
+  }
+})
+
+const opcionesCierre = { estado: 'en_proceso', estadoSeleccion: 'adjudicada', itemsFinalizados: true }
+const pestaniaActiva = (pagina, etiqueta) => pagina.botones(etiqueta)[0].props['aria-current'] === 'page'
+const mensajesCierre = (pagina) => pagina.renderizar().filter((nodo) => nodo.props?.role === 'status' || nodo.props?.role === 'alert').map(pagina.texto).join(' ')
+
+test('Un cierre confirmado muestra un mensaje apropiado y abre Resueltas solo para su emergencia', async () => {
+  const pagina = await montarPagina(opcionesCierre)
+  try {
+    assert.equal(pagina.botones('Cerrar oferta y liberar recursos').length, 0)
+    const cierre = diferida()
+    pagina.control.finalizar = () => cierre.promesa
+    const boton = pagina.botones('Cerrar oferta')[0]
+    boton.props.onClick()
+    boton.props.onClick()
+    assert.deepEqual(pagina.llamadas.finalizar, [11])
+    pagina.control.sincronizar = async (emergencias) => {
+      emergencias[0].estado = 'resuelta'
+      return { emergencias_resueltas: [1] }
+    }
+    cierre.resolver({ oferta_id: 11, estado: 'finalizada', mensaje: 'Bonita continúa para liberar recursos Cloud.' })
+    await pagina.asentar()
+    await pagina.asentar()
+    assert.ok(pestaniaActiva(pagina, 'Resueltas'))
+    assert.match(mensajesCierre(pagina), /La emergencia se cerró y está en Resueltas\./)
+    assert.doesNotMatch(mensajesCierre(pagina), /Bonita|Cloud|liberar/)
+    assert.equal(pagina.control.emergencias[0].estado, 'resuelta')
+    assert.equal(pagina.control.emergencias[1].estado, 'en_proceso')
+  } finally { pagina.limpiar() }
+})
+
+test('Al cargar En proceso o Resueltas se sincronizan los cierres antes de listar y se conserva la pestaña elegida', async () => {
+  for (const estado of ['en_proceso', 'resuelta']) {
+    const pagina = await montarPagina({ estado, sincronizar: async (emergencias) => {
+      emergencias[0].estado = 'resuelta'
+      emergencias[1].estado = 'en_proceso'
+      return { emergencias_resueltas: [1] }
+    } })
+    try {
+      assert.ok(pestaniaActiva(pagina, estado === 'resuelta' ? 'Resueltas' : 'En proceso'))
+      const posicion = pagina.llamadas.orden.indexOf(`bandeja:${estado}`)
+      assert.equal(pagina.llamadas.orden[posicion - 1], 'sincronizar')
+      const filas = pagina.renderizar().filter((nodo) => nodo.type === 'button' && nodo.props['aria-expanded'] !== undefined)
+      assert.equal(filas.length, 1)
+      assert.match(pagina.texto(filas[0]), estado === 'resuelta' ? /#1/ : /#2/)
+    } finally { pagina.limpiar() }
+  }
+})
+
+test('Un cierre pendiente conserva En proceso y no muestra detalles del motor', async () => {
+  const pagina = await montarPagina(opcionesCierre)
+  try {
+    pagina.botones('Cerrar oferta')[0].props.onClick()
+    await pagina.asentar()
+    await pagina.asentar()
+    assert.ok(pestaniaActiva(pagina, 'En proceso'))
+    assert.equal(pagina.control.emergencias[0].estado, 'en_proceso')
+    assert.match(mensajesCierre(pagina), /Se registró el cierre de la oferta\./)
+    assert.doesNotMatch(mensajesCierre(pagina), /Bonita|Cloud|Resueltas/)
+  } finally { pagina.limpiar() }
+})
+
+test('Una sincronización idempotente confirma el estado persistido de la misma emergencia', async () => {
+  const pagina = await montarPagina(opcionesCierre)
+  try {
+    pagina.control.sincronizar = async (emergencias) => {
+      emergencias[0].estado = 'resuelta'
+      return { emergencias_resueltas: [] }
+    }
+    pagina.botones('Cerrar oferta')[0].props.onClick()
+    await pagina.asentar()
+    await pagina.asentar()
+    assert.ok(pestaniaActiva(pagina, 'Resueltas'))
+  } finally { pagina.limpiar() }
+})
+
+test('Un 503 al sincronizar permite listar y ofrece reintentar sin anunciar resolución', async () => {
+  const pagina = await montarPagina({ ...opcionesCierre, sincronizar: async () => { throw new ApiError(503, 'Bonita no disponible.') } })
+  try {
+    assert.ok(pestaniaActiva(pagina, 'En proceso'))
+    assert.equal(pagina.botones('Cerrar oferta').length, 1)
+    assert.match(mensajesCierre(pagina), /Recargá la bandeja/)
+    pagina.botones('Cerrar oferta')[0].props.onClick()
+    await pagina.asentar()
+    await pagina.asentar()
+    assert.ok(pestaniaActiva(pagina, 'En proceso'))
+    assert.equal(pagina.control.emergencias[0].estado, 'en_proceso')
+    assert.doesNotMatch(mensajesCierre(pagina), /Bonita|Cloud|está en Resueltas/)
+  } finally { pagina.limpiar() }
+})
+
+test('El cierre de otra emergencia o una consulta con otro ID no anuncia la resolución del caso actual', async () => {
+  const pagina = await montarPagina(opcionesCierre)
+  try {
+    pagina.control.sincronizar = async () => ({ emergencias_resueltas: [2] })
+    pagina.control.obtenerEmergencia = async () => ({ id: 2, estado: 'resuelta' })
+    pagina.botones('Cerrar oferta')[0].props.onClick()
+    await pagina.asentar()
+    await pagina.asentar()
+    assert.ok(pestaniaActiva(pagina, 'En proceso'))
+    assert.doesNotMatch(mensajesCierre(pagina), /está en Resueltas/)
+  } finally { pagina.limpiar() }
+})
+
+test('Una sincronización tardía del cierre no navega ni avisa en otra pestaña', async () => {
+  const pagina = await montarPagina(opcionesCierre)
+  try {
+    const sincronizacion = diferida()
+    pagina.control.sincronizar = () => sincronizacion.promesa
+    pagina.botones('Cerrar oferta')[0].props.onClick()
+    await pagina.asentar()
+    pagina.botones('Esperando lotes')[0].props.onClick()
+    await pagina.asentar()
+    sincronizacion.resolver({ emergencias_resueltas: [1] })
+    await pagina.asentar()
+    await pagina.asentar()
+    assert.ok(pestaniaActiva(pagina, 'Esperando lotes'))
+    assert.doesNotMatch(mensajesCierre(pagina), /está en Resueltas/)
+  } finally { pagina.limpiar() }
+})
+
+test('Un rechazo del cierre conserva el caso activo y permite reintentar con un error apropiado', async () => {
+  const pagina = await montarPagina(opcionesCierre)
+  try {
+    pagina.control.finalizar = async () => { throw new ApiError(503, 'Bonita: tarea no disponible; Cloud pendiente.') }
+    pagina.botones('Cerrar oferta')[0].props.onClick()
+    await pagina.asentar()
+    await pagina.asentar()
+    assert.ok(pestaniaActiva(pagina, 'En proceso'))
+    assert.equal(pagina.botones('Cerrar oferta').length, 1)
+    assert.match(mensajesCierre(pagina), /No se pudo cerrar la oferta\. Intentá de nuevo\./)
+    assert.doesNotMatch(mensajesCierre(pagina), /Bonita|Cloud|Se registró/)
+  } finally { pagina.limpiar() }
+})
+
+test('Una respuesta tardía del cierre no cambia la pestaña después de salir y volver', async () => {
+  const pagina = await montarPagina(opcionesCierre)
+  try {
+    const cierre = diferida()
+    pagina.control.finalizar = () => cierre.promesa
+    const boton = pagina.botones('Cerrar oferta')[0]
+    boton.props.onClick()
+    pagina.botones('Esperando lotes')[0].props.onClick()
+    await pagina.asentar()
+    boton.props.onClick()
+    assert.deepEqual(pagina.llamadas.finalizar, [11])
+    pagina.botones('En proceso')[0].props.onClick()
+    await pagina.asentar()
+    pagina.control.sincronizar = async (emergencias) => {
+      emergencias[0].estado = 'resuelta'
+      return { emergencias_resueltas: [1] }
+    }
+    cierre.resolver({ oferta_id: 11, estado: 'finalizada', mensaje: 'Cierre registrado.' })
+    await pagina.asentar()
+    await pagina.asentar()
+    assert.ok(pestaniaActiva(pagina, 'En proceso'))
+    assert.doesNotMatch(mensajesCierre(pagina), /está en Resueltas/)
+  } finally { pagina.limpiar() }
+})
 
 test('La selección bloquea duplicados, respeta adjudicaciones persistidas y permite reintentar por emergencia', async () => {
   const pagina = await montarPagina()

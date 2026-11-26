@@ -443,7 +443,7 @@ class OfertaService:
                 estado="finalizada",
                 ya_finalizada=True,
                 tarea_bonita=NOMBRE_TAREA_SUPERVISAR_PROYECTO,
-                mensaje="Bonita ejecutó 'Supervisar proyecto' y continuará con 'Liberación de recursos'",
+                mensaje="Se registró el cierre de la oferta.",
             )
         except (BonitaClientError, httpx.RequestError):
             raise HTTPException(status_code=503, detail="No se pudo completar la oferta en Bonita")

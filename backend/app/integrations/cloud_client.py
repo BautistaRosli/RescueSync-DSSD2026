@@ -110,3 +110,12 @@ def crear_item(nombre: str, descripcion: str | None, token: str) -> httpx.Respon
         headers={"Authorization": f"Bearer {token}"},
         timeout=TIEMPO_LIMITE,
     )
+
+
+def bloquear_recursos(solicitud: dict, token: str) -> httpx.Response:
+    """Envía una solicitud para bloquear recursos en Cloud."""
+    url = os.getenv("CLOUD_API_URL", "http://127.0.0.1:8002").rstrip("/")
+    return httpx.post(
+        f"{url}/recursos/bloquear", json=solicitud,
+        headers={"Authorization": f"Bearer {token}"}, timeout=TIEMPO_LIMITE,
+    )

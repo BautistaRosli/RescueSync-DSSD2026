@@ -7,6 +7,7 @@ export {
   registrarEmergencia,
   listarEmergencias,
   listarBandejaEmergencias,
+  sincronizarCierresEmergencias,
   obtenerDashboardEmergencias,
   crearLote,
   actualizarLote,

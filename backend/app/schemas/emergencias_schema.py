@@ -65,6 +65,10 @@ class EvaluacionProyectoRespuesta(BaseModel):
     tarea_id: Optional[int]
 
 
+class SincronizacionCierresRespuesta(BaseModel):
+    emergencias_resueltas: list[int]
+
+
 class EvaluacionProyectoConSeleccionRespuesta(EvaluacionProyectoRespuesta):
     seleccion_oferta_lista: bool
 

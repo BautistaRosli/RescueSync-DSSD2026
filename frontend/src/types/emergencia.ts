@@ -154,6 +154,10 @@ export interface BandaEmergencias {
   paginas: number
 }
 
+export interface SincronizacionCierresRespuesta {
+  emergencias_resueltas: number[]
+}
+
 
 export type AccionEvaluacionProyecto = 'REABRIR' | 'REFORMULAR' | 'CONTINUAR_PARCIAL'
 

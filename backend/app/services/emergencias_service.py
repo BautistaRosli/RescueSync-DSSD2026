@@ -38,7 +38,7 @@ from ..schemas import (
     EmergenciaActualizar,
     EmergenciaCrear,
 )
-from ..schemas.emergencias_schema import EtapaBonita
+from ..schemas.emergencias_schema import EtapaBonita, SincronizacionCierresRespuesta
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,26 @@ class EmergenciaService:
     ) -> list[EmergenciaRespuesta]:
         emergencias = self._repository.listar(db, publicada=publicada)
         return [EmergenciaRespuesta.model_validate(e) for e in emergencias]
+
+    def _leer_candidatos_cierre(self, db: Session) -> list[tuple[int, str]]:
+        try:
+            return self._repository.listar_candidatos_cierre(db)
+        finally:
+            # No mantener una transacción municipal durante la consulta remota.
+            db.rollback()
+
+    async def sincronizar_cierres(self, db: Session) -> SincronizacionCierresRespuesta:
+        candidatos = await run_in_threadpool(self._leer_candidatos_cierre, db)
+        if not candidatos:
+            return SincronizacionCierresRespuesta(emergencias_resueltas=[])
+        try:
+            completados = await bonita_client.obtener_casos_completados({caso for _, caso in candidatos})
+        except (BonitaClientError, httpx.RequestError):
+            raise HTTPException(503, "No se pudo actualizar el estado de las emergencias. Intente nuevamente.") from None
+        resueltas = await run_in_threadpool(
+            self._repository.resolver_candidatos_cierre, db, candidatos, completados,
+        )
+        return SincronizacionCierresRespuesta(emergencias_resueltas=resueltas)
 
     def listar_emergencias_paginadas(
         self,

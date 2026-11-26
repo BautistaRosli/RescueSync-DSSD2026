@@ -12,6 +12,7 @@ import type {
   LoteNecesidad,
   LoteNecesidadCreateRequest,
   LoteNecesidadUpdateRequest,
+  SincronizacionCierresRespuesta,
 } from '../types'
 
 export async function registrarEmergencia(
@@ -22,6 +23,10 @@ export async function registrarEmergencia(
 
 export async function listarEmergencias(): Promise<EmergenciaRead[]> {
   return apiGet<EmergenciaRead[]>('/emergencias')
+}
+
+export async function sincronizarCierresEmergencias(): Promise<SincronizacionCierresRespuesta> {
+  return apiPost<SincronizacionCierresRespuesta>('/emergencias/sincronizar-cierres', undefined)
 }
 
 export async function obtenerDashboardEmergencias(): Promise<DashboardEmergencias> {

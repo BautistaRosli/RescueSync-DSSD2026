@@ -315,6 +315,40 @@ class BonitaClient:
             and str(tarea.get("caseId", "")).isdecimal() and int(tarea["caseId"]) > 0
         }
 
+    async def obtener_casos_completados(self, casos: set[str]) -> set[str]:
+        """Consulta archivos por caso original, incluyendo versiones anteriores."""
+        if not casos:
+            return set()
+        limite = asyncio.Semaphore(5)
+        async with await self._client() as client:
+            await self.login(client)
+
+            async def consultar(caso_id: str) -> tuple[str, list[dict]]:
+                async with limite:
+                    registros = await self._listar_recurso_paginado(
+                        client, "archivedCase", {"f": [f"sourceObjectId={caso_id}"]},
+                    )
+                return caso_id, registros
+
+            resultados = await asyncio.gather(
+                *(consultar(caso) for caso in sorted(casos)), return_exceptions=True,
+            )
+            for resultado in resultados:
+                if isinstance(resultado, BaseException):
+                    raise resultado
+        completados = set()
+        for caso_id, registros in resultados:
+            for registro in registros:
+                original = registro.get("sourceObjectId")
+                estado = registro.get("state")
+                if (type(original) not in (str, int) or not str(original).isdecimal()
+                        or int(original) <= 0 or not isinstance(estado, str) or not estado):
+                    raise BonitaClientError("Bonita devolvió un caso archivado inválido")
+                # El id del archivo no identifica al caso municipal original.
+                if str(original) == caso_id and estado == "completed":
+                    completados.add(caso_id)
+        return completados
+
     async def obtener_casos_con_ofertas_abiertas(
         self, casos: set[str], ahora: datetime | None = None,
     ) -> set[str]:

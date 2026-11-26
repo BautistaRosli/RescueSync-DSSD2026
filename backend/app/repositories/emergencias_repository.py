@@ -3,7 +3,7 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from ..models import ConfirmacionSeleccion, Emergencia
+from ..models import ConfirmacionSeleccion, Emergencia, EstadoEmergencia
 
 
 class EmergenciaRepository:
@@ -97,6 +97,41 @@ class EmergenciaRepository:
             ).distinct()
             if caso_id and caso_id.isdecimal() and int(caso_id) > 0
         }
+
+    def listar_candidatos_cierre(self, db: Session) -> list[tuple[int, str]]:
+        """Captura los identificadores municipales y su caso actual."""
+        return [
+            (emergencia_id, caso_id)
+            for emergencia_id, caso_id in db.query(Emergencia.id, Emergencia.bonita_case_id).filter(
+                Emergencia.publicada.is_(True),
+                Emergencia.estado == EstadoEmergencia.EN_PROCESO,
+                Emergencia.bonita_case_id.isnot(None),
+            ).order_by(Emergencia.id)
+            if caso_id and caso_id.isdecimal() and int(caso_id) > 0
+        ]
+
+    def resolver_candidatos_cierre(
+        self, db: Session, candidatos: list[tuple[int, str]], casos_completados: set[str],
+    ) -> list[int]:
+        """Revalida en cada UPDATE para preservar cambios concurrentes."""
+        resueltas = []
+        try:
+            for emergencia_id, caso_id in candidatos:
+                if caso_id not in casos_completados:
+                    continue
+                cantidad = db.query(Emergencia).filter(
+                    Emergencia.id == emergencia_id,
+                    Emergencia.bonita_case_id == caso_id,
+                    Emergencia.publicada.is_(True),
+                    Emergencia.estado == EstadoEmergencia.EN_PROCESO,
+                ).update({Emergencia.estado: EstadoEmergencia.RESUELTA}, synchronize_session=False)
+                if cantidad:
+                    resueltas.append(emergencia_id)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        return resueltas
 
     def obtener_por_id(
         self, db: Session, emergencia_id: int, bloquear: bool = False

@@ -30,10 +30,13 @@ from ...schemas.emergencias_schema import (
     EvaluacionProyectoRespuesta,
     EvaluacionProyectoConSeleccionRespuesta,
     EtapaBonita,
+    SincronizacionCierresRespuesta,
 )
 from ...services.emergencias_service import EmergenciaService
 from ...services.curso_accion_service import CursoAccionService
 from ...services.evaluacion_proyecto_service import EvaluacionProyectoService
+from ...schemas.registro_recursos_schema import RegistroRecursosEntrada
+from ...services.registro_recursos_service import RegistroRecursosService
 
 router = APIRouter(prefix="/emergencias", tags=["Emergencias"])
 
@@ -97,6 +100,15 @@ def obtener_dashboard_emergencias(
     usuario: Usuario = Depends(requiere_roles(AUDITOR)),
 ):
     return servicio_emergencias.obtener_dashboard(db)
+
+
+@router.post("/sincronizar-cierres", response_model=SincronizacionCierresRespuesta)
+async def sincronizar_cierres(
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
+):
+    """Actualiza las emergencias cuyo caso asociado terminó correctamente."""
+    return await servicio_emergencias.sincronizar_cierres(db)
 
 
 @router.get("/{emergencia_id}", response_model=EmergenciaRespuesta)
@@ -206,3 +218,15 @@ async def iniciar_proceso_bonita(
         db, emergencia_id
     )
     return {"ok": True, "case_id": case_id}
+
+
+@router.post("/{emergencia_id}/registrar-recursos", status_code=204, response_class=Response)
+async def registrar_recursos(
+    emergencia_id: int,
+    data: RegistroRecursosEntrada,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
+):
+    verificar_emergencia(db, usuario, emergencia_id)
+    await RegistroRecursosService().registrar(db, emergencia_id, data)
+    return Response(status_code=204)

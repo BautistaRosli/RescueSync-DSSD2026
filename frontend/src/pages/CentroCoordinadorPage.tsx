@@ -19,6 +19,7 @@ import {
   eliminarLote,
   finalizarOferta,
   listarBandejaEmergencias,
+  sincronizarCierresEmergencias,
   listarOfertasDeEmergencia,
   listarRecursosCloud,
   crearRecursoCloud,
@@ -792,7 +793,7 @@ function PanelAdjudicacion({
                         disabled={bloqueada || cargando || errorCarga !== undefined}
                         className={`${claseBotonSecundario} self-start text-sm`}
                       >
-                        {finalizando === oferta.id ? 'Cerrando oferta...' : 'Cerrar oferta y liberar recursos'}
+                        {finalizando === oferta.id ? 'Cerrando oferta...' : 'Cerrar oferta'}
                       </button>
                     )}
                     {exitoFinalizar[oferta.id] !== undefined && (
@@ -835,10 +836,14 @@ function PanelAdjudicacion({
 export function CentroCoordinadorPage() {
   const [pestania, setPestania] = useState<PestaniaBandeja>('esperando_lotes')
   const pestaniaActual = useRef<PestaniaBandeja>('esperando_lotes')
+  const versionPestania = useRef(0)
+  const montada = useRef(true)
   const [pagina, setPagina] = useState(1)
   const [bandeja, setBandeja] = useState<BandaEmergencias | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [avisoSincronizacion, setAvisoSincronizacion] = useState<string | null>(null)
+  const [exitoCierre, setExitoCierre] = useState<string | null>(null)
   const [recargo, setRecargo] = useState(0)
   const [desplegadas, setDesplegadas] = useState<Set<number>>(() => new Set())
   const [borradores, setBorradores] = useState<Record<number, BorradorLote>>({})
@@ -895,13 +900,31 @@ export function CentroCoordinadorPage() {
   }, [])
 
   useEffect(() => {
+    montada.current = true
+    return () => { montada.current = false }
+  }, [])
+
+  useEffect(() => {
     let vigente = true
+    const version = versionPestania.current
+    const sigueVigente = () => vigente && pestaniaActual.current === pestania && versionPestania.current === version
 
     async function cargar() {
       const revision = revisionLotes.current
       setCargando(true)
       setError(null)
+      setAvisoSincronizacion(null)
       try {
+        if (pestania === 'en_proceso' || pestania === 'resuelta') {
+          try {
+            await sincronizarCierresEmergencias()
+          } catch {
+            if (sigueVigente()) {
+              setAvisoSincronizacion('No se pudieron actualizar los cierres. Recargá la bandeja para volver a intentarlo.')
+            }
+          }
+          if (!sigueVigente()) return
+        }
         const datos = await listarBandejaEmergencias({
           publicada: pestania !== 'esperando_lotes',
           ...(pestania === 'esperando_ofertas' || pestania === 'esperando_evaluacion' || pestania === 'esperando_adjudicacion'
@@ -910,7 +933,7 @@ export function CentroCoordinadorPage() {
           pagina,
           por_pagina: POR_PAGINA,
         })
-        if (!vigente) {
+        if (!sigueVigente()) {
           return
         }
         if (revision !== revisionLotes.current) {
@@ -935,11 +958,11 @@ export function CentroCoordinadorPage() {
           setPagina(datos.paginas)
         }
       } catch (fallo) {
-        if (vigente) {
+        if (sigueVigente()) {
           setError(describirError(fallo))
         }
       } finally {
-        if (vigente) {
+        if (sigueVigente()) {
           setCargando(false)
         }
       }
@@ -1035,7 +1058,10 @@ export function CentroCoordinadorPage() {
   }
 
   function cambiarPestania(valor: PestaniaBandeja) {
+    if (pestaniaActual.current !== valor) versionPestania.current += 1
     pestaniaActual.current = valor
+    setAvisoSincronizacion(null)
+    setExitoCierre(null)
     setPagina(1)
     setPestania(valor)
     if (valor === 'esperando_ofertas' || valor === 'esperando_adjudicacion' || valor === 'en_proceso') {
@@ -1159,13 +1185,15 @@ export function CentroCoordinadorPage() {
   async function manejarFinalizarOferta(emergenciaId: number, ofertaId: number): Promise<void> {
     const oferta = ofertasVigentes.current[emergenciaId]?.find((registro) => registro.id === ofertaId)
     if (
-      oferta === undefined ||
+      pestaniaActual.current !== 'en_proceso' || oferta === undefined ||
       operacionesOfertas.current.has(emergenciaId) ||
       (oferta.estado_seleccion !== 'adjudicada' && oferta.adjudicada_en === null) ||
       oferta.items.length === 0 ||
       !oferta.items.every((item) => item.finalizado_en !== null)
     ) return
 
+    const version = versionPestania.current
+    const sigueVigente = () => montada.current && pestaniaActual.current === 'en_proceso' && versionPestania.current === version
     operacionesOfertas.current.add(emergenciaId)
     setFinalizando((actuales) => ({ ...actuales, [emergenciaId]: ofertaId }))
     setErrorFinalizar((actuales) => sinClave(actuales, ofertaId))
@@ -1179,17 +1207,38 @@ export function CentroCoordinadorPage() {
       ) {
         throw new ApiError(200, 'La respuesta de cierre de oferta no pudo verificarse.')
       }
+      if (!sigueVigente()) return
       setExitoFinalizar((actuales) => ({
         ...actuales,
-        [ofertaId]: `${respuesta.mensaje} Bonita continúa para liberar los recursos Cloud.`,
+        [ofertaId]: 'Se registró el cierre de la oferta.',
       }))
       await cargarOfertasDeEmergencia(emergenciaId)
-      setRecargo((actual) => actual + 1)
-    } catch (fallo) {
-      setErrorFinalizar((actuales) => ({ ...actuales, [ofertaId]: describirError(fallo) }))
+      if (!sigueVigente()) return
+      try {
+        const sincronizacion = await sincronizarCierresEmergencias()
+        if (!sigueVigente()) return
+        let resuelta = sincronizacion.emergencias_resueltas.includes(emergenciaId)
+        if (!resuelta) {
+          const emergencia = await obtenerEmergencia(emergenciaId)
+          resuelta = emergencia.id === emergenciaId && emergencia.estado === 'resuelta'
+        }
+        if (!sigueVigente()) return
+        if (resuelta) {
+          cambiarPestania('resuelta')
+          setExitoCierre('La emergencia se cerró y está en Resueltas.')
+        }
+      } catch {
+        if (sigueVigente()) {
+          setAvisoSincronizacion('Se registró el cierre de la oferta, pero no se pudo actualizar su estado. Recargá la bandeja para volver a intentarlo.')
+        }
+      }
+    } catch {
+      if (sigueVigente()) {
+        setErrorFinalizar((actuales) => ({ ...actuales, [ofertaId]: 'No se pudo cerrar la oferta. Intentá de nuevo.' }))
+      }
     } finally {
       operacionesOfertas.current.delete(emergenciaId)
-      setFinalizando((actuales) => sinClave(actuales, emergenciaId))
+      if (montada.current) setFinalizando((actuales) => sinClave(actuales, emergenciaId))
     }
   }
 
@@ -1542,6 +1591,9 @@ export function CentroCoordinadorPage() {
           </button>
         ))}
       </nav>
+
+      {exitoCierre !== null && <p role="status" className={claseExito}>{exitoCierre}</p>}
+      {avisoSincronizacion !== null && <p role="alert" className={claseError}>{avisoSincronizacion}</p>}
 
       <div className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
         <h2 className="text-xl font-bold text-cyan-400 mb-1">{tituloBandeja}</h2>
