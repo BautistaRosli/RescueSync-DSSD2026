@@ -23,11 +23,10 @@ export type { OrganizacionCreateRequest, OrganizacionRead, OrganizacionResumen }
 export type { Rol } from './rol'
 export type { RecursoCloud, RecursoCloudCreateRequest } from './recursosCloud'
 export type {
-  ActivasResueltas, FiltrosReportes, FormatoReporte, NecesidadActual,
-  PrioridadAbiertas, ReporteBonita, ReporteBonitaCasos, ReporteBonitaTiempoEtapa,
-  ReporteCoberturaLote, ReporteCoberturaLotes,
-  ReporteConsorcios, ReporteDemandaOferta, ReporteEmergenciaGravedad,
-  ReporteProyecto, ReporteRankingOng, ReporteSuministroMovilizado,
-  ReporteTiempoAdjudicacion, ReporteTiempoPublicacion, ReportesDashboard,
-  TiempoVida,
+  AlcanceIndicador, BonitaTablero, CantidadPorUnidad, EstadoCasoBonita, FilaEstadoGravedad,
+  FilaEvolucion, FilaRankingOng, FiltrosReportes, FormatoReporte, FuenteIndicador, Indicador,
+  IndicadorConsorcios, IndicadorConteo, IndicadorEstadoGravedad, IndicadorEvolucion,
+  IndicadorPromedioHoras, IndicadorPromedioValor, IndicadorResolucion, ProyectoTablero,
+  ProyectosTablero, RecursoPorLote, RecursosTablero, ResumenTablero, Tablero, TiempoEtapaBonita,
+  TotalRecursoMes, VerificacionCasoBonita,
 } from './reportes'

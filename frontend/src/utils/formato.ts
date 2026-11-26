@@ -1,5 +1,5 @@
 import { ApiError } from '../services'
-import type { EmergenciaRead, EstadoEmergencia, NivelGravedad } from '../types'
+import type { EmergenciaRead, EstadoEmergencia, FuenteIndicador, NivelGravedad } from '../types'
 
 export const NIVELES_GRAVEDAD: { valor: NivelGravedad; etiqueta: string }[] = [
   { valor: 'baja', etiqueta: 'Baja' },
@@ -44,6 +44,26 @@ export function describirError(error: unknown): string {
     return error.detail
   }
   return 'Ocurrió un error inesperado. Intentá de nuevo.'
+}
+
+/** Duración legible a partir de horas: segundos, minutos u horas según la magnitud. */
+export function formatearDuracion(horas: number): string {
+  const segundos = horas * 3600
+  if (segundos < 60) return `${Math.round(segundos)} s`
+  const minutos = segundos / 60
+  if (minutos < 60) return minutos < 10 ? `${minutos.toFixed(1)} min` : `${Math.round(minutos)} min`
+  return `${horas.toFixed(1)} h`
+}
+
+export function formatearNumero(valor: number): string {
+  return valor.toLocaleString('es-AR', { maximumFractionDigits: 2 })
+}
+
+const NOMBRES_FUENTE: Record<string, string> = { local: 'Local', cloud: 'Sistema Nacional', bonita: 'Bonita' }
+
+/** "local+cloud" → "Local + Sistema Nacional". */
+export function etiquetaDeFuente(fuente: FuenteIndicador): string {
+  return fuente.split('+').map((parte) => NOMBRES_FUENTE[parte] ?? parte).join(' + ')
 }
 
 function fechaDeCierre(emergencia: EmergenciaRead): Date | null {

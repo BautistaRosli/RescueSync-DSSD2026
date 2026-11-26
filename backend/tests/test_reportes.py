@@ -235,7 +235,7 @@ def test_reportes_rechazan_formato_invalido_y_conservan_permisos(entorno):
         ).status_code == 403
 
 
-def test_exportar_reporte_completo_devuelve_las_diez_metricas_sin_ids_nacionales(entorno):
+def test_exportar_reporte_completo_devuelve_el_tablero(entorno):
     cliente = entorno[0]
     respuesta = cliente.get(
         "/api/v1/reportes/exportar",
@@ -245,20 +245,9 @@ def test_exportar_reporte_completo_devuelve_las_diez_metricas_sin_ids_nacionales
 
     assert respuesta.status_code == 200, respuesta.text
     cuerpo = respuesta.json()
-    assert set(cuerpo) == {
-        "emergencias_por_estado_y_gravedad",
-        "recursos_adjudicados_por_mes",
-        "participacion_consorcios",
-        "ranking_ongs",
-        "demanda_vs_oferta_por_recurso",
-        "emergencias_activas_vs_resueltas",
-        "evolucion_abiertas_y_resueltas",
-        "necesidades_actuales",
-        "tiempo_medio_de_vida",
-        "promedio_prioridad_abiertas",
-    }
-    assert "tipo_recurso_id" not in respuesta.text
-    assert cuerpo["emergencias_activas_vs_resueltas"] == {"activas": 2, "resueltas": 0}
+    assert set(cuerpo) == {"generado_en", "filtros", "resumen", "recursos", "proyectos", "bonita"}
+    assert cuerpo["resumen"]["abiertas"]["valor"] == 2
+    assert cuerpo["resumen"]["resueltas"]["valor"] == 0
 
 
 def test_exportar_reporte_completo_csv_es_unico_archivo_con_secciones(entorno):
@@ -271,10 +260,9 @@ def test_exportar_reporte_completo_csv_es_unico_archivo_con_secciones(entorno):
     assert respuesta.status_code == 200, respuesta.text
     assert respuesta.headers["content-type"].startswith("text/csv")
     assert respuesta.headers["content-disposition"] == 'attachment; filename="reporte-completo.csv"'
-    assert respuesta.text.count("SECCIÓN:") == 10
-    assert "tipo_recurso_id" not in respuesta.text
-    assert "SECCIÓN: participacion_consorcios" in respuesta.text
-    assert "SECCIÓN: promedio_prioridad_abiertas" in respuesta.text
+    assert respuesta.text.count("SECCIÓN:") == 11
+    assert "SECCIÓN: proyectos.consorcios" in respuesta.text
+    assert "SECCIÓN: bonita.verificacion" in respuesta.text
 
 
 def test_exportar_reporte_completo_rechaza_roles_no_auditores(entorno):

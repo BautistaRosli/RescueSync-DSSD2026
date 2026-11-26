@@ -21,19 +21,7 @@ export {
   listarCatalogoRecursosCloud,
   crearRecursoCloud,
 } from './recursosCloud'
-export {
-  exportarReporteCompleto,
-  obtenerActivasResueltas,
-  obtenerDemandaOferta,
-  obtenerEmergenciasPorEstadoYGravedad,
-  obtenerEvolucionAbiertasResueltas,
-  obtenerNecesidadesActuales,
-  obtenerParticipacionConsorcios,
-  obtenerPrioridadAbiertas,
-  obtenerRankingOngs,
-  obtenerSuministrosMovilizados,
-  obtenerTiempoVida,
-} from './reportes'
+export { exportarReporteCompleto, obtenerTablero } from './reportes'
 export { crearOrganizacion, listarOrganizaciones } from './organizacion'
 export {
   actualizarOferta,
@@ -52,15 +40,3 @@ export {
   eliminarRecurso,
   listarInventario,
 } from './inventario'
-export {
-  obtenerReporteCoberturaLotes,
-  obtenerReporteBonita,
-  obtenerReporteConsorcios,
-  obtenerReporteDemandaOferta,
-  obtenerReporteEmergencias,
-  obtenerReporteProyectos,
-  obtenerReporteRankingOngs,
-  obtenerReporteSuministrosMovilizados,
-  obtenerReporteTiempoAdjudicacion,
-  obtenerReporteTiempoPublicacion,
-} from './reportes'

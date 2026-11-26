@@ -54,6 +54,20 @@ class CursoAccionEmergencia(Base):
     publicacion_completada: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
+class CierreEmergencia(Base):
+    """Momento en que la emergencia se marcó resuelta; se escribe una sola vez.
+
+    Tabla independiente para incorporarla con create_all sin alterar emergencias.
+    """
+
+    __tablename__ = "cierres_emergencia"
+
+    emergencia_id: Mapped[int] = mapped_column(
+        ForeignKey("emergencias.id", ondelete="CASCADE"), primary_key=True
+    )
+    resuelta_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class Emergencia(Base):
     """Emergencia registrada en la plataforma."""
 
