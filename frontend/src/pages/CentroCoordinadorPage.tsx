@@ -575,6 +575,17 @@ function ListaLotes({
   )
 }
 
+function estaAdjudicadaParaCierre(oferta: OfertaCoordinadorRead): boolean {
+  return oferta.estado_seleccion === 'adjudicada' ||
+    (oferta.estado_seleccion == null && oferta.adjudicada_en != null)
+}
+
+function puedeCerrarOferta(oferta: OfertaCoordinadorRead, ofertas: OfertaCoordinadorRead[]): boolean {
+  return estaAdjudicadaParaCierre(oferta) && ofertas
+    .filter((registro) => registro.emergencia_id === oferta.emergencia_id && estaAdjudicadaParaCierre(registro))
+    .every((registro) => registro.items.length > 0 && registro.items.every((item) => item.finalizado_en != null))
+}
+
 function PanelAdjudicacion({
   ofertas,
   lotes,
@@ -588,6 +599,7 @@ function PanelAdjudicacion({
   exitoFinalizar,
   puedeAdjudicar,
   puedeConfirmar,
+  puedeFinalizar,
   confirmando,
   evaluando,
   confirmada,
@@ -609,6 +621,7 @@ function PanelAdjudicacion({
   exitoFinalizar: Record<number, string>
   puedeAdjudicar: boolean
   puedeConfirmar: boolean
+  puedeFinalizar: boolean
   confirmando: boolean
   evaluando: boolean
   confirmada: boolean
@@ -624,6 +637,9 @@ function PanelAdjudicacion({
     (oferta) => oferta.adjudicada_en !== null || exitoAdjudicar[oferta.id] !== undefined,
   ) === true
   const bloqueada = adjudicando !== null || finalizando !== null || confirmando || confirmada || evaluando
+  const hayCierrePendiente = ofertas?.some(
+    (oferta) => estaAdjudicadaParaCierre(oferta) && !puedeCerrarOferta(oferta, ofertas),
+  ) === true
 
   const lotePorId = new Map(lotes.map((lote) => [lote.id, lote]))
 
@@ -647,6 +663,12 @@ function PanelAdjudicacion({
       {sinOfertas && (
         <p className="mt-3 text-sm text-slate-400">
           No hay ofertas para esta emergencia.
+        </p>
+      )}
+
+      {puedeFinalizar && !cargando && errorCarga === undefined && hayCierrePendiente && (
+        <p role="status" className="mt-3 text-sm text-slate-400">
+          Todavía hay ofertas adjudicadas con ítems pendientes de finalización.
         </p>
       )}
 
@@ -775,12 +797,7 @@ function PanelAdjudicacion({
               )}
 
               {(() => {
-                const estaAdjudicada = oferta.estado_seleccion === 'adjudicada' ||
-                  oferta.adjudicada_en !== null || exitoAdjudicar[oferta.id] !== undefined
-                const itemsFinalizados = oferta.items.length > 0 &&
-                  oferta.items.every((item) => item.finalizado_en !== null)
-
-                if (!estaAdjudicada || !itemsFinalizados) {
+                if (!puedeFinalizar || !puedeCerrarOferta(oferta, ofertas)) {
                   return null
                 }
 
@@ -1183,13 +1200,12 @@ export function CentroCoordinadorPage() {
   }
 
   async function manejarFinalizarOferta(emergenciaId: number, ofertaId: number): Promise<void> {
-    const oferta = ofertasVigentes.current[emergenciaId]?.find((registro) => registro.id === ofertaId)
+    const ofertas = ofertasVigentes.current[emergenciaId] ?? []
+    const oferta = ofertas.find((registro) => registro.id === ofertaId && registro.emergencia_id === emergenciaId)
     if (
       pestaniaActual.current !== 'en_proceso' || oferta === undefined ||
       operacionesOfertas.current.has(emergenciaId) ||
-      (oferta.estado_seleccion !== 'adjudicada' && oferta.adjudicada_en === null) ||
-      oferta.items.length === 0 ||
-      !oferta.items.every((item) => item.finalizado_en !== null)
+      !puedeCerrarOferta(oferta, ofertas)
     ) return
 
     const version = versionPestania.current
@@ -1225,7 +1241,7 @@ export function CentroCoordinadorPage() {
         if (!sigueVigente()) return
         if (resuelta) {
           cambiarPestania('resuelta')
-          setExitoCierre('La emergencia se cerró y está en Resueltas.')
+          setExitoCierre('La emergencia fue resuelta')
         }
       } catch {
         if (sigueVigente()) {
@@ -1770,6 +1786,7 @@ export function CentroCoordinadorPage() {
                         alConfirmar={() => void manejarConfirmarSeleccion(emergencia.id)}
                         puedeAdjudicar={pestania === 'esperando_adjudicacion'}
                         puedeConfirmar={pestania === 'esperando_adjudicacion'}
+                        puedeFinalizar={pestania === 'en_proceso'}
                       />
                     )}
 

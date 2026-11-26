@@ -119,7 +119,7 @@ function diferida() {
   return { promesa, resolver, rechazar }
 }
 
-async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true, evaluaciones = [3], puedeSeleccionar = true, estadoSeleccion = 'seleccionada_para_confirmar', tareas = {}, sinOfertas = false, consultaEvaluacion, sincronizar, itemsFinalizados = false } = {}) {
+async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true, evaluaciones = [3], puedeSeleccionar = true, estadoSeleccion = 'seleccionada_para_confirmar', tareas = {}, sinOfertas = false, consultaEvaluacion, sincronizar, itemsFinalizados = false, prepararOfertas } = {}) {
   const estados = [], referencias = [], efectos = [], dependencias = [], limpiezas = []
   let indiceEstado = 0, indiceRef = 0, indiceEfecto = 0
   const oferta = (id, emergencia_id, adjudicada_en = null) => ({
@@ -142,6 +142,7 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
     2: [oferta(21, 2)],
   }
   if (sinOfertas) ofertas[1] = []
+  prepararOfertas?.(ofertas)
   const llamadas = { adjudicar: [], confirmar: [], finalizar: [], sincronizar: [], listar: [], consultarEvaluacion: [], consultarSeleccion: [], evaluar: [], bandeja: [], orden: [] }
   const control = {
     ofertas, emergencias, tareas, seleccionLista: {},
@@ -297,6 +298,87 @@ const opcionesCierre = { estado: 'en_proceso', estadoSeleccion: 'adjudicada', it
 const pestaniaActiva = (pagina, etiqueta) => pagina.botones(etiqueta)[0].props['aria-current'] === 'page'
 const mensajesCierre = (pagina) => pagina.renderizar().filter((nodo) => nodo.props?.role === 'status' || nodo.props?.role === 'alert').map(pagina.texto).join(' ')
 
+test('El cierre espera los ítems de todas las ofertas adjudicadas de la emergencia', async () => {
+  for (const vacia of [false, true]) {
+    const pagina = await montarPagina({ ...opcionesCierre, prepararOfertas(ofertas) {
+      ofertas[1][1].estado_seleccion = 'adjudicada'
+      ofertas[1][1].adjudicada_en = '2026-11-21T10:00:00Z'
+      if (vacia) ofertas[1][1].items = []
+      else ofertas[1][1].items[0].finalizado_en = null
+    } })
+    try {
+      assert.equal(pagina.botones('Cerrar oferta').length, 0)
+      assert.match(mensajesCierre(pagina), /Todavía hay ofertas adjudicadas con ítems pendientes de finalización\./)
+      assert.deepEqual(pagina.llamadas.finalizar, [])
+      assert.ok(pestaniaActiva(pagina, 'En proceso'))
+    } finally { pagina.limpiar() }
+  }
+})
+
+test('Todas las adjudicadas completas permiten cerrar aunque otras ofertas o emergencias estén pendientes', async () => {
+  const pagina = await montarPagina({ ...opcionesCierre, prepararOfertas(ofertas) {
+    ofertas[1][1].estado_seleccion = 'adjudicada'
+    ofertas[1][1].adjudicada_en = '2026-11-21T10:00:00Z'
+    ofertas[1][2].items[0].finalizado_en = null
+    ofertas[2][0].estado_seleccion = 'adjudicada'
+    ofertas[2][0].adjudicada_en = '2026-11-21T10:00:00Z'
+    ofertas[2][0].items[0].finalizado_en = null
+  } })
+  try {
+    assert.equal(pagina.botones('Cerrar oferta').length, 2)
+    pagina.botones('Cerrar oferta')[0].props.onClick()
+    await pagina.asentar()
+    assert.deepEqual(pagina.llamadas.finalizar, [11])
+    assert.match(mensajesCierre(pagina), /Se registró el cierre de la oferta\./)
+  } finally { pagina.limpiar() }
+})
+
+test('Una selección provisional con fecha no habilita cierre ni bloquea las adjudicadas completas', async () => {
+  for (const finalizada of [false, true]) {
+    const pagina = await montarPagina({ ...opcionesCierre, prepararOfertas(ofertas) {
+      ofertas[1][1].estado_seleccion = 'seleccionada_para_confirmar'
+      ofertas[1][1].adjudicada_en = '2026-11-21T10:00:00Z'
+      if (!finalizada) ofertas[1][1].items[0].finalizado_en = null
+    } })
+    try {
+      assert.equal(pagina.botones('Cerrar oferta').length, 1)
+      assert.doesNotMatch(mensajesCierre(pagina), /ítems pendientes/)
+      pagina.botones('Cerrar oferta')[0].props.onClick()
+      await pagina.asentar()
+      assert.deepEqual(pagina.llamadas.finalizar, [11])
+    } finally { pagina.limpiar() }
+  }
+})
+
+test('Las ofertas antiguas sin estado conservan su cierre por adjudicada_en', async () => {
+  const pagina = await montarPagina({ ...opcionesCierre, prepararOfertas(ofertas) {
+    delete ofertas[1][0].estado_seleccion
+  } })
+  try {
+    assert.equal(pagina.botones('Cerrar oferta').length, 1)
+    pagina.botones('Cerrar oferta')[0].props.onClick()
+    await pagina.asentar()
+    assert.deepEqual(pagina.llamadas.finalizar, [11])
+  } finally { pagina.limpiar() }
+})
+
+test('Un manejador retenido vuelve a comprobar todas las adjudicadas después de recargar', async () => {
+  const pagina = await montarPagina(opcionesCierre)
+  try {
+    const cerrar = pagina.botones('Cerrar oferta')[0].props.onClick
+    pagina.control.ofertas[1][1].estado_seleccion = 'adjudicada'
+    pagina.control.ofertas[1][1].adjudicada_en = '2026-11-21T10:00:00Z'
+    pagina.control.ofertas[1][1].items[0].finalizado_en = null
+    cerrar()
+    await pagina.asentar()
+    await pagina.asentar()
+    assert.deepEqual(pagina.llamadas.finalizar, [11])
+    cerrar()
+    await pagina.asentar()
+    assert.deepEqual(pagina.llamadas.finalizar, [11])
+  } finally { pagina.limpiar() }
+})
+
 test('Un cierre confirmado muestra un mensaje apropiado y abre Resueltas solo para su emergencia', async () => {
   const pagina = await montarPagina(opcionesCierre)
   try {
@@ -315,7 +397,7 @@ test('Un cierre confirmado muestra un mensaje apropiado y abre Resueltas solo pa
     await pagina.asentar()
     await pagina.asentar()
     assert.ok(pestaniaActiva(pagina, 'Resueltas'))
-    assert.match(mensajesCierre(pagina), /La emergencia se cerró y está en Resueltas\./)
+    assert.equal(mensajesCierre(pagina), 'La emergencia fue resuelta')
     assert.doesNotMatch(mensajesCierre(pagina), /Bonita|Cloud|liberar/)
     assert.equal(pagina.control.emergencias[0].estado, 'resuelta')
     assert.equal(pagina.control.emergencias[1].estado, 'en_proceso')
@@ -378,7 +460,7 @@ test('Un 503 al sincronizar permite listar y ofrece reintentar sin anunciar reso
     await pagina.asentar()
     assert.ok(pestaniaActiva(pagina, 'En proceso'))
     assert.equal(pagina.control.emergencias[0].estado, 'en_proceso')
-    assert.doesNotMatch(mensajesCierre(pagina), /Bonita|Cloud|está en Resueltas/)
+    assert.doesNotMatch(mensajesCierre(pagina), /Bonita|Cloud|La emergencia fue resuelta/)
   } finally { pagina.limpiar() }
 })
 
@@ -391,7 +473,7 @@ test('El cierre de otra emergencia o una consulta con otro ID no anuncia la reso
     await pagina.asentar()
     await pagina.asentar()
     assert.ok(pestaniaActiva(pagina, 'En proceso'))
-    assert.doesNotMatch(mensajesCierre(pagina), /está en Resueltas/)
+    assert.doesNotMatch(mensajesCierre(pagina), /La emergencia fue resuelta/)
   } finally { pagina.limpiar() }
 })
 
@@ -408,7 +490,7 @@ test('Una sincronización tardía del cierre no navega ni avisa en otra pestaña
     await pagina.asentar()
     await pagina.asentar()
     assert.ok(pestaniaActiva(pagina, 'Esperando lotes'))
-    assert.doesNotMatch(mensajesCierre(pagina), /está en Resueltas/)
+    assert.doesNotMatch(mensajesCierre(pagina), /La emergencia fue resuelta/)
   } finally { pagina.limpiar() }
 })
 
@@ -447,7 +529,7 @@ test('Una respuesta tardía del cierre no cambia la pestaña después de salir y
     await pagina.asentar()
     await pagina.asentar()
     assert.ok(pestaniaActiva(pagina, 'En proceso'))
-    assert.doesNotMatch(mensajesCierre(pagina), /está en Resueltas/)
+    assert.doesNotMatch(mensajesCierre(pagina), /La emergencia fue resuelta/)
   } finally { pagina.limpiar() }
 })
 
