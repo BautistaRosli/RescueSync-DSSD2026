@@ -199,9 +199,18 @@ async def test_set_case_variables_levanta_error_de_conexion(monkeypatch):
         await cliente.set_case_variables(3002, {"zona_afectada": "x"})
 
 
-@pytest.mark.asyncio
-async def test_obtener_metricas_reporte_consulta_bonita_y_calcula_duraciones(monkeypatch):
-    peticiones = []
+def nodo_archivado(source_id, caso, nombre, fin, state="completed", tipo="USER_TASK"):
+    """Elemento de /API/bpm/archivedFlowNode con el formato real de Bonita."""
+    return {
+        "id": f"a{source_id}-{state}", "sourceObjectId": str(source_id),
+        "caseId": str(caso), "rootCaseId": str(caso), "processId": "17",
+        "name": nombre, "displayName": nombre, "type": tipo, "state": state,
+        "reached_state_date": fin, "last_update_date": fin, "archivedDate": fin,
+    }
+
+
+async def metricas_con(monkeypatch, nodos, casos_abiertos, casos_cerrados, peticiones=None):
+    peticiones = peticiones if peticiones is not None else []
 
     def transportar(request):
         peticiones.append(request)
@@ -209,21 +218,12 @@ async def test_obtener_metricas_reporte_consulta_bonita_y_calcula_duraciones(mon
             return httpx.Response(204)
         if request.url.path == "/API/bpm/process":
             return httpx.Response(200, json=[{"id": "17"}])
-        if request.url.path == "/API/bpm/archivedHumanTask":
-            filtros = request.url.params.get_list("f")
-            if "name=Decidir curso de accion" in filtros:
-                return httpx.Response(200, json=[{"id": "9"}])
-            if "name=Decidir curso de acción" in filtros:
-                return httpx.Response(200, json=[])
-            return httpx.Response(200, json=[{
-                "name": "Generar lotes",
-                "ready_date": "2026-01-01T10:00:00Z",
-                "completed_date": "2026-01-01T12:30:00Z",
-            }])
+        if request.url.path == "/API/bpm/archivedFlowNode":
+            return httpx.Response(200, json=nodos)
         if request.url.path == "/API/bpm/case":
-            return httpx.Response(200, json=[{"id": "1"}, {"id": "2"}])
+            return httpx.Response(200, json=casos_abiertos)
         if request.url.path == "/API/bpm/archivedCase":
-            return httpx.Response(200, json=[{"id": "3"}])
+            return httpx.Response(200, json=casos_cerrados)
         return httpx.Response(404)
 
     cliente = BonitaClient()
@@ -234,19 +234,155 @@ async def test_obtener_metricas_reporte_consulta_bonita_y_calcula_duraciones(mon
         )
 
     monkeypatch.setattr(cliente, "_client", crear_cliente)
-    resultado = await cliente.obtener_metricas_reporte()
+    return await cliente.obtener_metricas_reporte()
+
+
+def etapa(resultado, nombre):
+    return next(e for e in resultado["tiempos_por_etapa"] if e["etapa"] == nombre)
+
+
+@pytest.mark.asyncio
+async def test_obtener_metricas_reporte_consulta_bonita_y_calcula_duraciones(monkeypatch):
+    peticiones = []
+    nodos = [
+        nodo_archivado(1, 1001, "Registrar Emergencia", "2026-01-01 10:00:00.000", tipo="AUTOMATIC_TASK"),
+        nodo_archivado(2, 1001, "Generar lotes", "2026-01-01 12:30:00.000"),
+    ]
+    resultado = await metricas_con(
+        monkeypatch, nodos,
+        [{"id": "1001", "start": "2026-01-01 09:59:00.000"}, {"id": "1002", "start": "2026-01-01 09:00:00.000"}],
+        [{"id": "5", "sourceObjectId": "1003", "start": "2026-01-01 08:00:00.000", "end_date": "2026-01-01 09:00:00.000"}],
+        peticiones,
+    )
 
     assert resultado["casos"] == {"abiertos": 2, "cerrados": 1}
-    assert resultado["convocatorias_camino_alternativo"] == 1
+    assert resultado["convocatorias_camino_alternativo"] == 0
+    assert [e["etapa"] for e in resultado["tiempos_por_etapa"]] == [
+        "Generar lotes", "Publicar pedido", "Ventana de ofertas", "Seleccionar oferta",
+        "Evaluar proyecto", "Marcar actividades finalizadas", "Supervisar proyecto",
+    ]
     assert resultado["tiempos_por_etapa"][0] == {
         "etapa": "Generar lotes", "promedio_horas": 2.5, "cantidad": 1
     }
     assert any(
-        request.url.path == "/API/bpm/archivedHumanTask"
-        and "processId=17" in request.url.params.get_list("f")
-        and "name=Decidir curso de accion" in request.url.params.get_list("f")
+        request.url.path == "/API/bpm/archivedFlowNode"
+        and request.url.params.get_list("f") == ["processId=17"]
+        and request.url.params["c"] == "2000"
         for request in peticiones
     )
+    assert not any(request.url.path == "/API/bpm/archivedHumanTask" for request in peticiones)
+
+
+@pytest.mark.asyncio
+async def test_metricas_duracion_desde_nodo_anterior_del_mismo_caso(monkeypatch):
+    nodos = [
+        nodo_archivado(3, 1001, "Seleccionar oferta", "2026-01-01 10:03:00.000"),
+        nodo_archivado(2, 1001, "Publicar pedido", "2026-01-01 10:00:00.000", tipo="AUTOMATIC_TASK"),
+        # Otro caso intercalado no debe afectar al cálculo del caso 1001.
+        nodo_archivado(9, 1002, "Generar lotes", "2026-01-01 10:01:00.000"),
+    ]
+    resultado = await metricas_con(
+        monkeypatch, nodos,
+        [{"id": "1001", "start": "2026-01-01 09:00:00.000"}, {"id": "1002", "start": "2026-01-01 10:00:00.000"}],
+        [],
+    )
+
+    seleccionar = etapa(resultado, "Seleccionar oferta")
+    assert seleccionar["cantidad"] == 1
+    assert seleccionar["promedio_horas"] == pytest.approx(0.05)
+    assert etapa(resultado, "Publicar pedido")["promedio_horas"] == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_metricas_ventana_de_ofertas_con_datos_reales_de_bonita(monkeypatch):
+    """Datos reales del caso 1: el timer no aparece en archivedFlowNode."""
+    nodos = [
+        nodo_archivado(4, 1, "Publicar pedido", "2026-11-26 02:23:11.894", tipo="AUTOMATIC_TASK"),
+        nodo_archivado(6, 1, "Obtener ofertas locales", "2026-11-26 02:26:13.103",
+                       state="executing", tipo="AUTOMATIC_TASK"),
+        nodo_archivado(6, 1, "Obtener ofertas locales", "2026-11-26 02:26:13.856",
+                       tipo="AUTOMATIC_TASK"),
+    ]
+    resultado = await metricas_con(
+        monkeypatch, nodos, [{"id": "1", "start": "2026-11-26 02:20:00.000"}], [],
+    )
+
+    ventana = etapa(resultado, "Ventana de ofertas")
+    assert ventana["cantidad"] == 1
+    assert ventana["promedio_horas"] == pytest.approx(181.209 / 3600)
+    assert ventana["promedio_horas"] == pytest.approx(0.0503, abs=1e-4)
+
+
+@pytest.mark.asyncio
+async def test_metricas_ventana_de_ofertas_empareja_cada_ciclo(monkeypatch):
+    """Con REABRIR el caso vuelve a Publicar pedido: cada ventana usa la última publicación."""
+    nodos = [
+        nodo_archivado(4, 1, "Publicar pedido", "2026-01-01 10:00:00.000", tipo="AUTOMATIC_TASK"),
+        nodo_archivado(6, 1, "Obtener ofertas locales", "2026-01-01 10:06:00.000", state="ready",
+                       tipo="AUTOMATIC_TASK"),
+        nodo_archivado(6, 1, "Obtener ofertas locales", "2026-01-01 10:06:01.000", tipo="AUTOMATIC_TASK"),
+        nodo_archivado(8, 1, "Evaluar proyecto", "2026-01-01 11:00:00.000"),
+        nodo_archivado(14, 1, "Publicar pedido", "2026-01-01 12:00:00.000", tipo="AUTOMATIC_TASK"),
+        nodo_archivado(16, 1, "Obtener ofertas locales", "2026-01-01 12:18:00.000", state="executing",
+                       tipo="AUTOMATIC_TASK"),
+        nodo_archivado(16, 1, "Obtener ofertas locales", "2026-01-01 12:18:05.000", tipo="AUTOMATIC_TASK"),
+    ]
+    resultado = await metricas_con(
+        monkeypatch, nodos, [{"id": "1", "start": "2026-01-01 09:00:00.000"}], [],
+    )
+
+    ventana = etapa(resultado, "Ventana de ofertas")
+    assert ventana["cantidad"] == 2
+    # (0.1 h + 0.3 h) / 2
+    assert ventana["promedio_horas"] == pytest.approx(0.2)
+
+
+@pytest.mark.asyncio
+async def test_metricas_primer_nodo_usa_start_del_caso(monkeypatch):
+    nodos = [nodo_archivado(2, 1001, "Generar lotes", "2026-01-01T11:30:00")]
+    resultado = await metricas_con(
+        monkeypatch, nodos, [],
+        [{"id": "7", "sourceObjectId": "1001", "start": "2026-01-01 10:00:00.000"}],
+    )
+
+    assert etapa(resultado, "Generar lotes") == {
+        "etapa": "Generar lotes", "promedio_horas": 1.5, "cantidad": 1
+    }
+
+
+@pytest.mark.asyncio
+async def test_metricas_ignora_nodos_no_completados(monkeypatch):
+    nodos = [
+        nodo_archivado(2, 1001, "Generar lotes", "2026-01-01 11:00:00.000"),
+        nodo_archivado(3, 1001, "Seleccionar oferta", "2026-01-01 12:00:00.000", state="aborted"),
+        nodo_archivado(4, 1001, "Supervisar proyecto", "fecha-invalida"),
+        nodo_archivado(5, 1001, "Marcar actividades finalizadas", "2026-01-01 13:00:00.000"),
+    ]
+    resultado = await metricas_con(
+        monkeypatch, nodos, [{"id": "1001", "start": "2026-01-01 10:00:00.000"}], [],
+    )
+
+    assert etapa(resultado, "Seleccionar oferta")["cantidad"] == 0
+    assert etapa(resultado, "Supervisar proyecto")["cantidad"] == 0
+    # El nodo abortado no cuenta como anterior: 11:00 -> 13:00.
+    assert etapa(resultado, "Marcar actividades finalizadas")["promedio_horas"] == pytest.approx(2.0)
+
+
+@pytest.mark.asyncio
+async def test_metricas_camino_alternativo_cuenta_casos_distintos(monkeypatch):
+    nodos = [
+        nodo_archivado(2, 1001, "Evaluar proyecto", "2026-01-01 11:00:00.000"),
+        nodo_archivado(3, 1001, "Evaluar proyecto", "2026-01-01 12:00:00.000"),
+        nodo_archivado(4, 1002, "Evaluar proyecto", "2026-01-01 11:00:00.000"),
+        nodo_archivado(5, 1003, "Evaluar proyecto", "2026-01-01 11:00:00.000", state="aborted"),
+    ]
+    resultado = await metricas_con(
+        monkeypatch, nodos,
+        [{"id": c, "start": "2026-01-01 10:00:00.000"} for c in ("1001", "1002", "1003")], [],
+    )
+
+    assert resultado["convocatorias_camino_alternativo"] == 2
+    assert etapa(resultado, "Evaluar proyecto")["cantidad"] == 3
 
 
 @pytest.mark.asyncio

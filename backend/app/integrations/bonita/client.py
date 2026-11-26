@@ -101,26 +101,44 @@ class BonitaClient:
             )
         return str(processes[0]["id"])
 
+    # Etapas del dashboard: etiqueta reportada -> nombre del nodo en Bonita.
+    # "Ventana de ofertas" no tiene nodo propio: el timer no se archiva en
+    # archivedFlowNode, así que se calcula entre dos nodos (ver abajo).
+    ETAPAS_REPORTE = {
+        "Generar lotes": "Generar lotes",
+        "Publicar pedido": "Publicar pedido",
+        "Ventana de ofertas": None,
+        "Seleccionar oferta": "Seleccionar oferta",
+        "Evaluar proyecto": "Evaluar proyecto",
+        "Marcar actividades finalizadas": "Marcar actividades finalizadas",
+        "Supervisar proyecto": "Supervisar proyecto",
+    }
+    # Tarea humana donde se decide el camino alternativo (REABRIR/REFORMULAR/...).
+    NODO_CAMINO_ALTERNATIVO = "Evaluar proyecto"
+    # Ventana de ofertas = inicio de "Obtener ofertas locales" - fin del
+    # "Publicar pedido" inmediatamente anterior en el mismo caso.
+    ETAPA_VENTANA_OFERTAS = "Ventana de ofertas"
+    NODO_FIN_PUBLICACION = "Publicar pedido"
+    NODO_INICIO_OFERTAS = "Obtener ofertas locales"
+    ESTADOS_TERMINALES = {"completed", "aborted", "skipped", "cancelled"}
+
     async def obtener_metricas_reporte(self) -> dict[str, Any]:
-        """Consulta en Bonita las métricas requeridas por el dashboard."""
+        """Consulta en Bonita las métricas requeridas por el dashboard.
+
+        Usa archivedFlowNode (incluye tareas de servicio y timers, no solo
+        humanas). La duración de cada nodo se mide desde el fin del nodo
+        completado anterior del mismo caso (o el inicio del caso) hasta su
+        propio fin, porque en el archivo `reached_state_date` es el momento
+        en que el nodo llegó a "completed".
+        """
         try:
             async with await self._client() as client:
                 await self.login(client)
                 process_id = await self.get_process_id(client)
-                tareas_archivadas = await self._obtener_coleccion(
+                nodos_archivados = await self._obtener_coleccion(
                     client,
-                    "/API/bpm/archivedHumanTask",
+                    "/API/bpm/archivedFlowNode",
                     [f"processId={process_id}"],
-                )
-                convocatorias_sin_tilde = await self._obtener_coleccion(
-                    client,
-                    "/API/bpm/archivedHumanTask",
-                    [f"processId={process_id}", "name=Decidir curso de accion"],
-                )
-                convocatorias_con_tilde = await self._obtener_coleccion(
-                    client,
-                    "/API/bpm/archivedHumanTask",
-                    [f"processId={process_id}", "name=Decidir curso de acción"],
                 )
                 casos_abiertos = await self._obtener_coleccion(
                     client,
@@ -135,35 +153,133 @@ class BonitaClient:
         except httpx.RequestError as exc:
             raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
 
-        etapas = {
-            "Generar lotes": [],
-            "Publicar pedido": [],
-            "Seleccionar oferta": [],
-            "Evaluar proyecto": [],
+        inicio_por_caso: dict[str, datetime] = {}
+        for caso in [*casos_abiertos, *casos_cerrados]:
+            inicio = self._parsear_fecha(caso.get("start"))
+            if inicio is None:
+                continue
+            for clave in ("sourceObjectId", "id"):
+                if caso.get(clave) not in (None, ""):
+                    inicio_por_caso.setdefault(str(caso[clave]), inicio)
+
+        duraciones = self._duraciones_por_nodo(nodos_archivados, inicio_por_caso)
+        nombre_a_etapa = {
+            nodo: etapa for etapa, nodo in self.ETAPAS_REPORTE.items() if nodo
         }
-        convocatorias = len(convocatorias_sin_tilde) + len(convocatorias_con_tilde)
-        for tarea in tareas_archivadas:
-            nombre = str(tarea.get("name", ""))
-            if nombre in etapas:
-                inicio = self._fecha_tarea(tarea, "ready")
-                fin = self._fecha_tarea(tarea, "completed")
-                if inicio is not None and fin is not None and fin >= inicio:
-                    etapas[nombre].append((fin - inicio).total_seconds() / 3600)
+        etapas: dict[str, list[float]] = {etapa: [] for etapa in self.ETAPAS_REPORTE}
+        casos_alternativos: set[str] = set()
+        publicaciones_por_caso: dict[str, list[datetime]] = {}
+        obtenciones_por_caso: dict[str, list[datetime]] = {}
+        for caso, nombre, horas, fin, inicio_mas_temprano in duraciones:
+            if nombre == self.NODO_CAMINO_ALTERNATIVO:
+                casos_alternativos.add(caso)
+            if nombre in nombre_a_etapa and horas is not None:
+                etapas[nombre_a_etapa[nombre]].append(horas)
+            if nombre == self.NODO_FIN_PUBLICACION:
+                publicaciones_por_caso.setdefault(caso, []).append(fin)
+            elif nombre == self.NODO_INICIO_OFERTAS:
+                obtenciones_por_caso.setdefault(caso, []).append(inicio_mas_temprano)
+
+        # Cada "Obtener ofertas locales" se empareja con el último "Publicar
+        # pedido" completado antes de su inicio (cubre ciclos por REABRIR).
+        for caso, inicios in obtenciones_por_caso.items():
+            publicaciones = publicaciones_por_caso.get(caso, [])
+            for inicio_ofertas in inicios:
+                previas = [fin for fin in publicaciones if fin <= inicio_ofertas]
+                if previas:
+                    etapas[self.ETAPA_VENTANA_OFERTAS].append(
+                        (inicio_ofertas - max(previas)).total_seconds() / 3600
+                    )
+
         return {
             "tiempos_por_etapa": [
                 {
                     "etapa": etapa,
-                    "promedio_horas": sum(duraciones) / len(duraciones) if duraciones else 0.0,
-                    "cantidad": len(duraciones),
+                    "promedio_horas": sum(horas) / len(horas) if horas else 0.0,
+                    "cantidad": len(horas),
                 }
-                for etapa, duraciones in etapas.items()
+                for etapa, horas in etapas.items()
             ],
             "casos": {
                 "abiertos": len(casos_abiertos),
                 "cerrados": len(casos_cerrados),
             },
-            "convocatorias_camino_alternativo": convocatorias,
+            "convocatorias_camino_alternativo": len(casos_alternativos),
         }
+
+    @classmethod
+    def _duraciones_por_nodo(
+        cls,
+        nodos: list[dict[str, Any]],
+        inicio_por_caso: dict[str, datetime],
+    ) -> list[tuple[str, str, float | None, datetime, datetime]]:
+        """Devuelve (caso, nombre, horas, fin, inicio_mas_temprano) por nodo completado.
+
+        `inicio_mas_temprano` es la reached_state_date más temprana entre todas
+        las versiones archivadas del nodo (initializing, ready, executing...).
+        """
+        # Agrupa las versiones archivadas de un mismo nodo original.
+        versiones: dict[str, list[dict[str, Any]]] = {}
+        for indice, nodo in enumerate(nodos):
+            clave = nodo.get("sourceObjectId") or nodo.get("id") or f"_{indice}"
+            versiones.setdefault(str(clave), []).append(nodo)
+
+        completados_por_caso: dict[
+            str, list[tuple[datetime, str, datetime | None, datetime]]
+        ] = {}
+        for grupo in versiones.values():
+            completado = next(
+                (v for v in grupo if str(v.get("state", "")).lower() == "completed"),
+                None,
+            )
+            if completado is None:
+                continue
+            fin = cls._parsear_fecha(completado.get("reached_state_date"))
+            caso = completado.get("rootCaseId") or completado.get("caseId")
+            if fin is None or caso in (None, ""):
+                continue
+            # Una versión no terminal (p. ej. "ready") marca el inicio real.
+            inicio_preferente = None
+            for version in grupo:
+                if str(version.get("state", "")).lower() in cls.ESTADOS_TERMINALES:
+                    continue
+                inicio_preferente = cls._parsear_fecha(version.get("reached_state_date"))
+                if inicio_preferente is not None:
+                    break
+            fechas = [cls._parsear_fecha(v.get("reached_state_date")) for v in grupo]
+            inicio_mas_temprano = min(f for f in fechas if f is not None)
+            completados_por_caso.setdefault(str(caso), []).append(
+                (fin, str(completado.get("name", "")), inicio_preferente, inicio_mas_temprano)
+            )
+
+        resultado: list[tuple[str, str, float | None, datetime, datetime]] = []
+        for caso, completados in completados_por_caso.items():
+            completados.sort(key=lambda item: item[0])
+            fin_anterior = inicio_por_caso.get(caso)
+            for fin, nombre, inicio_preferente, inicio_mas_temprano in completados:
+                inicio = inicio_preferente or fin_anterior
+                horas = None
+                if inicio is not None and fin >= inicio:
+                    horas = (fin - inicio).total_seconds() / 3600
+                resultado.append((caso, nombre, horas, fin, inicio_mas_temprano))
+                fin_anterior = fin
+        return resultado
+
+    @staticmethod
+    def _parsear_fecha(valor: Any) -> datetime | None:
+        """Parsea "YYYY-MM-DD HH:MM:SS.mmm" o ISO; devuelve datetime naive."""
+        if not valor:
+            return None
+        texto = str(valor).strip().replace("Z", "+00:00")
+        try:
+            fecha = datetime.fromisoformat(texto)
+        except ValueError:
+            try:
+                fecha = datetime.strptime(texto, "%Y-%m-%d %H:%M:%S.%f")
+            except ValueError:
+                return None
+        # Todas las fechas vienen del mismo servidor: se comparan sin zona.
+        return fecha.replace(tzinfo=None)
 
     async def _obtener_coleccion(
         self,
@@ -189,25 +305,6 @@ class BonitaClient:
         if not isinstance(datos, list):
             raise BonitaClientError(f"Respuesta inválida consultando {recurso}")
         return datos
-
-    @staticmethod
-    def _fecha_tarea(tarea: dict[str, Any], tipo: str) -> datetime | None:
-        nombres = {
-            "ready": ("ready_date", "readyDate", "reached_state_date", "reachedStateDate"),
-            "completed": (
-                "completed_date", "completedDate", "end_date", "endDate",
-                "last_update_date", "lastUpdateDate",
-            ),
-        }[tipo]
-        for nombre in nombres:
-            valor = tarea.get(nombre)
-            if not valor:
-                continue
-            try:
-                return datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
-            except ValueError:
-                continue
-        return None
 
     async def set_case_variables(
         self, case_id: int, variables: dict[str, Any]
