@@ -220,15 +220,36 @@ def test_seed_demo_solo_development_idempotente(entorno_local, monkeypatch, ambi
         servicio = AuthService()
         servicio.sembrar_usuarios_iniciales(db)
         servicio.sembrar_usuarios_iniciales(db)
-        assert db.query(Usuario).count() == (6 if ambiente == "development" else 1)
+        assert db.query(Usuario).count() == (7 if ambiente == "development" else 1)
         for datos in USUARIOS_INICIALES:
             usuario = db.query(Usuario).filter_by(email=datos["email"]).first()
             if ambiente == "development":
-                assert usuario is not None and verificar_password(datos["email"], usuario.password_hash)
+                assert usuario is not None and verificar_password(
+                    datos.get("password", datos["email"]), usuario.password_hash
+                )
             else:
                 assert usuario is None
     remoto.assert_not_called()
     assert registrar.call_count == (2 if ambiente == "development" else 0)
+
+
+def test_usuario_bonita_se_siembra_y_puede_iniciar_sesion(entorno_local, monkeypatch):
+    cliente, sesiones, remoto = entorno_local
+    monkeypatch.setenv("APP_ENV", "development")
+    with sesiones() as db:
+        RolService().sembrar_roles(db)
+        AuthService().sembrar_usuarios_iniciales(db)
+        usuario = db.query(Usuario).filter_by(email="bonita@bonita.com").one()
+        assert usuario.rol.nombre == "BONITA"
+        assert verificar_password("bonita@bonita.com", usuario.password_hash)
+
+    respuesta = cliente.post(
+        "/api/v1/auth/login",
+        json={"email": "bonita@bonita.com", "password": "bonita@bonita.com"},
+    )
+    assert respuesta.status_code == 200, respuesta.text
+    assert respuesta.json()["rol"] == "BONITA"
+    remoto.assert_not_called()
 
 
 def test_seed_repara_organizacion_del_usuario_demo_sin_cambiar_password(

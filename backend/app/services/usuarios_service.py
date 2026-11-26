@@ -40,6 +40,7 @@ ROLES_INICIALES = [
     "CENTRO_COORDINADOR",
     "REPRESENTANTE_ONG",
     "DIRECTOR_AUDITOR",
+    "BONITA",
 ]
 
 ORGANIZACION_ONU = {
@@ -100,6 +101,14 @@ USUARIOS_INICIALES = [
         "nombre": "Jorge",
         "apellido": "Martínez",
         "rol": "DIRECTOR_AUDITOR",
+        "organizacion": None,
+    },
+    {
+        "email": "bonita@bonita.com",
+        "nombre": "Bonita",
+        "apellido": "Técnico",
+        "password": "bonita@bonita.com",
+        "rol": "BONITA",
         "organizacion": None,
     },
 ]
@@ -353,7 +362,7 @@ class AuthService:
 
             usuario = Usuario(
                 email=datos["email"],
-                password_hash=hashear_password(datos["email"]),
+                password_hash=hashear_password(datos.get("password", datos["email"])),
                 nombre=datos["nombre"],
                 apellido=datos["apellido"],
                 rol_id=rol.id,
