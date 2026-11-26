@@ -56,6 +56,16 @@ En Docker Desktop Windows, este script aplica los manifiestos, espera el rollout
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy-prioridad.ps1
 ```
 
+Alternativa para linux:
+```bash
+sudo apt-get update
+sudo apt-get install -y wget apt-transport-https software-properties-common
+wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+sudo dpkg -i packages-microsoft-prod.deb
+sudo apt-get update
+sudo apt-get install -y powershell
+pwsh -ExecutionPolicy Bypass -File .\scripts\deploy-prioridad.ps1
+```
 Verificar:
 
 ```bash
