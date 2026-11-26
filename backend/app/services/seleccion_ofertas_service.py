@@ -77,6 +77,24 @@ class SeleccionOfertasService:
             if cantidades.get((oferta_id, lote_id), 0) <= 0:
                 conflicto(f"La oferta {oferta_id}, lote {lote_id}, debe tener una cantidad verificada positiva en el caso")
 
+    @staticmethod
+    def validada(oferta, cantidades) -> bool:
+        """Mismo criterio que la confirmación: cada fila con cantidad verificada positiva."""
+        return bool(oferta.items) and all(
+            cantidades.get((oferta.id, item.lote_necesidad_id), 0) > 0 for item in oferta.items
+        )
+
+    async def verificar_validada(self, db: Session, emergencia, oferta) -> None:
+        """Rechaza adjudicar una oferta que el Sistema Nacional no validó."""
+        try:
+            cantidades = await self._evaluacion(self._caso_id(emergencia), emergencia.id, db)
+        except (BonitaClientError, httpx.RequestError):
+            raise HTTPException(status_code=503, detail="No se pudo consultar la evaluación en Bonita")
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=503, detail="Bonita devolvió una evaluación inválida")
+        if not self.validada(oferta, cantidades):
+            conflicto("La oferta no fue validada por el Sistema Nacional")
+
     async def _tarea_seleccion(self, caso_id):
         tarea = await bonita_client.obtener_tarea_pendiente(caso_id, "Seleccionar oferta")
         if tarea is not None and not isinstance(tarea, dict):
@@ -102,8 +120,8 @@ class SeleccionOfertasService:
                 conflicto("La oferta seleccionada no tiene ítems")
             caso_id = self._caso_id(emergencia)
             cantidades = await self._evaluacion(caso_id, emergencia.id, db)
-            pares = {(oferta.id, item.lote_necesidad_id) for item in oferta.items}
-            self._validar_pares(pares, cantidades)
+            if not self.validada(oferta, cantidades):
+                conflicto("La oferta no fue validada por el Sistema Nacional")
             if await self._tarea_seleccion(caso_id) is None:
                 conflicto("El caso no tiene pendiente la tarea Seleccionar oferta; aún no se puede seleccionar")
             if anterior is not None:
@@ -118,7 +136,7 @@ class SeleccionOfertasService:
         finally:
             await run_in_threadpool(db.rollback)
 
-    async def listar(self, db: Session, emergencia_id: int):
+    async def listar(self, db: Session, emergencia_id: int, solo_validadas: bool = False):
         from .ofertas_service import OfertaService
 
         servicio = OfertaService()
@@ -148,6 +166,9 @@ class SeleccionOfertasService:
                 and emergencia.estado == EstadoEmergencia.ESPERANDO_ADJUDICACION
                 and oferta.items and all((item.cantidad_verificada or 0) > 0 for item in oferta.items)
             )
+        if solo_validadas:
+            # El municipio solo ve lo validado; sin evaluación nacional no hay ninguna.
+            return [oferta for oferta in ofertas if self.validada(oferta, cantidades)]
         return ofertas
 
     async def _guardar_confirmacion(self, db, emergencia, respuesta, ya_confirmada=False,

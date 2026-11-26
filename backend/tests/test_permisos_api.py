@@ -71,10 +71,10 @@ CASOS = [
     ("POST", "/ofertas", OFERTA, [ONG, AUDITOR]),
     ("PATCH", "/ofertas/1", {"observaciones": "Cambio"}, [ONG, AUDITOR]),
     ("POST", "/ofertas/1/items/1/finalizar", None, [ONG, AUDITOR]),
-    ("GET", "/emergencias/2/ofertas", None, [COORDINADOR, ONG, AUDITOR]),
+    ("GET", "/emergencias/2/ofertas", None, [COORDINADOR, OPERADOR, ONG, AUDITOR]),
     # La emergencia 2 está publicada: la ONG consulta la convocatoria consolidada.
     ("GET", "/emergencias/2/ofertas/consolidadas", None, [COORDINADOR, ONG, AUDITOR]),
-    ("POST", "/ofertas/1/adjudicar", None, [COORDINADOR, OPERADOR, AUDITOR]),
+    ("POST", "/ofertas/1/adjudicar", None, [OPERADOR]),
     ("GET", "/organizaciones/1/inventario", None, [COORDINADOR, ONG, AUDITOR]),
     ("POST", "/organizaciones/1/inventario", ALTA_RECURSO, [ONG, AUDITOR]),
     ("PATCH", "/organizaciones/1/inventario/1", RECURSO, [ONG, AUDITOR]),
@@ -224,8 +224,14 @@ def test_ong_no_accede_a_datos_ajenos(entorno, ruta):
 
 def test_listados_filtran_antes_de_devolver_y_contar(entorno):
     cliente = entorno[0]
+    # El operador municipal lee publicadas y no publicadas según lo que pida.
+    assert sorted(e["id"] for e in cliente.get("/api/v1/emergencias", headers=cabecera(OPERADOR)).json()) == [1, 2]
+    for publicada, identificador in (("false", 1), ("true", 2)):
+        assert [e["id"] for e in cliente.get(f"/api/v1/emergencias?publicada={publicada}",
+                                             headers=cabecera(OPERADOR)).json()] == [identificador]
     for rol, identificador in ((OPERADOR, 1), (ONG, 2)):
-        assert [e["id"] for e in cliente.get("/api/v1/emergencias", headers=cabecera(rol)).json()] == [identificador]
+        if rol == ONG:
+            assert [e["id"] for e in cliente.get("/api/v1/emergencias", headers=cabecera(rol)).json()] == [identificador]
         publicada = "true" if rol == ONG else "false"
         datos = cliente.get(f"/api/v1/emergencias/bandeja?publicada={publicada}&por_pagina=1", headers=cabecera(rol)).json()
         assert datos["total"] == 1 and datos["paginas"] == 1 and datos["items"][0]["id"] == identificador
@@ -630,3 +636,17 @@ def test_auth_me_devuelve_el_usuario_que_pertenece_al_token(entorno):
 ])
 def test_auth_me_sin_token_valido_responde_401(entorno, encabezados):
     assert entorno[0].get("/api/v1/auth/me", headers=encabezados).status_code == 401
+
+
+def test_operador_lee_emergencia_publicada_sin_nuevas_escrituras(entorno):
+    cliente, sesiones, externos = entorno
+    assert cliente.get("/api/v1/emergencias/2", headers=cabecera(OPERADOR)).status_code == 200
+    assert cliente.get("/api/v1/emergencias/2/lotes", headers=cabecera(OPERADOR)).status_code == 200
+    assert cliente.get("/api/v1/emergencias?publicada=true", headers=cabecera(OPERADOR)).status_code == 200
+    anterior = estado(sesiones)
+    assert cliente.post("/api/v1/emergencias/1/publicar", headers=cabecera(OPERADOR)).status_code == 403
+    assert cliente.post("/api/v1/emergencias/1/lotes", json=LOTE, headers=cabecera(OPERADOR)).status_code == 403
+    assert cliente.post("/api/v1/emergencias/2/lotes", json=LOTE, headers=cabecera(OPERADOR)).status_code == 403
+    assert cliente.patch("/api/v1/lotes/2", json={"cantidad": 12}, headers=cabecera(OPERADOR)).status_code == 403
+    assert estado(sesiones) == anterior
+    assert all(mock.call_count == 0 for mock in externos)

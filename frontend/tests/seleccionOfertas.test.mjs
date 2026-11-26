@@ -24,6 +24,16 @@ const moduloHttp = await transpilar('../src/services/http.ts')
 const { ApiError } = await import(moduloHttp)
 const servicios = await import(await transpilar('../src/services/oferta.ts', { './http': moduloHttp }))
 const serviciosEmergencia = await import(await transpilar('../src/services/emergencia.ts', { './http': moduloHttp }))
+const prefijoJsx = 'function crearElemento(type, props, ...children){return {type,props:{...props,children}}} function Fragmento({children}){return children}\n'
+const moduloClases = await transpilar('../src/ui/clases.ts')
+const moduloFormato = await transpilar('../src/utils/formato.ts', {
+  '../services': urlModulo(`export {ApiError} from ${JSON.stringify(moduloHttp)};`),
+})
+const moduloUtilOfertas = await transpilar('../src/utils/ofertas.ts')
+// El panel compartido de adjudicación reemplaza al barrel de componentes en las páginas.
+const moduloComponentes = await transpilar('../src/components/PanelAdjudicacion.tsx', {
+  '../ui/clases': moduloClases, '../utils/formato': moduloFormato, '../utils/ofertas': moduloUtilOfertas,
+}, prefijoJsx)
 
 test('Las ofertas del coordinador usan la consulta por emergencia con la evaluación Cloud', async () => {
   const fetchOriginal = globalThis.fetch
@@ -119,7 +129,7 @@ function diferida() {
   return { promesa, resolver, rechazar }
 }
 
-async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true, evaluaciones = [3], puedeSeleccionar = true, estadoSeleccion = 'seleccionada_para_confirmar', tareas = {}, sinOfertas = false, consultaEvaluacion, sincronizar, itemsFinalizados = false, prepararOfertas } = {}) {
+async function montarPagina({ componente = 'coordinador', estado = 'esperando_adjudicacion', conMarca = true, evaluaciones = [3], puedeSeleccionar = true, estadoSeleccion = 'seleccionada_para_confirmar', tareas = {}, sinOfertas = false, consultaEvaluacion, sincronizar, itemsFinalizados = false, prepararOfertas } = {}) {
   const estados = [], referencias = [], efectos = [], dependencias = [], limpiezas = []
   let indiceEstado = 0, indiceRef = 0, indiceEfecto = 0
   const oferta = (id, emergencia_id, adjudicada_en = null) => ({
@@ -231,12 +241,18 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
   const moduloServicios = urlModulo(`export {ApiError} from ${JSON.stringify(moduloHttp)};\n` +
     nombresServicios.map((nombre) =>
       `export const ${nombre}=(...args)=>${acceso}.${nombre}(...args);`).join('\n'))
-  const moduloPagina = await transpilar('../src/pages/CentroCoordinadorPage.tsx', {
-    react: hooks, '../services': moduloServicios,
-    './formularioLote': await transpilar('../src/pages/formularioLote.ts'),
-    '../ui/clases': await transpilar('../src/ui/clases.ts'),
-  }, 'function crearElemento(type, props, ...children){return {type,props:{...props,children}}} function Fragmento({children}){return children}\n')
-  const { CentroCoordinadorPage } = await import(moduloPagina)
+  const moduloPagina = componente === 'municipio'
+    ? await transpilar('../src/pages/AdjudicacionMunicipioPage.tsx', {
+      react: hooks, '../services': moduloServicios, '../components': moduloComponentes,
+      '../ui/clases': moduloClases, '../utils/formato': moduloFormato,
+    }, prefijoJsx)
+    : await transpilar('../src/pages/CentroCoordinadorPage.tsx', {
+      react: hooks, '../services': moduloServicios, '../components': moduloComponentes,
+      './formularioLote': await transpilar('../src/pages/formularioLote.ts'),
+      '../ui/clases': moduloClases, '../utils/ofertas': moduloUtilOfertas,
+    }, prefijoJsx)
+  const modulo = await import(moduloPagina)
+  const Pagina = componente === 'municipio' ? modulo.AdjudicacionMunicipioPage : modulo.CentroCoordinadorPage
   function aplanar(nodo) {
     if (nodo == null || typeof nodo === 'boolean') return []
     if (Array.isArray(nodo)) return nodo.flatMap(aplanar)
@@ -246,7 +262,7 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
   }
   function renderizar() {
     indiceEstado = 0; indiceRef = 0; indiceEfecto = 0
-    return aplanar(CentroCoordinadorPage())
+    return aplanar(Pagina())
   }
   const texto = (nodo) => aplanar(nodo.props.children).filter((valor) => typeof valor !== 'object').join('')
   const botones = (etiqueta) => renderizar().filter((nodo) => nodo.type === 'button' && texto(nodo) === etiqueta)
@@ -535,7 +551,7 @@ test('Una respuesta tardía del cierre no cambia la pestaña después de salir y
 })
 
 test('La selección bloquea duplicados, respeta adjudicaciones persistidas y permite reintentar por emergencia', async () => {
-  const pagina = await montarPagina()
+  const pagina = await montarPagina({ componente: 'municipio', componente: 'municipio' })
   try {
     assert.equal(pagina.botones('Confirmar selección').length, 2)
     assert.equal(pagina.botones('Seleccionada para confirmar').length, 1)
@@ -588,7 +604,7 @@ test('La selección bloquea duplicados, respeta adjudicaciones persistidas y per
 })
 
 test('Una adjudicación rechazada no marca la oferta y una respuesta de otra selección no anuncia éxito', async () => {
-  const pagina = await montarPagina()
+  const pagina = await montarPagina({ componente: 'municipio', componente: 'municipio' })
   try {
     pagina.control.adjudicar = async () => { throw new ApiError(409, 'No se pudo adjudicar.') }
     pagina.botones('Adjudicar')[0].props.onClick()
@@ -615,7 +631,7 @@ test('Una adjudicación rechazada no marca la oferta y una respuesta de otra sel
 })
 
 test('La adjudicación individual es exclusiva, bloquea doble clic y no ofrece confirmar en proceso', async () => {
-  const pagina = await montarPagina({ conMarca: false })
+  const pagina = await montarPagina({ componente: 'municipio', conMarca: false })
   try {
     const pendiente = diferida()
     pagina.control.adjudicar = () => pendiente.promesa
@@ -636,7 +652,7 @@ test('La adjudicación individual es exclusiva, bloquea doble clic y no ofrece c
 })
 
 test('En proceso no ofrece confirmar la selección aunque existan adjudicaciones persistidas', async () => {
-  const pagina = await montarPagina({ estado: 'en_proceso' })
+  const pagina = await montarPagina({ componente: 'municipio', estado: 'en_proceso' })
   try {
     assert.equal(pagina.botones('Adjudicar solo esta oferta').length, 0)
     assert.equal(pagina.botones('Confirmar selección').length, 0)
@@ -645,8 +661,42 @@ test('En proceso no ofrece confirmar la selección aunque existan adjudicaciones
   } finally { pagina.limpiar() }
 })
 
+test('El municipio consulta las emergencias publicadas por estado y avisa si no hay ofertas validadas', async () => {
+  for (const estado of ['esperando_adjudicacion', 'en_proceso']) {
+    const pagina = await montarPagina({ componente: 'municipio', estado, sinOfertas: true })
+    try {
+      assert.deepEqual(pagina.llamadas.bandeja.at(-1), { publicada: true, estado, pagina: 1, por_pagina: 10 })
+      assert.ok(pagina.llamadas.bandeja.every((consulta) => consulta.publicada === true && consulta.etapa_bonita === undefined))
+      assert.deepEqual(pagina.llamadas.sincronizar, [])
+      assert.deepEqual(pagina.llamadas.consultarEvaluacion, [])
+      assert.equal(pagina.botones(estado === 'en_proceso' ? 'En proceso' : 'Esperando adjudicación')[0].props['aria-current'], 'page')
+      assert.ok(pagina.renderizar().some((nodo) => nodo.type === 'p' &&
+        pagina.texto(nodo) === 'Todavía no hay ofertas validadas por el Sistema Nacional para esta emergencia.'))
+      assert.ok(pagina.renderizar().some((nodo) => nodo.type === 'span' && pagina.texto(nodo) === 'Verificado por el Sistema Nacional: 3'))
+      assert.equal(pagina.botones('Cerrar oferta').length, 0)
+    } finally { pagina.limpiar() }
+  }
+})
+
+test('El coordinador ve las ofertas sin adjudicar ni confirmar y conserva el cierre', async () => {
+  for (const estado of ['esperando_adjudicacion', 'en_proceso']) {
+    const pagina = await montarPagina({ estado, conMarca: false, itemsFinalizados: true, estadoSeleccion: 'adjudicada',
+      prepararOfertas: (ofertas) => { if (estado === 'en_proceso') Object.assign(ofertas[1][0], { adjudicada_en: '2026-11-20T10:00:00Z', estado_seleccion: 'adjudicada', puede_seleccionar: false }) } })
+    try {
+      assert.ok(pagina.renderizar().some((nodo) => nodo.type === 'span' && pagina.texto(nodo) === 'Oferta #12'))
+      assert.equal(pagina.renderizar().filter((nodo) => nodo.props?.role === 'note' && pagina.texto(nodo) === 'La adjudicación la realiza el municipio.').length, 2)
+      for (const etiqueta of ['Adjudicar', 'Adjudicar solo esta oferta', 'Confirmar selección']) {
+        assert.equal(pagina.botones(etiqueta).length, 0, etiqueta)
+      }
+      assert.equal(pagina.botones('Cerrar oferta').length, estado === 'en_proceso' ? 1 : 0)
+      assert.deepEqual(pagina.llamadas.adjudicar, [])
+      assert.deepEqual(pagina.llamadas.confirmar, [])
+    } finally { pagina.limpiar() }
+  }
+})
+
 test('Se pueden preparar varias ofertas y el modo individual desaparece al marcar la primera', async () => {
-  const pagina = await montarPagina({ conMarca: false })
+  const pagina = await montarPagina({ componente: 'municipio', conMarca: false })
   try {
     pagina.botones('Adjudicar')[0].props.onClick()
     await pagina.asentar()
@@ -665,13 +715,13 @@ test('Se pueden preparar varias ofertas y el modo individual desaparece al marca
 
 test('La evaluación muestra cero, pendiente o valor real y respeta la habilitación del servidor', async () => {
   for (const { evaluaciones, puedeSeleccionar, mensaje } of [
-    { evaluaciones: [0], puedeSeleccionar: false, mensaje: 'Verificado por Cloud: 0' },
+    { evaluaciones: [0], puedeSeleccionar: false, mensaje: 'Verificado por el Sistema Nacional: 0' },
     { evaluaciones: [null], puedeSeleccionar: false, mensaje: 'Pendiente de evaluación' },
-    { evaluaciones: [4, 0], puedeSeleccionar: false, mensaje: 'Verificado por Cloud: 4' },
+    { evaluaciones: [4, 0], puedeSeleccionar: false, mensaje: 'Verificado por el Sistema Nacional: 4' },
     { evaluaciones: [4], puedeSeleccionar: false, mensaje: 'La selección no está habilitada en la etapa actual.' },
-    { evaluaciones: [4], puedeSeleccionar: true, mensaje: 'Verificado por Cloud: 4' },
+    { evaluaciones: [4], puedeSeleccionar: true, mensaje: 'Verificado por el Sistema Nacional: 4' },
   ]) {
-    const pagina = await montarPagina({ conMarca: false, evaluaciones, puedeSeleccionar })
+    const pagina = await montarPagina({ componente: 'municipio', conMarca: false, evaluaciones, puedeSeleccionar })
     try {
       assert.ok(pagina.renderizar().some((nodo) => nodo.type === 'span' || nodo.type === 'p'
         ? pagina.texto(nodo) === mensaje : false), mensaje)
@@ -685,7 +735,7 @@ test('La evaluación muestra cero, pendiente o valor real y respeta la habilitac
 })
 
 test('Una marca provisional sobrevive a la recarga y la confirmación refresca su estado final', async () => {
-  const pagina = await montarPagina({ puedeSeleccionar: false })
+  const pagina = await montarPagina({ componente: 'municipio', puedeSeleccionar: false })
   try {
     assert.equal(pagina.botones('Seleccionada para confirmar').length, 1)
     assert.equal(pagina.renderizar().filter((nodo) => nodo.type === 'p' && /Oferta adjudicada/.test(pagina.texto(nodo))).length, 0)
@@ -697,7 +747,7 @@ test('Una marca provisional sobrevive a la recarga y la confirmación refresca s
     assert.equal(pagina.botones('Seleccionada para confirmar').length, 0)
     assert.ok(pagina.renderizar().some((nodo) => nodo.type === 'p' && /Oferta adjudicada/.test(pagina.texto(nodo))))
   } finally { pagina.limpiar() }
-  const final = await montarPagina({ estado: 'en_proceso', estadoSeleccion: 'adjudicada', puedeSeleccionar: false })
+  const final = await montarPagina({ componente: 'municipio', estado: 'en_proceso', estadoSeleccion: 'adjudicada', puedeSeleccionar: false })
   try {
     assert.equal(final.botones('Seleccionada para confirmar').length, 0)
     assert.ok(final.renderizar().some((nodo) => nodo.type === 'p' && /Oferta adjudicada/.test(final.texto(nodo))))
@@ -705,7 +755,7 @@ test('Una marca provisional sobrevive a la recarga y la confirmación refresca s
 })
 
 test('Un handler anterior respeta la habilitación actual después de un rechazo y recarga', async () => {
-  const pagina = await montarPagina({ conMarca: false })
+  const pagina = await montarPagina({ componente: 'municipio', conMarca: false })
   try {
     const anterior = pagina.botones('Adjudicar')[1]
     pagina.control.adjudicar = async () => {
@@ -722,7 +772,7 @@ test('Un handler anterior respeta la habilitación actual después de un rechazo
 })
 
 test('La selección provisional no repite mensajes y se reemplaza por la adjudicación final', async () => {
-  const pagina = await montarPagina({ conMarca: false })
+  const pagina = await montarPagina({ componente: 'municipio', conMarca: false })
   try {
     pagina.botones('Adjudicar')[0].props.onClick()
     await pagina.asentar()
@@ -905,10 +955,13 @@ test('La bandeja real de adjudicación limpia tareas y decisiones pendientes ant
       pagina.botones('Esperando adjudicación')[0].props.onClick()
       await pagina.asentar()
       await pagina.asentar()
-      assert.equal(pagina.botones('Adjudicar')[0].props.disabled, false)
-      pagina.botones('Adjudicar')[0].props.onClick()
-      await pagina.asentar()
-      assert.deepEqual(pagina.llamadas.adjudicar, [{ id: 11, paraSeleccion: true }])
+      // El coordinador ve las ofertas, pero la adjudicación la realiza el municipio.
+      assert.equal(pagina.botones('Esperando adjudicación')[0].props['aria-current'], 'page')
+      assert.equal(pagina.botones('Confirmar decisión').length, 0)
+      assert.ok(pagina.renderizar().some((nodo) => nodo.type === 'span' && pagina.texto(nodo) === 'Oferta #11'))
+      assert.ok(pagina.renderizar().some((nodo) => nodo.props?.role === 'note' && pagina.texto(nodo) === 'La adjudicación la realiza el municipio.'))
+      assert.equal(pagina.botones('Adjudicar').length, 0)
+      assert.deepEqual(pagina.llamadas.adjudicar, [])
     } finally { pagina.limpiar() }
   }
 })
@@ -930,8 +983,7 @@ test('La bandeja no levanta el candado de una decisión realmente en vuelo', asy
     await pagina.asentar()
     pagina.renderizar().find((nodo) => nodo.type === 'button' && nodo.props['aria-expanded'] === false).props.onClick()
     await pagina.asentar()
-    assert.equal(pagina.botones('Adjudicar')[0].props.disabled, true)
-    pagina.botones('Adjudicar')[0].props.onClick()
+    assert.equal(pagina.botones('Adjudicar').length, 0)
     assert.deepEqual(pagina.llamadas.adjudicar, [])
     pendiente.rechazar(new ApiError(503, 'Bonita no disponible.'))
     await pagina.asentar()
@@ -1117,7 +1169,8 @@ test('La decisión bloquea su emergencia, descarta doble clic y espera la habili
     pagina.botones('Actualizar estado')[0].props.onClick()
     await pagina.asentar()
     await pagina.asentar()
-    assert.equal(pagina.botones('Adjudicar')[0].props.disabled, false)
+    assert.equal(pagina.botones('Esperando adjudicación')[0].props['aria-current'], 'page')
+    assert.equal(pagina.botones('Adjudicar').length, 0)
     assert.equal(pagina.botones('Confirmar decisión').length, 0)
     assert.ok(pagina.llamadas.consultarSeleccion.includes(true))
   } finally { pagina.limpiar() }
@@ -1198,7 +1251,7 @@ test('La consulta pendiente bloquea sólo su emergencia y un fallo deja disponib
   } finally { pagina.limpiar() }
 })
 
-test('Continuar permite confirmar una selección que otro coordinador ya preparó', async () => {
+test('Continuar lleva a la adjudicación del municipio sin ofrecer confirmar al coordinador', async () => {
   const pagina = await montarPagina({ estado: 'esperando_evaluacion', tareas: { 1: 101 }, conMarca: false, puedeSeleccionar: false })
   try {
     pagina.renderizar().find((nodo) => nodo.type === 'select' && nodo.props.id === 'evaluacion-proyecto-1').props.onChange({ target: { value: 'CONTINUAR_PARCIAL' } })
@@ -1213,35 +1266,36 @@ test('Continuar permite confirmar una selección que otro coordinador ya prepar�
     pagina.botones('Confirmar decisión')[0].props.onClick()
     await pagina.asentar()
     await pagina.asentar()
-    assert.equal(pagina.botones('Confirmar selección')[0].props.disabled, false)
+    assert.equal(pagina.botones('Esperando adjudicación')[0].props['aria-current'], 'page')
+    assert.equal(pagina.botones('Seleccionada para confirmar').length, 1)
+    assert.equal(pagina.botones('Confirmar selección').length, 0)
     assert.equal(pagina.botones('Confirmar decisión').length, 0)
   } finally { pagina.limpiar() }
 })
 
 
-test('Un GET de evaluación 503 conserva la adjudicación según la elegibilidad de las ofertas', async () => {
+test('El municipio adjudica según la elegibilidad de las ofertas', async () => {
   for (const puedeSeleccionar of [true, false]) {
-    const pagina = await montarPagina({ conMarca: false, puedeSeleccionar, consultaEvaluacion: async () => { throw new ApiError(503, 'Bonita no disponible.') } })
+    const pagina = await montarPagina({ componente: 'municipio', conMarca: false, puedeSeleccionar, })
     try {
-      assert.equal(pagina.botones('Confirmar decisión').length, 0)
       assert.equal(pagina.botones('Adjudicar')[0].props.disabled, !puedeSeleccionar)
       pagina.botones('Adjudicar')[0].props.onClick()
       await pagina.asentar()
       assert.deepEqual(pagina.llamadas.adjudicar, puedeSeleccionar ? [{ id: 11, paraSeleccion: true }] : [])
-      assert.deepEqual(pagina.llamadas.evaluar, [])
+      assert.deepEqual(pagina.llamadas.consultarEvaluacion, [])
     } finally { pagina.limpiar() }
   }
 })
 
-test('Un GET de evaluación 503 conserva la confirmación de ofertas ya seleccionadas', async () => {
-  const pagina = await montarPagina({ puedeSeleccionar: false, consultaEvaluacion: async () => { throw new ApiError(503, 'Bonita no disponible.') } })
+test('El municipio confirma ofertas ya seleccionadas sin consultar la evaluación', async () => {
+  const pagina = await montarPagina({ componente: 'municipio', puedeSeleccionar: false, })
   try {
     assert.equal(pagina.botones('Confirmar selección')[0].props.disabled, false)
     pagina.botones('Confirmar selección')[0].props.onClick()
     await pagina.asentar()
     await pagina.asentar()
     assert.deepEqual(pagina.llamadas.confirmar, [1])
-    assert.deepEqual(pagina.llamadas.evaluar, [])
+    assert.deepEqual(pagina.llamadas.consultarEvaluacion, [])
   } finally { pagina.limpiar() }
 })
 

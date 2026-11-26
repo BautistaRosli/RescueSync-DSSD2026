@@ -164,12 +164,13 @@ class OfertaService:
         selección cada marca es idempotente y no adelanta la etapa local.
         Ambos recorridos toman los bloqueos en orden emergencia → oferta.
         """
-        if para_seleccion:
-            from .seleccion_ofertas_service import SeleccionOfertasService
+        from .seleccion_ofertas_service import SeleccionOfertasService
 
+        if para_seleccion:
             return asyncio.run(SeleccionOfertasService().preparar(db, oferta_id, self))
         emergencia, oferta = self._bloquear_oferta(db, oferta_id)
         self._validar_adjudicacion(db, emergencia, oferta, para_seleccion=False)
+        asyncio.run(SeleccionOfertasService().verificar_validada(db, emergencia, oferta))
         return self._marcar_oferta(db, emergencia, oferta, background_tasks, False)
 
     def _validar_adjudicacion(self, db, emergencia, oferta, para_seleccion):

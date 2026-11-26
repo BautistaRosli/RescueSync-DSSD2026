@@ -69,7 +69,7 @@ def recibir_evaluacion_cloud(
 async def confirmar_seleccion(
     emergencia_id: int,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR, OPERADOR, AUDITOR)),
+    usuario: Usuario = Depends(requiere_roles(OPERADOR)),
 ):
     verificar_emergencia(db, usuario, emergencia_id)
     return await SeleccionOfertasService().confirmar(db, emergencia_id)
@@ -185,9 +185,11 @@ async def consultar_estado_finalizacion(
 async def listar_ofertas_de_emergencia(
     emergencia_id: int,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR, ONG, AUDITOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, OPERADOR, ONG, AUDITOR)),
 ):
     organizacion_id = filtrar_organizacion(usuario)
+    if usuario.rol.nombre == OPERADOR:
+        return await SeleccionOfertasService().listar(db, emergencia_id, solo_validadas=True)
     if organizacion_id is None:
         return await SeleccionOfertasService().listar(db, emergencia_id)
     return await run_in_threadpool(servicio_ofertas.listar_ofertas_de_emergencia,
@@ -213,7 +215,7 @@ async def adjudicar_oferta(
     background_tasks: BackgroundTasks,
     para_seleccion: bool = Query(False, description="Preparar una selección de ofertas antes de confirmarla en Bonita"),
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR, OPERADOR, AUDITOR)),
+    usuario: Usuario = Depends(requiere_roles(OPERADOR)),
 ):
     if para_seleccion:
         return await SeleccionOfertasService().preparar(db, oferta_id)
