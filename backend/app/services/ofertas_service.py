@@ -170,7 +170,9 @@ class OfertaService:
             return asyncio.run(SeleccionOfertasService().preparar(db, oferta_id, self))
         emergencia, oferta = self._bloquear_oferta(db, oferta_id)
         self._validar_adjudicacion(db, emergencia, oferta, para_seleccion=False)
-        asyncio.run(SeleccionOfertasService().verificar_validada(db, emergencia, oferta))
+        seleccion = SeleccionOfertasService()
+        asyncio.run(seleccion.verificar_etapa_adjudicacion(emergencia))
+        asyncio.run(seleccion.verificar_validada(db, emergencia, oferta))
         return self._marcar_oferta(db, emergencia, oferta, background_tasks, False)
 
     def _validar_adjudicacion(self, db, emergencia, oferta, para_seleccion):

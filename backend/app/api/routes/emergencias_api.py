@@ -62,7 +62,7 @@ def listar_emergencias(
 async def listar_bandeja_emergencias(
     publicada: bool,
     estado: Optional[str] = Query(default=None),
-    etapa_bonita: Optional[EtapaBonita] = Query(default=None, description="Etapa real de Bonita; sólo coordinador y publicadas"),
+    etapa_bonita: Optional[EtapaBonita] = Query(default=None, description="Etapa real de Bonita; coordinador (operador sólo esperando_adjudicacion) y publicadas"),
     pagina: int = Query(default=1, ge=1),
     por_pagina: int = Query(default=POR_PAGINA_MAXIMO, ge=1, le=POR_PAGINA_MAXIMO),
     db: Session = Depends(get_db),
@@ -78,7 +78,10 @@ async def listar_bandeja_emergencias(
             ),
         )
     if etapa_bonita is not None:
-        if usuario.rol.nombre != COORDINADOR:
+        # El municipio sólo consulta los casos que Bonita habilitó para adjudicar.
+        if usuario.rol.nombre != COORDINADOR and not (
+            usuario.rol.nombre == OPERADOR and etapa_bonita == "esperando_adjudicacion"
+        ):
             raise HTTPException(403, "Sólo el Centro Coordinador puede consultar las etapas de Bonita")
         estado_esperado = (EstadoEmergencia.ESPERA_OFERTAS if etapa_bonita == "esperando_ofertas"
                            else EstadoEmergencia.ESPERANDO_ADJUDICACION)

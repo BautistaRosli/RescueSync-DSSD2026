@@ -1,9 +1,12 @@
 """Contrato HTTP de la solicitud para Cloud, con autenticación y base aislada."""
 
+from unittest.mock import AsyncMock
+
 import httpx
 import pytest
 
 from app.integrations import cloud_client
+from app.integrations.bonita.client import bonita_client
 from app.models import Emergencia, EstadoEmergencia, OfertaAyuda, Usuario
 from app.services.permisos_service import AUDITOR, COORDINADOR, ONG, OPERADOR
 from test_permisos_api import cabecera, entorno, estado
@@ -430,6 +433,10 @@ def test_adjudicacion_persiste_y_bloquea_oferta_alternativa(solicitud, monkeypat
                   for oferta in (primera, segunda) for lote in lotes]
     monkeypatch.setattr(EvaluacionCloudService, "obtener", staticmethod(
         lambda db, emergencia_id, caso_id: {"emergencia_id": 1, "resultados": resultados}))
+    # Bonita habilitó Seleccionar oferta (cobertura alcanzada).
+    monkeypatch.setattr(bonita_client, "obtener_tarea_pendiente", AsyncMock(
+        side_effect=lambda caso, nombre: {"id": "99", "caseId": "42", "name": nombre, "state": "ready"}
+        if nombre == "Seleccionar oferta" else None))
 
     adjudicacion = cliente.post(
         f"/api/v1/ofertas/{primera.json()['id']}/adjudicar",
