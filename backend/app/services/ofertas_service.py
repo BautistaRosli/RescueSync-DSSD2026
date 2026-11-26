@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..dto import (
     AdjudicacionRespuesta,
+    EstadoFinalizacionOfertaRespuesta,
     FinalizacionOfertaRespuesta,
     OfertaConsolidada,
     OfertaItemConsolidado,
@@ -451,6 +452,91 @@ class OfertaService:
             raise HTTPException(status_code=503, detail="Bonita devolvió una respuesta inválida al finalizar la oferta")
         finally:
             db.rollback()
+
+    async def consultar_estado_finalizacion(
+        self, db: Session, oferta_id: int
+    ) -> EstadoFinalizacionOfertaRespuesta:
+        """Consulta si Bonita habilitó la finalización de una oferta adjudicada."""
+        oferta = self._obtener_oferta_entidad(db, oferta_id)
+        items_finalizados = bool(oferta.items) and all(
+            item.finalizado_en is not None for item in oferta.items
+        )
+        estado = {
+            "oferta_id": oferta.id,
+            "items_finalizados": items_finalizados,
+            "tarea_ong_completada": False,
+            "supervisar_proyecto_pendiente": False,
+            "habilitada": False,
+        }
+
+        if oferta.adjudicada_en is None:
+            return EstadoFinalizacionOfertaRespuesta(
+                **estado, mensaje="La oferta no está adjudicada"
+            )
+        if not oferta.items:
+            return EstadoFinalizacionOfertaRespuesta(
+                **estado, mensaje="La oferta adjudicada no tiene ítems"
+            )
+        if not items_finalizados:
+            return EstadoFinalizacionOfertaRespuesta(
+                **estado,
+                mensaje=(
+                    "La oferta adjudicada tiene ítems pendientes de finalización"
+                ),
+            )
+        if not oferta.emergencia.bonita_case_id:
+            return EstadoFinalizacionOfertaRespuesta(
+                **estado,
+                mensaje="La oferta adjudicada no tiene un caso de Bonita asociado",
+            )
+
+        try:
+            caso_id = int(oferta.emergencia.bonita_case_id)
+            if caso_id <= 0:
+                raise ValueError
+            tarea_ong_completada = await bonita_client.tarea_completada_por_nombre(
+                caso_id, NOMBRE_TAREA_MARCAR_ACTIVIDADES_FINALIZADAS
+            )
+            if type(tarea_ong_completada) is not bool:
+                raise ValueError("Bonita devolvió un estado inválido")
+            estado["tarea_ong_completada"] = tarea_ong_completada
+            if not tarea_ong_completada:
+                return EstadoFinalizacionOfertaRespuesta(
+                    **estado,
+                    mensaje=(
+                        "La tarea 'Marcar actividades finalizadas' aún no está "
+                        "completada en Bonita"
+                    ),
+                )
+
+            tarea_supervisar = await bonita_client.obtener_tarea_pendiente(
+                caso_id, NOMBRE_TAREA_SUPERVISAR_PROYECTO
+            )
+            if tarea_supervisar is not None:
+                if (
+                    not isinstance(tarea_supervisar, dict)
+                    or str(tarea_supervisar.get("caseId")) != str(caso_id)
+                    or tarea_supervisar.get("name") != NOMBRE_TAREA_SUPERVISAR_PROYECTO
+                ):
+                    raise ValueError("Bonita devolvió una tarea inválida")
+                estado["supervisar_proyecto_pendiente"] = True
+        except (BonitaClientError, httpx.RequestError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo consultar el estado de la oferta en Bonita",
+            ) from exc
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Bonita devolvió una respuesta inválida al consultar la finalización",
+            ) from exc
+
+        if estado["supervisar_proyecto_pendiente"]:
+            estado["habilitada"] = True
+            mensaje = "La tarea 'Supervisar proyecto' está habilitada"
+        else:
+            mensaje = "La tarea 'Supervisar proyecto' aún no está disponible en Bonita"
+        return EstadoFinalizacionOfertaRespuesta(**estado, mensaje=mensaje)
 
     def existe_referencia_a_lote(self, db: Session, lote_id: int) -> bool:
         """Informa si alguna oferta usa el lote indicado."""

@@ -97,6 +97,15 @@ class FinalizacionOfertaRespuesta(BaseModel):
     mensaje: str
 
 
+class EstadoFinalizacionOfertaRespuesta(BaseModel):
+    oferta_id: int
+    items_finalizados: bool
+    tarea_ong_completada: bool
+    supervisar_proyecto_pendiente: bool
+    habilitada: bool
+    mensaje: str
+
+
 class SeleccionOfertasRespuesta(BaseModel):
     emergencia_id: int
     cantidad_pares: int
