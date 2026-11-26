@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import {
+  ApiError,
   actualizarRecurso,
   crearRecurso,
   eliminarRecurso,
@@ -195,6 +196,9 @@ export function InventarioPage({ organizacionId }: Props) {
       recargar()
     } catch (fallo) {
       setError(describirError(fallo))
+      if (enEdicion === null && fallo instanceof ApiError && fallo.status === 409) {
+        recargar()
+      }
     } finally {
       setGuardando(false)
     }
