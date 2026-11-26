@@ -88,6 +88,8 @@ const DESCRIPCIONES_BANDEJA: Record<PestaniaBandeja, string> = {
 
 interface EstadoEvaluacionProyecto {
   tareaId: number | null
+  version: number
+  coberturaParcial: 'cargando' | 'disponible' | 'sin_ofertas' | 'no_disponible'
   accion: AccionEvaluacionProyecto | ''
   cargando: boolean
   enviando: boolean
@@ -939,7 +941,7 @@ export function CentroCoordinadorPage() {
   const actualizarEvaluacionProyecto = useCallback((emergenciaId: number, cambios: Partial<EstadoEvaluacionProyecto>) => {
     const estado: EstadoEvaluacionProyecto = {
       ...(evaluacionesVigentes.current[emergenciaId] ?? {
-        tareaId: null, accion: '', cargando: false, enviando: false, pendiente: false, requiereConsulta: false,
+        tareaId: null, version: 0, coberturaParcial: 'no_disponible', accion: '', cargando: false, enviando: false, pendiente: false, requiereConsulta: false,
       }),
       ...cambios,
     }
@@ -997,7 +999,7 @@ export function CentroCoordinadorPage() {
               // La bandeja vigente confirma la tarea de selección de este caso.
               versionesEvaluacion.current[emergencia.id] = (versionesEvaluacion.current[emergencia.id] ?? 0) + 1
               actualizarEvaluacionProyecto(emergencia.id, {
-                tareaId: null, accion: '', pendiente: false, cargando: false, requiereConsulta: false, error: undefined,
+                tareaId: null, coberturaParcial: 'no_disponible', accion: '', pendiente: false, cargando: false, requiereConsulta: false, error: undefined,
               })
             }
           }
@@ -1026,20 +1028,39 @@ export function CentroCoordinadorPage() {
   const cargarEvaluacionProyecto = useCallback(async (emergenciaId: number, incluirSeleccion = false): Promise<EvaluacionProyectoRead | undefined> => {
     if (operacionesOfertas.current.has(emergenciaId)) return
     const version = (versionesEvaluacion.current[emergenciaId] ?? 0) + 1
+    const versionVista = versionPestania.current
     versionesEvaluacion.current[emergenciaId] = version
-    actualizarEvaluacionProyecto(emergenciaId, { cargando: true })
+    actualizarEvaluacionProyecto(emergenciaId, { version, cargando: true, coberturaParcial: 'cargando' })
     try {
       const respuesta = await obtenerEvaluacionProyecto(emergenciaId, incluirSeleccion)
       if (versionesEvaluacion.current[emergenciaId] !== version) return
       const cambioTarea = evaluacionesVigentes.current[emergenciaId]?.tareaId !== respuesta.tarea_id
       actualizarEvaluacionProyecto(emergenciaId, {
         tareaId: respuesta.tarea_id, requiereConsulta: false, error: undefined,
+        coberturaParcial: 'no_disponible',
         ...(cambioTarea ? { accion: '' as const } : {}),
       })
+      if (respuesta.tarea_id !== null && pestaniaActual.current === 'esperando_evaluacion' &&
+        versionPestania.current === versionVista && !evaluacionesVigentes.current[emergenciaId]?.pendiente) {
+        actualizarEvaluacionProyecto(emergenciaId, { coberturaParcial: 'cargando' })
+        const sigueVigente = () => montada.current && versionesEvaluacion.current[emergenciaId] === version &&
+          versionPestania.current === versionVista && pestaniaActual.current === 'esperando_evaluacion' &&
+          evaluacionesVigentes.current[emergenciaId]?.tareaId === respuesta.tarea_id &&
+          !evaluacionesVigentes.current[emergenciaId]?.pendiente
+        void listarOfertasDeEmergencia(emergenciaId).then((ofertas) => {
+          if (!sigueVigente()) return
+          const hayElegible = ofertas.some((oferta) => oferta.emergencia_id === emergenciaId &&
+            oferta.estado_seleccion === 'sin_seleccionar' && oferta.items.length > 0 &&
+            oferta.items.every((item) => item.cantidad_verificada != null && item.cantidad_verificada > 0))
+          actualizarEvaluacionProyecto(emergenciaId, { coberturaParcial: hayElegible ? 'disponible' : 'sin_ofertas' })
+        }).catch(() => {
+          if (sigueVigente()) actualizarEvaluacionProyecto(emergenciaId, { coberturaParcial: 'no_disponible' })
+        })
+      }
       return respuesta
     } catch (fallo) {
       if (versionesEvaluacion.current[emergenciaId] !== version) return
-      actualizarEvaluacionProyecto(emergenciaId, { requiereConsulta: true, error: describirError(fallo) })
+      actualizarEvaluacionProyecto(emergenciaId, { coberturaParcial: 'no_disponible', requiereConsulta: true, error: describirError(fallo) })
     } finally {
       if (versionesEvaluacion.current[emergenciaId] === version) actualizarEvaluacionProyecto(emergenciaId, { cargando: false })
     }
@@ -1082,11 +1103,12 @@ export function CentroCoordinadorPage() {
     }
   }
 
-  async function manejarEvaluarProyecto(emergenciaId: number, tareaId: number): Promise<void> {
+  async function manejarEvaluarProyecto(emergenciaId: number, tareaId: number, version: number): Promise<void> {
     const evaluacion = evaluacionesVigentes.current[emergenciaId]
     if (pestaniaActual.current !== 'esperando_evaluacion' || operacionesOfertas.current.has(emergenciaId) ||
-      evaluacion?.tareaId !== tareaId || evaluacion.cargando || evaluacion.enviando ||
-      evaluacion.pendiente || evaluacion.requiereConsulta || evaluacion.accion === '') return
+      versionesEvaluacion.current[emergenciaId] !== version || evaluacion?.tareaId !== tareaId || evaluacion.cargando || evaluacion.enviando ||
+      evaluacion.pendiente || evaluacion.requiereConsulta || evaluacion.accion === '' ||
+      (evaluacion.accion === 'CONTINUAR_PARCIAL' && evaluacion.coberturaParcial !== 'disponible')) return
     operacionesOfertas.current.add(emergenciaId)
     versionesEvaluacion.current[emergenciaId] = (versionesEvaluacion.current[emergenciaId] ?? 0) + 1
     actualizarEvaluacionProyecto(emergenciaId, { enviando: true, error: undefined })
@@ -1780,18 +1802,37 @@ export function CentroCoordinadorPage() {
                               id={`evaluacion-proyecto-${emergencia.id}`}
                               value={evaluacionesProyecto[emergencia.id].accion}
                               disabled={evaluacionesProyecto[emergencia.id].cargando || evaluacionesProyecto[emergencia.id].enviando || evaluacionesProyecto[emergencia.id].requiereConsulta}
-                              onChange={(evento) => actualizarEvaluacionProyecto(emergencia.id, { accion: evento.target.value as AccionEvaluacionProyecto })}
+                              onChange={(evento) => {
+                                const actual = evaluacionesVigentes.current[emergencia.id]
+                                const accion = evento.target.value as AccionEvaluacionProyecto
+                                if (pestaniaActual.current !== 'esperando_evaluacion' ||
+                                  versionesEvaluacion.current[emergencia.id] !== evaluacionesProyecto[emergencia.id].version ||
+                                  actual?.tareaId !== evaluacionesProyecto[emergencia.id].tareaId ||
+                                  actual.cargando || actual.enviando || actual.pendiente || actual.requiereConsulta ||
+                                  (accion === 'CONTINUAR_PARCIAL' && actual.coberturaParcial !== 'disponible')) return
+                                actualizarEvaluacionProyecto(emergencia.id, { accion })
+                              }}
                               className={claseCampo}
                             >
                               <option value="" disabled>Elegir una decisión</option>
                               <option value="REABRIR">Reabrir convocatoria</option>
                               <option value="REFORMULAR">Reformular pedido</option>
-                              <option value="CONTINUAR_PARCIAL">Continuar con cobertura parcial</option>
+                              <option value="CONTINUAR_PARCIAL" disabled={evaluacionesProyecto[emergencia.id].coberturaParcial !== 'disponible'}>Continuar con cobertura parcial</option>
                             </select>
+                            {evaluacionesProyecto[emergencia.id].coberturaParcial !== 'disponible' && (
+                              <p className="mt-2 text-sm text-slate-400">
+                                {evaluacionesProyecto[emergencia.id].coberturaParcial === 'cargando'
+                                  ? 'Verificando disponibilidad de cobertura parcial...'
+                                  : evaluacionesProyecto[emergencia.id].coberturaParcial === 'sin_ofertas'
+                                    ? 'No hay ofertas elegibles con cantidad verificada positiva para continuar con cobertura parcial.'
+                                    : 'No se pudo verificar la disponibilidad de cobertura parcial. Actualice el estado para reintentar.'}
+                              </p>
+                            )}
                             <button
                               type="button"
-                              disabled={evaluacionesProyecto[emergencia.id].cargando || evaluacionesProyecto[emergencia.id].enviando || evaluacionesProyecto[emergencia.id].requiereConsulta || evaluacionesProyecto[emergencia.id].accion === ''}
-                              onClick={() => void manejarEvaluarProyecto(emergencia.id, evaluacionesProyecto[emergencia.id].tareaId!)}
+                              disabled={evaluacionesProyecto[emergencia.id].cargando || evaluacionesProyecto[emergencia.id].enviando || evaluacionesProyecto[emergencia.id].requiereConsulta || evaluacionesProyecto[emergencia.id].accion === '' ||
+                                (evaluacionesProyecto[emergencia.id].accion === 'CONTINUAR_PARCIAL' && evaluacionesProyecto[emergencia.id].coberturaParcial !== 'disponible')}
+                              onClick={() => void manejarEvaluarProyecto(emergencia.id, evaluacionesProyecto[emergencia.id].tareaId!, evaluacionesProyecto[emergencia.id].version)}
                               className={`${claseBotonSecundario} mt-3 text-sm`}
                             >
                               {evaluacionesProyecto[emergencia.id].enviando ? 'Enviando decisión...' : 'Confirmar decisión'}
