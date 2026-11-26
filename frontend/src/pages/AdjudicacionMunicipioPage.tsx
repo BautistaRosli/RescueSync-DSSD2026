@@ -145,7 +145,6 @@ export function AdjudicacionMunicipioPage() {
   const [confirmadas, setConfirmadas] = useState<Record<number, boolean>>({})
   const [errorConfirmar, setErrorConfirmar] = useState<Record<number, string>>({})
   const [exitoConfirmar, setExitoConfirmar] = useState<Record<number, string>>({})
-  const [confirmacionesAdjudicacion, setConfirmacionesAdjudicacion] = useState<Record<number, boolean>>({})
   const operacionesOfertas = useRef(new Set<number>())
   const adjudicadasRecientes = useRef(new Set<number>())
   const confirmadasRecientes = useRef(new Set<number>())
@@ -217,7 +216,6 @@ export function AdjudicacionMunicipioPage() {
   async function manejarAdjudicar(
     emergenciaId: number,
     ofertaId: number,
-    paraSeleccion: boolean,
   ): Promise<void> {
     const ofertas = ofertasVigentes.current[emergenciaId]
     const oferta = ofertas?.find((registro) => registro.id === ofertaId)
@@ -225,11 +223,7 @@ export function AdjudicacionMunicipioPage() {
       pestaniaActual.current !== 'esperando_adjudicacion' || oferta === undefined ||
       operacionesOfertas.current.has(emergenciaId) ||
       confirmadasRecientes.current.has(emergenciaId) ||
-      (paraSeleccion && !oferta.puede_seleccionar) ||
-      oferta.adjudicada_en !== null || adjudicadasRecientes.current.has(ofertaId) ||
-      (!paraSeleccion && ofertas?.some((registro) =>
-        registro.adjudicada_en !== null || adjudicadasRecientes.current.has(registro.id),
-      ))
+      !oferta.puede_seleccionar || oferta.adjudicada_en !== null || adjudicadasRecientes.current.has(ofertaId)
     ) return
 
     operacionesOfertas.current.add(emergenciaId)
@@ -237,17 +231,13 @@ export function AdjudicacionMunicipioPage() {
     setErrorAdjudicar((actuales) => sinClave(actuales, ofertaId))
     setExitoAdjudicar((actuales) => sinClave(actuales, ofertaId))
     try {
-      const respuesta = await adjudicarOferta(ofertaId, paraSeleccion)
+      const respuesta = await adjudicarOferta(ofertaId, true)
       if (respuesta?.oferta_id !== ofertaId || typeof respuesta.mensaje !== 'string') {
         throw new ApiError(200, 'La respuesta de adjudicación no pudo verificarse.')
       }
       adjudicadasRecientes.current.add(ofertaId)
       setExitoAdjudicar((actuales) => ({ ...actuales, [ofertaId]: respuesta.mensaje }))
       await cargarOfertasDeEmergencia(emergenciaId)
-      if (!paraSeleccion) {
-        cambiarPestania('en_proceso')
-        setRecargo((actual) => actual + 1)
-      }
     } catch (fallo) {
       if (fallo instanceof ApiError && fallo.status === 409) {
         await cargarOfertasDeEmergencia(emergenciaId)
@@ -257,21 +247,7 @@ export function AdjudicacionMunicipioPage() {
     } finally {
       operacionesOfertas.current.delete(emergenciaId)
       setAdjudicando((actuales) => sinClave(actuales, emergenciaId))
-      setConfirmacionesAdjudicacion((actuales) => sinClave(actuales, ofertaId))
     }
-  }
-
-  function solicitarConfirmacionAdjudicacion(ofertaId: number) {
-    setConfirmacionesAdjudicacion((actuales) => ({ ...actuales, [ofertaId]: true }))
-  }
-
-  function cancelarConfirmacionAdjudicacion(ofertaId: number) {
-    setConfirmacionesAdjudicacion((actuales) => sinClave(actuales, ofertaId))
-  }
-
-  function confirmarAdjudicacionSoloOferta(emergenciaId: number, ofertaId: number) {
-    setConfirmacionesAdjudicacion((actuales) => sinClave(actuales, ofertaId))
-    void manejarAdjudicar(emergenciaId, ofertaId, false)
   }
 
   async function manejarConfirmarSeleccion(emergenciaId: number): Promise<void> {
@@ -436,15 +412,11 @@ export function AdjudicacionMunicipioPage() {
                       adjudicando={adjudicando[emergencia.id] ?? null}
                       errorAdjudicar={errorAdjudicar}
                       exitoAdjudicar={exitoAdjudicar}
-                      alAdjudicar={(ofertaId, paraSeleccion) => void manejarAdjudicar(emergencia.id, ofertaId, paraSeleccion)}
+                      alAdjudicar={(ofertaId) => void manejarAdjudicar(emergencia.id, ofertaId)}
                       confirmando={confirmando[emergencia.id] === true}
                       confirmada={confirmadas[emergencia.id] === true}
                       errorConfirmar={errorConfirmar[emergencia.id]}
                       exitoConfirmar={exitoConfirmar[emergencia.id]}
-                      confirmacionesPendientes={confirmacionesAdjudicacion}
-                      alSolicitarConfirmacion={solicitarConfirmacionAdjudicacion}
-                      alCancelarConfirmacion={cancelarConfirmacionAdjudicacion}
-                      alConfirmarAdjudicacion={(ofertaId) => confirmarAdjudicacionSoloOferta(emergencia.id, ofertaId)}
                       alConfirmar={() => void manejarConfirmarSeleccion(emergencia.id)}
                       puedeAdjudicar={pestania === 'esperando_adjudicacion'}
                       puedeConfirmar={pestania === 'esperando_adjudicacion'}

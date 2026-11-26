@@ -11,7 +11,6 @@ import { formatearFecha } from '../utils/formato'
 import { estaAdjudicadaParaCierre, puedeCerrarOferta } from '../utils/ofertas'
 
 const SIN_MENSAJES: Record<number, string> = {}
-const SIN_CONFIRMACIONES: Record<number, boolean> = {}
 const sinAccion = () => {}
 
 export interface PanelAdjudicacionProps {
@@ -36,17 +35,13 @@ export interface PanelAdjudicacionProps {
   confirmada?: boolean
   errorConfirmar?: string | undefined
   exitoConfirmar?: string | undefined
-  confirmacionesPendientes?: Record<number, boolean>
-  alAdjudicar?: (ofertaId: number, paraSeleccion: boolean) => void
-  alSolicitarConfirmacion?: (ofertaId: number) => void
-  alCancelarConfirmacion?: (ofertaId: number) => void
-  alConfirmarAdjudicacion?: (ofertaId: number) => void
+  alAdjudicar?: (ofertaId: number) => void
   alFinalizar?: (ofertaId: number) => void
   alConfirmar?: () => void
 }
 
 // Listado de ofertas de una emergencia con las acciones de adjudicación
-// (seleccionar, adjudicar solo esta, confirmar selección) y de cierre.
+// (seleccionar, confirmar selección) y de cierre.
 // Cada pantalla habilita sólo las acciones que le corresponden a su rol.
 export function PanelAdjudicacion({
   ofertas,
@@ -70,11 +65,7 @@ export function PanelAdjudicacion({
   confirmada = false,
   errorConfirmar,
   exitoConfirmar,
-  confirmacionesPendientes = SIN_CONFIRMACIONES,
   alAdjudicar = sinAccion,
-  alSolicitarConfirmacion = sinAccion,
-  alCancelarConfirmacion = sinAccion,
-  alConfirmarAdjudicacion = sinAccion,
   alFinalizar = sinAccion,
   alConfirmar = sinAccion,
 }: PanelAdjudicacionProps) {
@@ -208,7 +199,7 @@ export function PanelAdjudicacion({
                 exitoAdjudicar[oferta.id] === undefined && (
                 <button
                   type="button"
-                  onClick={() => alAdjudicar(oferta.id, true)}
+                  onClick={() => alAdjudicar(oferta.id)}
                   disabled={bloqueada || !oferta.puede_seleccionar || cargando || errorCarga !== undefined}
                   className={`${claseBotonSecundario} self-start text-sm`}
                 >
@@ -219,46 +210,6 @@ export function PanelAdjudicacion({
               {oferta.estado_seleccion === 'sin_seleccionar' && !oferta.puede_seleccionar &&
                 oferta.items.length > 0 && oferta.items.every((item) => (item.cantidad_verificada ?? 0) > 0) && (
                 <p className="text-xs text-slate-400">La selección no está habilitada en la etapa actual.</p>
-              )}
-
-              {puedeAdjudicar && !confirmada && !hayAdjudicadas && oferta.adjudicada_en === null && (
-                confirmacionesPendientes[oferta.id] === true ? (
-                  <div
-                    role="group"
-                    aria-label={`Confirmar adjudicación de la oferta #${oferta.id}`}
-                    className="flex flex-col gap-2 rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-3"
-                  >
-                    <p className="text-sm text-yellow-200">
-                      ¿Adjudicar la oferta #{oferta.id}? Se adjudicará esta oferta y no podrás elegir otra.
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => alConfirmarAdjudicacion(oferta.id)}
-                        disabled={bloqueada || cargando || errorCarga !== undefined}
-                        className={`${claseBotonSecundario} text-sm`}
-                      >
-                        Confirmar adjudicación
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => alCancelarConfirmacion(oferta.id)}
-                        className={`${claseBotonSecundario} text-sm`}
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => alSolicitarConfirmacion(oferta.id)}
-                    disabled={bloqueada || cargando || errorCarga !== undefined}
-                    className={`${claseBotonSecundario} self-start text-sm`}
-                  >
-                    Adjudicar solo esta oferta
-                  </button>
-                )
               )}
 
               {oferta.estado_seleccion === 'adjudicada' && exitoAdjudicar[oferta.id] !== undefined && (
