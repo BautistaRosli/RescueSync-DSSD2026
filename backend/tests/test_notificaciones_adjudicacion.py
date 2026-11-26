@@ -1,24 +1,259 @@
 """Avisos durables con sesiones aisladas y SMTP exclusivamente simulado."""
 
 import asyncio
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Event, get_ident
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from app.integrations.email import service as correo_service
 from app.integrations.email.client import EmailClientError
-from app.models import AvisoAdjudicacion, OfertaAyuda, Organizacion
+from app.models import (AvisoAdjudicacion, ConfirmacionSeleccion, Emergencia,
+                        EstadoEmergencia, OfertaAyuda, Organizacion)
+from app.services.permisos_service import AUDITOR, COORDINADOR, ONG, OPERADOR
 from app.services import ofertas_service
 from app.services.notificaciones_adjudicacion_service import (
     consumir_avisos, procesar_aviso_pendiente,
 )
-from test_confirmar_seleccion import adjudicar, confirmar, preparar_marcas, seleccion
+from test_confirmar_seleccion import PARES, adjudicar, confirmar, preparar_marcas, seleccion
 from test_concurrencia import sesiones_pg
-from test_permisos_api import entorno
+from test_permisos_api import cabecera, entorno, estado
+
+
+RUTA_AVISO = "/api/v1/emergencias/2/notificar-adjudicacion"
+
+
+def solicitar_aviso(seleccion, rol=COORDINADOR, caso_id=42):
+    return seleccion[0].post(RUTA_AVISO, params={"caso_id": caso_id}, headers=cabecera(rol))
+
+
+@pytest.mark.parametrize("rol", [COORDINADOR, AUDITOR])
+@pytest.mark.parametrize("resuelta", [False, True])
+def test_callback_encola_solo_seleccion_confirmada_sin_enviar(seleccion, rol, resuelta):
+    seleccion[2]["seleccion"] = PARES
+    with seleccion[1]() as db:
+        db.get(Emergencia, 2).estado = (EstadoEmergencia.RESUELTA if resuelta else EstadoEmergencia.EN_PROCESO)
+        db.add(AvisoAdjudicacion(oferta_id=1))
+        db.commit()
+    respuesta = solicitar_aviso(seleccion, rol)
+    assert respuesta.status_code == 202, respuesta.text
+    assert respuesta.content == b""
+    seleccion[3][1].assert_not_called()
+    with seleccion[1]() as db:
+        assert sorted(aviso.oferta_id for aviso in db.query(AvisoAdjudicacion)) == [1, 2]
+        assert all(aviso.enviada_en is None for aviso in db.query(AvisoAdjudicacion))
+        assert db.get(Emergencia, 2).estado == (EstadoEmergencia.RESUELTA if resuelta else EstadoEmergencia.EN_PROCESO)
+
+
+@pytest.mark.parametrize("rol", [ONG, OPERADOR])
+def test_callback_rechaza_roles_sin_mutaciones(seleccion, rol):
+    anterior = estado(seleccion[1])
+    assert solicitar_aviso(seleccion, rol).status_code == 403
+    assert estado(seleccion[1]) == anterior
+
+
+@pytest.mark.parametrize("caso_id", [None, 0, -1, "invalido"])
+def test_callback_exige_caso_positivo(seleccion, caso_id):
+    parametros = {} if caso_id is None else {"caso_id": caso_id}
+    anterior = estado(seleccion[1])
+    respuesta = seleccion[0].post(RUTA_AVISO, params=parametros, headers=cabecera(COORDINADOR))
+    assert respuesta.status_code == 422
+    assert estado(seleccion[1]) == anterior
+
+
+def test_callback_exige_sesion_y_emergencia_existente(seleccion):
+    assert seleccion[0].post(RUTA_AVISO, params={"caso_id": 42}).status_code == 401
+    assert seleccion[0].post(RUTA_AVISO.replace("/2/", "/999/"), params={"caso_id": 42},
+                             headers=cabecera(COORDINADOR)).status_code == 404
+
+
+@pytest.mark.parametrize("problema", ["otro_caso", "sin_caso", "provisional", "sin_prueba", "otra_seleccion",
+                                     "exclusiva", "sin_ofertas", "bonita_caido"])
+def test_callback_rechaza_caso_o_finalidad_sin_mutaciones(seleccion, problema):
+    seleccion[2]["seleccion"] = PARES
+    with seleccion[1]() as db:
+        db.get(Emergencia, 2).estado = EstadoEmergencia.EN_PROCESO
+        if problema == "sin_caso":
+            db.get(Emergencia, 2).bonita_case_id = None
+        if problema == "provisional":
+            db.get(Emergencia, 2).estado = EstadoEmergencia.ESPERANDO_ADJUDICACION
+        if problema != "exclusiva":
+            db.add(AvisoAdjudicacion(oferta_id=1))
+        if problema == "sin_ofertas":
+            for oferta in db.query(OfertaAyuda):
+                oferta.adjudicada_en = None
+        db.commit()
+    if problema == "sin_prueba":
+        seleccion[2]["seleccion"] = []
+    if problema == "otra_seleccion":
+        seleccion[2]["seleccion"] = PARES[:1]
+    if problema == "bonita_caido":
+        seleccion[2]["caido"] = True
+    anterior = estado(seleccion[1])
+    respuesta = solicitar_aviso(seleccion, caso_id=43 if problema == "otro_caso" else 42)
+    assert respuesta.status_code == (503 if problema == "bonita_caido" else 409), respuesta.text
+    assert estado(seleccion[1]) == anterior
+    seleccion[3][1].assert_not_called()
+
+
+@pytest.mark.parametrize("estado_emergencia", [EstadoEmergencia.ESPERANDO_ADJUDICACION, EstadoEmergencia.ESPERA_OFERTAS,
+                                             EstadoEmergencia.EN_PROCESO])
+def test_callback_temprano_acepta_intencion_durable_sin_bloqueo_ni_bonita(seleccion, monkeypatch, estado_emergencia):
+    from app.repositories import EmergenciaRepository
+
+    with seleccion[1]() as db:
+        db.get(Emergencia, 2).estado = estado_emergencia
+        db.add(ConfirmacionSeleccion(emergencia_id=2, caso_id="42", seleccion_json=json.dumps(PARES)))
+        db.commit()
+    obtener = EmergenciaRepository.obtener_por_id
+
+    def sin_bloqueo(*args, **kwargs):
+        assert not kwargs.get("bloquear", False)
+        return obtener(*args, **kwargs)
+
+    monkeypatch.setattr(EmergenciaRepository, "obtener_por_id", sin_bloqueo)
+    seleccion[2]["caido"] = True
+    anterior = estado(seleccion[1])
+    assert solicitar_aviso(seleccion).status_code == 202
+    assert estado(seleccion[1]) == anterior
+    seleccion[3][1].assert_not_called()
+
+
+@pytest.mark.parametrize("caso,pares", [("43", PARES), ("42", PARES[:1])])
+def test_callback_temprano_rechaza_intencion_de_otra_seleccion(seleccion, caso, pares):
+    with seleccion[1]() as db:
+        db.get(Emergencia, 2).estado = EstadoEmergencia.ESPERANDO_ADJUDICACION
+        db.add(ConfirmacionSeleccion(emergencia_id=2, caso_id=caso, seleccion_json=json.dumps(pares)))
+        db.commit()
+    anterior = estado(seleccion[1])
+    assert solicitar_aviso(seleccion).status_code == 409
+    assert estado(seleccion[1]) == anterior
+
+
+@pytest.mark.parametrize("enviada", [False, True])
+def test_callback_repetido_conserva_envio_intentos_y_backoff(seleccion, enviada):
+    assert confirmar(seleccion).status_code == 200
+    with seleccion[1]() as db:
+        aviso = db.get(AvisoAdjudicacion, 1)
+        aviso.intentos = 3
+        aviso.proximo_intento_en = datetime.now(timezone.utc) + timedelta(hours=1)
+        if enviada:
+            aviso.enviada_en = datetime.now(timezone.utc)
+        db.commit()
+    anterior = estado(seleccion[1])
+    assert solicitar_aviso(seleccion).status_code == 202
+    assert solicitar_aviso(seleccion).status_code == 202
+    assert estado(seleccion[1]) == anterior
+    seleccion[3][1].assert_not_called()
+
+
+@pytest.mark.parametrize("cambio", [None, "caso", "estado", "pares"])
+def test_callback_cierra_lectura_para_bonita_y_revalida_bajo_lock(seleccion, monkeypatch, cambio):
+    from app.services.seleccion_ofertas_service import SeleccionOfertasService
+
+    assert confirmar(seleccion).status_code == 200
+    sesion_lectura = []
+    verificar = SeleccionOfertasService._verificar_cola_seleccion
+
+    def recordar_sesion(db, pares):
+        sesion_lectura.append(db)
+        verificar(db, pares)
+
+    async def comprobar_prueba(self, caso_id, pares):
+        assert caso_id == 42
+        assert pares == {(1, 2), (2, 2)}
+        assert not sesion_lectura[0].in_transaction()
+        with seleccion[1]() as db:
+            if cambio == "caso":
+                db.get(Emergencia, 2).bonita_case_id = "43"
+            elif cambio == "estado":
+                db.get(Emergencia, 2).estado = EstadoEmergencia.ESPERANDO_ADJUDICACION
+            elif cambio == "pares":
+                db.get(OfertaAyuda, 2).adjudicada_en = None
+            db.commit()
+        return True
+
+    monkeypatch.setattr(SeleccionOfertasService, "_verificar_cola_seleccion", staticmethod(recordar_sesion))
+    monkeypatch.setattr(SeleccionOfertasService, "_ya_confirmada", comprobar_prueba)
+    with seleccion[1]() as db:
+        db.delete(db.get(AvisoAdjudicacion, 2))
+        db.commit()
+    respuesta = solicitar_aviso(seleccion)
+    assert respuesta.status_code == (202 if cambio is None else 409), respuesta.text
+    with seleccion[1]() as db:
+        assert db.query(AvisoAdjudicacion).count() == (2 if cambio is None else 1)
+
+
+@pytest.mark.parametrize("exclusiva", [False, True])
+def test_callback_on_enter_postgresql_no_espera_al_confirmador(sesiones_pg, monkeypatch, exclusiva):
+    from fastapi.testclient import TestClient
+    from app.database import get_db
+    from app.integrations.bonita.client import bonita_client
+    from app.main import app
+    from app.models import OfertaItem, Rol, Usuario
+    from app.services.seleccion_ofertas_service import SeleccionOfertasService
+
+    with sesiones_pg() as db:
+        emergencia = db.get(Emergencia, 1)
+        emergencia.bonita_case_id = "42"
+        emergencia.estado = EstadoEmergencia.EN_PROCESO if exclusiva else EstadoEmergencia.ESPERANDO_ADJUDICACION
+        oferta = db.get(OfertaAyuda, 1)
+        oferta.adjudicada_en = datetime.now(timezone.utc)
+        oferta.items = [OfertaItem(lote_necesidad_id=1, cantidad_ofrecida=3)]
+        db.add(Rol(id=2, nombre=COORDINADOR))
+        db.flush()
+        db.add(Usuario(id=2, email="callback@example.org", nombre="Callback", apellido="Prueba",
+                       password_hash="sin-login", rol_id=2))
+        db.commit()
+
+    def obtener_db():
+        with sesiones_pg() as db:
+            yield db
+
+    monkeypatch.setitem(app.dependency_overrides, get_db, obtener_db)
+    cliente = TestClient(app)
+    guardada = []
+    ruta = RUTA_AVISO.replace("/2/", "/1/")
+    correo = Mock()
+    monkeypatch.setattr(ofertas_service, "notificar_adjudicacion", correo)
+
+    async def variable(caso_id, nombre):
+        assert caso_id == 42
+        return json.dumps(guardada if nombre == "seleccionOfertasJson" else {
+            "emergencia_id": 1, "resultados": [
+                {"oferta_id": 1, "lote_id": 1, "cantidad_verificada": 3}]})
+
+    async def ejecutar(tarea_id, contrato):
+        # El confirmador conserva el lock hasta que este callback HTTP retorna.
+        respuesta = await asyncio.wait_for(asyncio.to_thread(
+            cliente.post, ruta, params={"caso_id": 42}, headers=cabecera(COORDINADOR)), timeout=2)
+        assert respuesta.status_code == 202, respuesta.text
+        assert respuesta.content == b""
+        with sesiones_pg() as db:
+            assert db.get(ConfirmacionSeleccion, 1) is not None
+            assert db.query(AvisoAdjudicacion).count() == 0
+        guardada.extend(contrato["seleccionInput"])
+
+    monkeypatch.setattr(bonita_client, "obtener_variable_caso", variable)
+    monkeypatch.setattr(bonita_client, "obtener_tarea_pendiente", AsyncMock(return_value={
+        "id": "99", "caseId": "42", "name": "Seleccionar oferta", "actorId": "7", "assigned_id": "12"}))
+    monkeypatch.setattr(bonita_client, "obtener_miembro_actor", AsyncMock(return_value={"user_id": "12"}))
+    ejecucion = AsyncMock(side_effect=ejecutar)
+    monkeypatch.setattr(bonita_client, "ejecutar_tarea", ejecucion)
+    with sesiones_pg() as db:
+        assert asyncio.run(SeleccionOfertasService().confirmar(db, 1)).cantidad_pares == 1
+    ejecucion.assert_awaited_once()
+    correo.assert_not_called()
+    with sesiones_pg() as db:
+        assert db.get(ConfirmacionSeleccion, 1) is None
+        assert db.query(AvisoAdjudicacion).count() == (0 if exclusiva else 1)
+    respuesta = cliente.post(ruta, params={"caso_id": 42}, headers=cabecera(COORDINADOR))
+    assert respuesta.status_code == (409 if exclusiva else 202), respuesta.text
+    cliente.close()
 
 
 def preparar_aviso(seleccion, oferta_id=1):

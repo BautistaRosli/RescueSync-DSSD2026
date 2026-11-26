@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -73,6 +73,20 @@ async def confirmar_seleccion(
 ):
     verificar_emergencia(db, usuario, emergencia_id)
     return await SeleccionOfertasService().confirmar(db, emergencia_id)
+
+
+@router.post("/emergencias/{emergencia_id}/notificar-adjudicacion", status_code=202,
+             response_class=Response)
+async def notificar_adjudicacion(
+    emergencia_id: int,
+    caso_id: int = Query(..., gt=0),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
+):
+    """Acepta el aviso de Bonita; el consumidor durable realiza el envío."""
+    verificar_emergencia(db, usuario, emergencia_id)
+    await SeleccionOfertasService().notificar_adjudicacion(db, emergencia_id, caso_id)
+    return Response(status_code=202)
 
 
 @router.get("/emergencias/{emergencia_id}/solicitud-evaluacion", response_model=SolicitudEvaluacion)
