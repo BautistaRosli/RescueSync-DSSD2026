@@ -62,9 +62,20 @@ function disponibleEnInventario(
   inventario: RecursoInventario[],
   lote: LoteRead,
 ): RecursoInventario | undefined {
+  if (lote.tipo_recurso_id !== null) {
+    const vinculado = inventario.find(
+      (recurso) => recurso.tipo_recurso_id === lote.tipo_recurso_id,
+    )
+    if (vinculado !== undefined) return vinculado
+  }
+  // Respaldo por nombre para filas o lotes sin vínculo al Sistema Nacional.
   return inventario.find(
     (recurso) => recurso.tipo.trim().toLowerCase() === lote.tipo.trim().toLowerCase(),
   )
+}
+
+function cantidadDisponible(recurso: RecursoInventario): number {
+  return recurso.disponible ?? recurso.cantidad_total
 }
 
 function cantidadDeTexto(texto: string): number {
@@ -457,7 +468,7 @@ export function FormularioOfertaPage({
             const recurso = disponibleEnInventario(inventario, lote)
             const ofrecido = cantidadDeTexto(cantidades[lote.id] ?? '')
             const excedeInventario =
-              recurso !== undefined && ofrecido > recurso.cantidad_total
+              recurso !== undefined && ofrecido > cantidadDisponible(recurso)
             const participantes = [organizacionId, ...sociasIds]
 
             return (
@@ -516,7 +527,7 @@ export function FormularioOfertaPage({
 
                 {recurso !== undefined && (
                   <p className="mt-2 text-xs text-slate-400">
-                    Disponible en tu inventario: {recurso.cantidad_total}
+                    Disponible en tu inventario: {cantidadDisponible(recurso)}
                     {recurso.unidad ? ` ${recurso.unidad}` : ''}
                   </p>
                 )}

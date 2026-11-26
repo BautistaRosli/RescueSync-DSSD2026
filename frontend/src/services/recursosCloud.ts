@@ -9,6 +9,10 @@ export async function listarRecursosCloud(texto: string): Promise<RecursoCloud[]
   return apiGet<RecursoCloud[]>(`/recursos-cloud?texto=${encodeURIComponent(consulta)}`)
 }
 
+export async function listarCatalogoRecursosCloud(): Promise<RecursoCloud[]> {
+  return apiGet<RecursoCloud[]>('/recursos-cloud')
+}
+
 export async function crearRecursoCloud(
   datos: RecursoCloudCreateRequest,
 ): Promise<RecursoCloud> {

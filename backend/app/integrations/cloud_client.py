@@ -128,3 +128,41 @@ def liberar_emergencia(emergencia_id: int, token: str) -> httpx.Response:
         f"{url}/emergencias/{emergencia_id}/liberar",
         headers={"Authorization": f"Bearer {token}"}, timeout=TIEMPO_LIMITE,
     )
+
+
+def asignar_item_ong(ong_id: int, item_id: int, cantidad: int, token: str) -> httpx.Response:
+    """Agrega un recurso del catálogo al inventario nacional de la ONG."""
+    url = os.getenv("CLOUD_API_URL", "http://127.0.0.1:8002").rstrip("/")
+    return httpx.post(
+        f"{url}/items/ongs/{ong_id}/items",
+        json={"item_id": item_id, "cantidad": cantidad},
+        headers={"Authorization": f"Bearer {token}"}, timeout=TIEMPO_LIMITE,
+    )
+
+
+def actualizar_item_ong(ong_id: int, item_id: int, cantidad: int, token: str) -> httpx.Response:
+    """Actualiza la cantidad de un recurso en el inventario nacional de la ONG."""
+    url = os.getenv("CLOUD_API_URL", "http://127.0.0.1:8002").rstrip("/")
+    return httpx.patch(
+        f"{url}/items/ongs/{ong_id}/items/{item_id}",
+        json={"cantidad": cantidad},
+        headers={"Authorization": f"Bearer {token}"}, timeout=TIEMPO_LIMITE,
+    )
+
+
+def eliminar_item_ong(ong_id: int, item_id: int, token: str) -> httpx.Response:
+    """Quita un recurso del inventario nacional de la ONG."""
+    url = os.getenv("CLOUD_API_URL", "http://127.0.0.1:8002").rstrip("/")
+    return httpx.delete(
+        f"{url}/items/ongs/{ong_id}/items/{item_id}",
+        headers={"Authorization": f"Bearer {token}"}, timeout=TIEMPO_LIMITE,
+    )
+
+
+def disponibilidad_ong(ong_id: int, token: str) -> httpx.Response:
+    """Consulta total, comprometido y disponible por recurso de la ONG."""
+    url = os.getenv("CLOUD_API_URL", "http://127.0.0.1:8002").rstrip("/")
+    return httpx.get(
+        f"{url}/recursos/disponibilidad", params={"ong_id": ong_id},
+        headers={"Authorization": f"Bearer {token}"}, timeout=TIEMPO_LIMITE,
+    )

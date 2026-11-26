@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import ConfigDict
 
 from ..schemas.inventario_schema import RecursoInventarioBase
@@ -8,3 +10,8 @@ class RecursoInventarioRespuesta(RecursoInventarioBase):
 
     id: int
     organizacion_id: int
+    tipo: str
+    tipo_recurso_id: Optional[int] = None
+    comprometido: Optional[int] = None
+    disponible: Optional[int] = None
+    sincronizado: bool = False
