@@ -8,7 +8,11 @@ export type {
   RecursoAdjudicadoPorMes, LoteNecesidad, LoteNecesidadCreateRequest,
   LoteNecesidadUpdateRequest, NivelGravedad, SincronizacionCierresRespuesta,
 } from './emergencia'
-export type { RecursoInventario, RecursoInventarioRequest } from './inventario'
+export type {
+  RecursoInventario,
+  RecursoInventarioRequest,
+  RecursoInventarioUpdateRequest,
+} from './inventario'
 export type { LoteRead } from './lote'
 export type {
   AdjudicacionRespuesta, AporteOferta, FinalizarOfertaRespuesta, OfertaConsolidada, OfertaCreateRequest,

@@ -3,7 +3,7 @@ from .inventario_model import RecursoInventario
 from .lotes_model import LoteNecesidad
 from .ofertas_model import AvisoAdjudicacion, OfertaAyuda, OfertaItem
 from .usuarios_model import Organizacion, Rol, Usuario
-from .evaluacion_model import AporteOfertaItem, EvaluacionCloud, LoteRecursoCloud, OrganizacionCloud, RegistroRecursos
+from .evaluacion_model import AporteOfertaItem, EvaluacionCloud, LoteRecursoCloud, OrganizacionCloud, RecursoInventarioCloud, RegistroRecursos
 
 __all__ = [
     "RegistroRecursos",
@@ -11,6 +11,7 @@ __all__ = [
     "EvaluacionCloud",
     "LoteRecursoCloud",
     "OrganizacionCloud",
+    "RecursoInventarioCloud",
     "Emergencia",
     "ConfirmacionSeleccion",
     "CursoAccionEmergencia",

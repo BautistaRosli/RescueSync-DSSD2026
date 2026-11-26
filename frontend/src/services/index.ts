@@ -16,7 +16,11 @@ export {
 } from './emergencia'
 export { listarRoles } from './rol'
 export { listarLotes } from './lote'
-export { listarRecursosCloud, crearRecursoCloud } from './recursosCloud'
+export {
+  listarRecursosCloud,
+  listarCatalogoRecursosCloud,
+  crearRecursoCloud,
+} from './recursosCloud'
 export {
   exportarReporteCompleto,
   obtenerActivasResueltas,
