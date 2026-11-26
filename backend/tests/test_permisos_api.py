@@ -60,6 +60,7 @@ CASOS = [
     ("PATCH", "/emergencias/1", {"zona_afectada": "Otra"}, [COORDINADOR, AUDITOR]),
     ("POST", "/emergencias/1/publicar-lotes", None, [COORDINADOR, AUDITOR]),
     ("POST", "/emergencias/1/publicar", None, [COORDINADOR, AUDITOR]),
+    ("POST", "/emergencias/1/resolver", None, [COORDINADOR, AUDITOR]),
     ("POST", "/emergencias/1/bonita/iniciar", None, [COORDINADOR, AUDITOR]),
     ("GET", "/emergencias/1/lotes", None, [OPERADOR, COORDINADOR, AUDITOR]),
     ("POST", "/emergencias/1/lotes", LOTE, [COORDINADOR, AUDITOR]),

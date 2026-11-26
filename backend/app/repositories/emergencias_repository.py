@@ -133,6 +133,12 @@ class EmergenciaRepository:
             raise
         return resueltas
 
+    def resolver_emergencia(self, db: Session, emergencia: Emergencia) -> Emergencia:
+        emergencia.estado = EstadoEmergencia.RESUELTA
+        db.commit()
+        db.refresh(emergencia)
+        return emergencia
+
     def obtener_por_id(
         self, db: Session, emergencia_id: int, bloquear: bool = False
     ) -> Optional[Emergencia]:
