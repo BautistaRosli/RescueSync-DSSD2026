@@ -1,27 +1,56 @@
+import logging
+
+import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from ..dto import RecursoInventarioRespuesta
-from ..models import RecursoInventario
+from ..integrations import cloud_client
+from ..models import OrganizacionCloud, RecursoInventario, RecursoInventarioCloud
 from ..repositories import RecursoInventarioRepository
 from ..schemas import RecursoInventarioActualizar, RecursoInventarioCrear
+from .recursos_cloud_service import RecursosCloudService
 from .usuarios_service import OrganizacionService
-from ..utils.recursos import normalizar_nombre_recurso
+
+logger = logging.getLogger(__name__)
+
+SIN_SINCRONIZAR = "No se pudo sincronizar con el Sistema Nacional"
+_ERRORES_TRANSPORTE = (
+    cloud_client.AutenticacionAplicacionError,
+    httpx.RequestError,
+    httpx.InvalidURL,
+)
 
 
 class InventarioService:
+    """ABM del inventario local, replicado en el inventario nacional (Cloud).
+
+    Orden de escritura: primero Cloud y después la base local; si la base
+    local falla se compensa en Cloud para no dejar stock nacional huérfano.
+    """
+
     def __init__(self) -> None:
         self._repository = RecursoInventarioRepository()
         self._organizaciones = OrganizacionService()
+        self._catalogo = RecursosCloudService()
 
     def listar_recursos(
         self, db: Session, organizacion_id: int
     ) -> list[RecursoInventarioRespuesta]:
         self._organizaciones.obtener_organizacion_entidad(db, organizacion_id)
         recursos = self._repository.listar_de_organizacion(db, organizacion_id)
-        return [
-            RecursoInventarioRespuesta.model_validate(r) for r in recursos
-        ]
+        ong_id = self._ong_id(db, organizacion_id)
+        # Una sola consulta por listado; si Cloud no responde, el listado
+        # local se devuelve igual marcado como no sincronizado.
+        disponibilidad = None
+        if ong_id is not None:
+            try:
+                disponibilidad = self._disponibilidad(ong_id)
+            except HTTPException:
+                logger.warning(
+                    "Inventario: Cloud no disponible al listar la ONG %s", ong_id
+                )
+        return [self._respuesta(r, disponibilidad) for r in recursos]
 
     def crear_recurso(
         self,
@@ -30,11 +59,30 @@ class InventarioService:
         data: RecursoInventarioCrear,
     ) -> RecursoInventarioRespuesta:
         self._organizaciones.obtener_organizacion_entidad(db, organizacion_id)
-        valores = data.model_dump()
-        valores["tipo"] = normalizar_nombre_recurso(valores["tipo"])
-        recurso = RecursoInventario(organizacion_id=organizacion_id, **valores)
-        creado = self._repository.crear(db, recurso)
-        return RecursoInventarioRespuesta.model_validate(creado)
+        ong_id = self._ong_vinculada(db, organizacion_id)
+        self._validar_no_duplicado(db, organizacion_id, data.tipo_recurso_id)
+        nombre = self._nombre_en_catalogo(data.tipo_recurso_id)
+
+        previa = self._asignar_en_cloud(
+            ong_id, data.tipo_recurso_id, data.cantidad_total
+        )
+        recurso = RecursoInventario(
+            organizacion_id=organizacion_id,
+            tipo=nombre,
+            cantidad_total=data.cantidad_total,
+            unidad=data.unidad,
+            descripcion=data.descripcion,
+        )
+        recurso.referencia_cloud = RecursoInventarioCloud(
+            tipo_recurso_id=data.tipo_recurso_id
+        )
+        try:
+            creado = self._repository.crear(db, recurso)
+        except Exception:
+            db.rollback()
+            self._compensar_alta(ong_id, data.tipo_recurso_id, previa)
+            raise
+        return self._respuesta_posterior(creado, ong_id)
 
     def actualizar_recurso(
         self,
@@ -47,12 +95,47 @@ class InventarioService:
         recurso = self._obtener_recurso_entidad(
             db, recurso_id, organizacion_id
         )
-        valores = data.model_dump()
-        valores["tipo"] = normalizar_nombre_recurso(valores["tipo"])
-        for field, value in valores.items():
-            setattr(recurso, field, value)
-        actualizado = self._repository.actualizar(db, recurso)
-        return RecursoInventarioRespuesta.model_validate(actualizado)
+        referencia = recurso.referencia_cloud
+
+        if referencia is None and data.tipo_recurso_id is not None:
+            return self._vincular_recurso(db, recurso, data)
+
+        if referencia is None:
+            # Fila previa sin equivalencia nacional: sólo se actualiza local.
+            self._aplicar_valores(recurso, data)
+            actualizado = self._repository.actualizar(db, recurso)
+            return self._respuesta(actualizado, None)
+
+        if (data.tipo_recurso_id is not None
+                and data.tipo_recurso_id != referencia.tipo_recurso_id):
+            raise HTTPException(
+                409, "El recurso ya está vinculado a otro recurso nacional"
+            )
+        ong_id = self._ong_vinculada(db, organizacion_id)
+        cantidad_anterior = recurso.cantidad_total
+        if data.cantidad_total != cantidad_anterior:
+            comprometido = self._comprometido(ong_id, referencia.tipo_recurso_id)
+            if data.cantidad_total < comprometido:
+                raise HTTPException(
+                    409,
+                    "La cantidad no puede ser menor a la comprometida en el "
+                    f"Sistema Nacional ({comprometido})",
+                )
+            self._actualizar_en_cloud(
+                ong_id, referencia.tipo_recurso_id, data.cantidad_total
+            )
+        self._aplicar_valores(recurso, data)
+        try:
+            actualizado = self._repository.actualizar(db, recurso)
+        except Exception:
+            db.rollback()
+            if data.cantidad_total != cantidad_anterior:
+                self._compensar(
+                    cloud_client.actualizar_item_ong,
+                    ong_id, referencia.tipo_recurso_id, cantidad_anterior,
+                )
+            raise
+        return self._respuesta_posterior(actualizado, ong_id)
 
     def eliminar_recurso(
         self, db: Session, organizacion_id: int, recurso_id: int
@@ -61,7 +144,258 @@ class InventarioService:
         recurso = self._obtener_recurso_entidad(
             db, recurso_id, organizacion_id
         )
+        referencia = recurso.referencia_cloud
+        if referencia is not None:
+            ong_id = self._ong_vinculada(db, organizacion_id)
+            comprometido = self._comprometido(ong_id, referencia.tipo_recurso_id)
+            if comprometido > 0:
+                raise HTTPException(
+                    409,
+                    "No se puede eliminar: el recurso tiene "
+                    f"{comprometido} unidades comprometidas en el Sistema Nacional",
+                )
+            respuesta = self._llamar(
+                cloud_client.eliminar_item_ong, ong_id, referencia.tipo_recurso_id
+            )
+            # 404: ya no estaba en Cloud, el objetivo de la baja está cumplido.
+            if respuesta.status_code not in (204, 404):
+                self._error_cloud(respuesta)
         self._repository.eliminar(db, recurso)
+
+    def _vincular_recurso(
+        self,
+        db: Session,
+        recurso: RecursoInventario,
+        data: RecursoInventarioActualizar,
+    ) -> RecursoInventarioRespuesta:
+        """Vincula una fila previa al catálogo nacional y la publica en Cloud."""
+        ong_id = self._ong_vinculada(db, recurso.organizacion_id)
+        self._validar_no_duplicado(
+            db, recurso.organizacion_id, data.tipo_recurso_id, excluir_id=recurso.id
+        )
+        nombre = self._nombre_en_catalogo(data.tipo_recurso_id)
+        previa = self._asignar_en_cloud(
+            ong_id, data.tipo_recurso_id, data.cantidad_total
+        )
+        self._aplicar_valores(recurso, data)
+        recurso.tipo = nombre
+        recurso.referencia_cloud = RecursoInventarioCloud(
+            tipo_recurso_id=data.tipo_recurso_id
+        )
+        try:
+            actualizado = self._repository.actualizar(db, recurso)
+        except Exception:
+            db.rollback()
+            self._compensar_alta(ong_id, data.tipo_recurso_id, previa)
+            raise
+        return self._respuesta_posterior(actualizado, ong_id)
+
+    @staticmethod
+    def _aplicar_valores(
+        recurso: RecursoInventario, data: RecursoInventarioActualizar
+    ) -> None:
+        recurso.cantidad_total = data.cantidad_total
+        recurso.unidad = data.unidad
+        recurso.descripcion = data.descripcion
+
+    @staticmethod
+    def _ong_id(db: Session, organizacion_id: int) -> int | None:
+        vinculo = db.get(OrganizacionCloud, organizacion_id)
+        return vinculo.ong_id if vinculo is not None else None
+
+    def _ong_vinculada(self, db: Session, organizacion_id: int) -> int:
+        ong_id = self._ong_id(db, organizacion_id)
+        if ong_id is None:
+            raise HTTPException(409, "La ONG no está vinculada al Sistema Nacional")
+        return ong_id
+
+    @staticmethod
+    def _validar_no_duplicado(
+        db: Session,
+        organizacion_id: int,
+        tipo_recurso_id: int,
+        excluir_id: int | None = None,
+    ) -> None:
+        consulta = (
+            db.query(RecursoInventarioCloud.recurso_id)
+            .join(
+                RecursoInventario,
+                RecursoInventario.id == RecursoInventarioCloud.recurso_id,
+            )
+            .filter(
+                RecursoInventario.organizacion_id == organizacion_id,
+                RecursoInventarioCloud.tipo_recurso_id == tipo_recurso_id,
+            )
+        )
+        if excluir_id is not None:
+            consulta = consulta.filter(RecursoInventario.id != excluir_id)
+        if consulta.first() is not None:
+            raise HTTPException(
+                409, "La ONG ya tiene ese recurso nacional en su inventario"
+            )
+
+    def _nombre_en_catalogo(self, tipo_recurso_id: int) -> str:
+        try:
+            catalogo = self._catalogo.listar()
+        except HTTPException as exc:
+            if exc.status_code in (502, 503):
+                raise HTTPException(503, SIN_SINCRONIZAR) from None
+            raise
+        recurso = next((r for r in catalogo if r.id == tipo_recurso_id), None)
+        if recurso is None:
+            raise HTTPException(404, "Recurso nacional no encontrado")
+        return recurso.nombre
+
+    @staticmethod
+    def _llamar(funcion, *argumentos) -> httpx.Response:
+        """Ejecuta una operación en Cloud; caída, 5xx o auth se informan como 503."""
+        try:
+            token = cloud_client.obtener_token_aplicacion()
+            respuesta = funcion(*argumentos, token)
+        except _ERRORES_TRANSPORTE:
+            raise HTTPException(503, SIN_SINCRONIZAR) from None
+        if respuesta.status_code >= 500 or respuesta.status_code in (401, 403):
+            raise HTTPException(503, SIN_SINCRONIZAR)
+        return respuesta
+
+    @staticmethod
+    def _error_cloud(respuesta: httpx.Response) -> None:
+        raise HTTPException(
+            502,
+            f"Sistema Nacional respondió con estado {respuesta.status_code}: "
+            f"{RecursosCloudService._detalle(respuesta)}",
+        )
+
+    def _asignar_en_cloud(
+        self, ong_id: int, tipo_recurso_id: int, cantidad: int
+    ) -> int | None:
+        """Publica el ítem en Cloud.
+
+        Devuelve None si el POST lo creó; si ya existía, la cantidad que tenía
+        en Cloud antes del PATCH (para poder restaurarla al compensar).
+        """
+        respuesta = self._llamar(
+            cloud_client.asignar_item_ong, ong_id, tipo_recurso_id, cantidad
+        )
+        if respuesta.status_code == 201:
+            return None
+        if respuesta.status_code == 409:
+            # Ya estaba (p. ej. por un intento previo): se iguala la cantidad.
+            previa = self._total_en_cloud(ong_id, tipo_recurso_id)
+            respuesta = self._llamar(
+                cloud_client.actualizar_item_ong, ong_id, tipo_recurso_id, cantidad
+            )
+            if respuesta.status_code == 200:
+                return previa
+        self._error_cloud(respuesta)
+
+    def _actualizar_en_cloud(self, ong_id: int, tipo_recurso_id: int, cantidad: int) -> None:
+        respuesta = self._llamar(
+            cloud_client.actualizar_item_ong, ong_id, tipo_recurso_id, cantidad
+        )
+        if respuesta.status_code == 200:
+            return
+        if respuesta.status_code == 404:
+            # El ítem no figura en Cloud: se vuelve a publicar.
+            self._asignar_en_cloud(ong_id, tipo_recurso_id, cantidad)
+            return
+        self._error_cloud(respuesta)
+
+    def _compensar_alta(
+        self, ong_id: int, tipo_recurso_id: int, previa: int | None
+    ) -> None:
+        """Borra el ítem sólo si lo creó el POST; si existía, restaura su cantidad."""
+        if previa is None:
+            self._compensar(cloud_client.eliminar_item_ong, ong_id, tipo_recurso_id)
+        else:
+            self._compensar(
+                cloud_client.actualizar_item_ong, ong_id, tipo_recurso_id, previa
+            )
+
+    @staticmethod
+    def _compensar(funcion, *argumentos) -> None:
+        """Deshace en Cloud sin ocultar el error local original."""
+        try:
+            token = cloud_client.obtener_token_aplicacion()
+            funcion(*argumentos, token)
+        except Exception:
+            logger.exception(
+                "Inventario: no se pudo compensar en Cloud %s%s",
+                funcion.__name__, argumentos,
+            )
+
+    def _disponibilidad(self, ong_id: int) -> dict[int, tuple[int, int]]:
+        """Devuelve {tipo_recurso_id: (comprometido, disponible)} de la ONG."""
+        return {
+            item: (comprometido, disponible)
+            for item, (_, comprometido, disponible) in self._filas_disponibilidad(ong_id).items()
+        }
+
+    def _total_en_cloud(self, ong_id: int, tipo_recurso_id: int) -> int:
+        fila = self._filas_disponibilidad(ong_id).get(tipo_recurso_id)
+        if fila is None:
+            # El ítem existe (409) pero la disponibilidad no lo informa: sin
+            # la cantidad previa no se podría compensar sin destruir datos.
+            raise HTTPException(503, SIN_SINCRONIZAR)
+        return fila[0]
+
+    def _filas_disponibilidad(self, ong_id: int) -> dict[int, tuple[int, int, int]]:
+        """Devuelve {tipo_recurso_id: (total, comprometido, disponible)} de la ONG."""
+        respuesta = self._llamar(cloud_client.disponibilidad_ong, ong_id)
+        if respuesta.status_code != 200:
+            self._error_cloud(respuesta)
+        try:
+            datos = respuesta.json()
+            # Versiones viejas devolvían directamente la lista.
+            filas = datos.get("disponibles") if isinstance(datos, dict) else datos
+            return {
+                int(fila["tipo_recurso_id"]): (
+                    int(fila.get("total", 0)),
+                    int(fila["comprometido"]),
+                    int(fila["disponible"]),
+                )
+                for fila in (filas or [])
+            }
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise HTTPException(
+                502, "El Sistema Nacional devolvió una disponibilidad inválida"
+            ) from None
+
+    def _comprometido(self, ong_id: int, tipo_recurso_id: int) -> int:
+        return self._disponibilidad(ong_id).get(tipo_recurso_id, (0, 0))[0]
+
+    def _respuesta_posterior(
+        self, recurso: RecursoInventario, ong_id: int
+    ) -> RecursoInventarioRespuesta:
+        """Respuesta tras escribir: la consulta a Cloud es de mejor esfuerzo."""
+        try:
+            disponibilidad = self._disponibilidad(ong_id)
+        except HTTPException:
+            disponibilidad = None
+        return self._respuesta(recurso, disponibilidad)
+
+    @staticmethod
+    def _respuesta(
+        recurso: RecursoInventario,
+        disponibilidad: dict[int, tuple[int, int]] | None,
+    ) -> RecursoInventarioRespuesta:
+        referencia = recurso.referencia_cloud
+        tipo_recurso_id = referencia.tipo_recurso_id if referencia else None
+        valores = None
+        if disponibilidad is not None and tipo_recurso_id is not None:
+            valores = disponibilidad.get(tipo_recurso_id)
+        return RecursoInventarioRespuesta(
+            id=recurso.id,
+            organizacion_id=recurso.organizacion_id,
+            tipo=recurso.tipo,
+            cantidad_total=recurso.cantidad_total,
+            unidad=recurso.unidad,
+            descripcion=recurso.descripcion,
+            tipo_recurso_id=tipo_recurso_id,
+            comprometido=valores[0] if valores else None,
+            disponible=valores[1] if valores else None,
+            sincronizado=valores is not None,
+        )
 
     def _obtener_recurso_entidad(
         self, db: Session, recurso_id: int, organizacion_id: int

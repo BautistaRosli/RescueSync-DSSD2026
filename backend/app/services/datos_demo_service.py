@@ -17,8 +17,10 @@ from ..models import (
     AporteOfertaItem,
     Organizacion,
     RecursoInventario,
+    RecursoInventarioCloud,
     LoteRecursoCloud,
 )
+from ..integrations import cloud_client
 from ..schemas.recursos_cloud_schema import RecursoCloudCrear
 from .recursos_cloud_service import RecursosCloudService
 from ..utils.recursos import normalizar_nombre_recurso
@@ -95,6 +97,85 @@ def _resolver_equivalencias_cloud(db: Session, emergencias_demo: list[Emergencia
             lote.referencia_cloud = LoteRecursoCloud(tipo_recurso_id=recurso.id)
             hubo_cambios = True
     return hubo_cambios
+
+def _sincronizar_inventario_demo_cloud(
+    db: Session, organizaciones: list[Organizacion]
+) -> bool:
+    """Vincula el inventario demo al catálogo nacional y lo publica en Cloud.
+
+    Idempotente y tolerante a fallas: ante cualquier error de Cloud registra
+    el problema, conserva lo local y se reintenta en el próximo arranque.
+    """
+    servicio = RecursosCloudService()
+    hubo_cambios = False
+    for organizacion in organizaciones:
+        if organizacion.referencia_cloud is None:
+            continue
+        ong_id = organizacion.referencia_cloud.ong_id
+        try:
+            recursos = (
+                db.query(RecursoInventario)
+                .filter(RecursoInventario.organizacion_id == organizacion.id)
+                .order_by(RecursoInventario.id.asc())
+                .all()
+            )
+            usados = {
+                r.referencia_cloud.tipo_recurso_id
+                for r in recursos if r.referencia_cloud is not None
+            }
+            for recurso in recursos:
+                if (recurso.referencia_cloud is not None
+                        or not (recurso.descripcion or "").startswith(PREFIJO_DEMO)):
+                    continue
+                nacional, _ = servicio.crear(RecursoCloudCrear(nombre=recurso.tipo))
+                if nacional.id in usados:
+                    continue
+                recurso.referencia_cloud = RecursoInventarioCloud(
+                    tipo_recurso_id=nacional.id
+                )
+                usados.add(nacional.id)
+                hubo_cambios = True
+
+            token = cloud_client.obtener_token_aplicacion()
+            respuesta = cloud_client.disponibilidad_ong(ong_id, token)
+            if respuesta.status_code != 200:
+                raise ValueError(f"disponibilidad {respuesta.status_code}")
+            datos = respuesta.json()
+            filas = datos.get("disponibles") if isinstance(datos, dict) else datos
+            totales = {
+                int(fila["tipo_recurso_id"]): int(fila["total"])
+                for fila in (filas or [])
+            }
+            for recurso in recursos:
+                if (recurso.referencia_cloud is None
+                        or not (recurso.descripcion or "").startswith(PREFIJO_DEMO)):
+                    continue
+                item_id = recurso.referencia_cloud.tipo_recurso_id
+                total = totales.get(item_id)
+                if total == recurso.cantidad_total:
+                    continue
+                if total is None:
+                    respuesta = cloud_client.asignar_item_ong(
+                        ong_id, item_id, recurso.cantidad_total, token
+                    )
+                    if respuesta.status_code == 201:
+                        continue
+                    if respuesta.status_code != 409:
+                        raise ValueError(f"alta {respuesta.status_code}")
+                respuesta = cloud_client.actualizar_item_ong(
+                    ong_id, item_id, recurso.cantidad_total, token
+                )
+                if respuesta.status_code != 200:
+                    raise ValueError(f"actualización {respuesta.status_code}")
+        except Exception as exc:
+            logger.warning(
+                "Inventario demo: no se pudo sincronizar la ONG %s con Cloud; "
+                "se reintentará en el próximo arranque (%s).",
+                organizacion.nombre,
+                type(exc).__name__,
+            )
+    return hubo_cambios
+
 
 _DATOS_EMERGENCIAS = (
     ("Zona Norte", "Agua potable", NivelGravedad.ALTA, 9, EstadoEmergencia.ESPERA_OFERTAS, True),
@@ -579,6 +660,8 @@ def sembrar_datos_demo(db: Session) -> None:
                 else:
                     if recurso.tipo != tipo:
                         recurso.tipo = tipo
+                        # Otro recurso: la equivalencia nacional se resuelve de nuevo.
+                        recurso.referencia_cloud = None
                         hubo_cambios = True
                     if recurso.cantidad_total != cantidad:
                         recurso.cantidad_total = cantidad
@@ -586,6 +669,10 @@ def sembrar_datos_demo(db: Session) -> None:
                     if recurso.unidad != "unidades":
                         recurso.unidad = "unidades"
                         hubo_cambios = True
+
+        db.flush()
+        if _sincronizar_inventario_demo_cloud(db, organizaciones_demo):
+            hubo_cambios = True
 
     if cantidad_existente < CANTIDAD_EMERGENCIAS_DEMO or hubo_cambios:
         db.commit()

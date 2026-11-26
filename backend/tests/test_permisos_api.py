@@ -36,6 +36,8 @@ EMERGENCIA = {"zona_afectada": "Zona", "descripcion_inicial": "Descripción", "n
 LOTE = {"tipo": "agua", "cantidad": 10}
 OFERTA = {"emergencia_id": 2, "organizacion_id": 1, "items": []}
 RECURSO = {"tipo": "agua", "cantidad_total": 10}
+# El alta exige el recurso del catálogo nacional; la ONG 1 no está vinculada (409).
+ALTA_RECURSO = {"tipo_recurso_id": 5, "cantidad_total": 10}
 
 # Cada operación tiene datos válidos para que el caso permitido ejecute el servicio real.
 CASOS = [
@@ -74,7 +76,7 @@ CASOS = [
     ("GET", "/emergencias/2/ofertas/consolidadas", None, [COORDINADOR, ONG, AUDITOR]),
     ("POST", "/ofertas/1/adjudicar", None, [COORDINADOR, OPERADOR, AUDITOR]),
     ("GET", "/organizaciones/1/inventario", None, [COORDINADOR, ONG, AUDITOR]),
-    ("POST", "/organizaciones/1/inventario", RECURSO, [ONG, AUDITOR]),
+    ("POST", "/organizaciones/1/inventario", ALTA_RECURSO, [ONG, AUDITOR]),
     ("PATCH", "/organizaciones/1/inventario/1", RECURSO, [ONG, AUDITOR]),
     ("DELETE", "/organizaciones/1/inventario/1", None, [ONG, AUDITOR]),
     ("GET", "/organizaciones/1", None, [COORDINADOR, ONG, AUDITOR]),

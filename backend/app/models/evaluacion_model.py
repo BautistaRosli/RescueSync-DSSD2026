@@ -26,6 +26,18 @@ class LoteRecursoCloud(Base):
     tipo_recurso_id: Mapped[int] = mapped_column(nullable=False)
 
 
+class RecursoInventarioCloud(Base):
+    """Equivalencia nacional de un recurso del inventario local de una ONG."""
+
+    __tablename__ = "recursos_inventario_cloud"
+    __table_args__ = (CheckConstraint("tipo_recurso_id > 0"),)
+
+    recurso_id: Mapped[int] = mapped_column(
+        ForeignKey("recursos_inventario.id", ondelete="CASCADE"), primary_key=True
+    )
+    tipo_recurso_id: Mapped[int] = mapped_column(nullable=False)
+
+
 class AporteOfertaItem(Base):
     __tablename__ = "aportes_oferta_items"
     __table_args__ = (CheckConstraint("cantidad > 0"),)

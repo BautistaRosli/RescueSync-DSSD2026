@@ -6,7 +6,7 @@ from ...schemas.recursos_cloud_schema import (
     RecursoCloudCrear,
     RecursoCloudRespuesta,
 )
-from ...services.permisos_service import AUDITOR, COORDINADOR
+from ...services.permisos_service import AUDITOR, COORDINADOR, ONG
 from ...services.recursos_cloud_service import RecursosCloudService
 
 router = APIRouter(prefix="/recursos-cloud", tags=["Recursos Cloud"])
@@ -16,7 +16,7 @@ servicio_recursos_cloud = RecursosCloudService()
 @router.get("", response_model=list[RecursoCloudRespuesta])
 def listar_recursos_cloud(
     texto: str | None = Query(default=None),
-    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, ONG, AUDITOR)),
 ):
     return servicio_recursos_cloud.listar(texto)
 

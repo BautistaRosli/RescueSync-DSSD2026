@@ -1,5 +1,9 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from './http'
-import type { RecursoInventario, RecursoInventarioRequest } from '../types'
+import type {
+  RecursoInventario,
+  RecursoInventarioRequest,
+  RecursoInventarioUpdateRequest,
+} from '../types'
 
 export async function listarInventario(
   organizacionId: number,
@@ -22,7 +26,7 @@ export async function crearRecurso(
 export async function actualizarRecurso(
   organizacionId: number,
   recursoId: number,
-  datos: RecursoInventarioRequest,
+  datos: RecursoInventarioUpdateRequest,
 ): Promise<RecursoInventario> {
   return apiPatch<RecursoInventario>(
     `/organizaciones/${organizacionId}/inventario/${recursoId}`,
