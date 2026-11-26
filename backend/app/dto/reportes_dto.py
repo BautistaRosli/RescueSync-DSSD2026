@@ -66,6 +66,23 @@ class DemandaOfertaReporte(BaseModel):
     cantidad_pedida: int
     cantidad_ofrecida: int
 
+
+class TiempoEtapaBonita(BaseModel):
+    etapa: str
+    promedio_horas: float
+    cantidad: int
+
+
+class CasosBonita(BaseModel):
+    abiertos: int
+    cerrados: int
+
+
+class ReporteBonita(BaseModel):
+    tiempos_por_etapa: list[TiempoEtapaBonita]
+    casos: CasosBonita
+    convocatorias_camino_alternativo: int
+
 from .emergencias_dto import (
     DemandaOfertaRecurso,
     EmergenciasPorEstadoGravedad,
@@ -107,6 +124,9 @@ __all__ = [
     "TiempoAdjudicacionReporte",
     "RankingONGReporte",
     "DemandaOfertaReporte",
+    "TiempoEtapaBonita",
+    "CasosBonita",
+    "ReporteBonita",
     "DemandaOfertaRecurso",
     "EmergenciasPorEstadoGravedad",
     "ParticipacionConsorcios",

@@ -4,8 +4,10 @@ import math
 from datetime import datetime, timezone
 from typing import Optional
 
+import httpx
 from fastapi import BackgroundTasks, HTTPException
 from starlette.concurrency import run_in_threadpool
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from ..dto import (
@@ -19,6 +21,7 @@ from ..dto import (
     RankingONG,
     RecursoAdjudicadoPorMes,
 )
+from ..integrations import cloud_client
 from ..integrations.bonita.client import BonitaClientError, bonita_client
 from ..integrations.email.service import notificar_nueva_emergencia
 from ..integrations.prioridad.client import (
@@ -31,12 +34,14 @@ from ..models import (
     LoteNecesidad,
     OfertaAyuda,
     OfertaItem,
+    RegistroRecursos,
 )
 from ..repositories import EmergenciaRepository, UsuarioRepository
 from ..schemas import (
     EmergenciaActualizar,
     EmergenciaCrear,
 )
+from ..schemas.emergencias_schema import EtapaBonita, SincronizacionCierresRespuesta
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +61,83 @@ class EmergenciaService:
         emergencias = self._repository.listar(db, publicada=publicada)
         return [EmergenciaRespuesta.model_validate(e) for e in emergencias]
 
+    def _leer_candidatos_cierre(self, db: Session) -> list[tuple[int, str]]:
+        try:
+            return self._repository.listar_candidatos_cierre(db)
+        finally:
+            # No mantener una transacción municipal durante la consulta remota.
+            db.rollback()
+
+    async def sincronizar_cierres(self, db: Session) -> SincronizacionCierresRespuesta:
+        candidatos = await run_in_threadpool(self._leer_candidatos_cierre, db)
+        if not candidatos:
+            return SincronizacionCierresRespuesta(emergencias_resueltas=[])
+        try:
+            completados = await bonita_client.obtener_casos_completados({caso for _, caso in candidatos})
+        except (BonitaClientError, httpx.RequestError):
+            raise HTTPException(503, "No se pudo actualizar el estado de las emergencias. Intente nuevamente.") from None
+        resueltas = []
+        pendientes = False
+        for emergencia_id, caso_id in candidatos:
+            if caso_id not in completados:
+                continue
+            try:
+                resueltas.extend(await run_in_threadpool(
+                    self._cerrar_candidato, db, emergencia_id, caso_id,
+                ))
+            except HTTPException as exc:
+                if exc.status_code != 503:
+                    raise
+                pendientes = True
+        if pendientes:
+            raise HTTPException(503, "No se pudo liberar el stock de todas las emergencias. Intente nuevamente.")
+        return SincronizacionCierresRespuesta(emergencias_resueltas=resueltas)
+
+    def _cerrar_candidato(self, db: Session, emergencia_id: int, caso_id: str) -> list[int]:
+        try:
+            # Comparte el bloqueo con el registro de recursos y recarga tras esperarlo.
+            emergencia = self._repository.obtener_por_id(db, emergencia_id, bloquear=True)
+            if (emergencia is None or not emergencia.publicada
+                    or emergencia.estado != EstadoEmergencia.EN_PROCESO
+                    or emergencia.bonita_case_id != caso_id):
+                return []
+            registro = db.get(RegistroRecursos, emergencia_id, populate_existing=True)
+            if registro is not None and registro.estado != "RECHAZADO":
+                if registro.estado != "CONFIRMADO" or registro.caso_id != caso_id:
+                    raise ValueError("La reserva requiere conciliación")
+                token = cloud_client.obtener_token_aplicacion()
+                respuesta = cloud_client.liberar_emergencia(registro.emergencia_id, token)
+                if respuesta.status_code != 200:
+                    raise ValueError("Cloud no confirmó la liberación")
+                self._validar_liberacion(emergencia_id, respuesta.json())
+            # Cada cierre se confirma por separado, todavía bajo el mismo bloqueo.
+            return self._repository.resolver_candidatos_cierre(
+                db, [(emergencia_id, caso_id)], {caso_id},
+            )
+        except (cloud_client.AutenticacionAplicacionError, httpx.RequestError,
+                httpx.InvalidURL, ValueError, TypeError, KeyError, SQLAlchemyError):
+            raise HTTPException(503, "No se pudo confirmar la liberación de stock. Intente nuevamente.") from None
+        finally:
+            db.rollback()
+
+    @staticmethod
+    def _validar_liberacion(emergencia_id: int, recibo: dict) -> None:
+        if (not isinstance(recibo, dict) or type(recibo.get("emergencia_id")) is not int
+                or recibo["emergencia_id"] != emergencia_id
+                or type(recibo.get("total_liberado")) is not int or recibo["total_liberado"] < 0
+                or not isinstance(recibo.get("compromisos_liberados"), list)):
+            raise ValueError()
+        total = 0
+        for fila in recibo["compromisos_liberados"]:
+            if (not isinstance(fila, dict)
+                    or any(type(fila.get(campo)) is not int or fila[campo] <= 0
+                           for campo in ("ong_id", "item_id", "cantidad"))
+                    or fila.get("estado_anterior") not in ("BLOQUEADO", "COMPROMETIDO")):
+                raise ValueError()
+            total += fila["cantidad"]
+        if total != recibo["total_liberado"]:
+            raise ValueError()
+
     def listar_emergencias_paginadas(
         self,
         db: Session,
@@ -63,20 +145,45 @@ class EmergenciaService:
         estado: Optional[str] = None,
         pagina: int = 1,
         por_pagina: int = 10,
+        casos_bonita: set[str] | None = None,
     ) -> EmergenciasPaginadas:
         """Bandeja paginada: bucket de no publicadas o de publicadas."""
-        total = self._repository.contar_por_publicada(
-            db, publicada, estado=estado
-        )
-        emergencias = self._repository.listar_paginado(
-            db, publicada, pagina, por_pagina, estado=estado
-        )
+        filtros = {"estado": estado}
+        if casos_bonita is not None:
+            filtros["casos_bonita"] = casos_bonita
+        total = self._repository.contar_por_publicada(db, publicada, **filtros)
+        emergencias = self._repository.listar_paginado(db, publicada, pagina, por_pagina, **filtros)
         return EmergenciasPaginadas(
             items=[EmergenciaRespuesta.model_validate(e) for e in emergencias],
             pagina=pagina,
             por_pagina=por_pagina,
             total=total,
             paginas=math.ceil(total / por_pagina) if total else 0,
+        )
+
+    async def listar_bandeja_por_etapa(
+        self, db: Session, etapa: EtapaBonita, pagina: int, por_pagina: int,
+    ) -> EmergenciasPaginadas:
+        """Bonita determina la etapa; SQL filtra antes de contar y paginar."""
+        estado = (EstadoEmergencia.ESPERA_OFERTAS if etapa == "esperando_ofertas"
+                  else EstadoEmergencia.ESPERANDO_ADJUDICACION)
+        try:
+            if etapa == "esperando_ofertas":
+                candidatos = await run_in_threadpool(self._repository.listar_casos_por_estado, db, estado)
+                casos = await bonita_client.obtener_casos_con_ofertas_abiertas(candidatos)
+            else:
+                evaluando = await bonita_client.obtener_casos_con_tarea_lista("Evaluar proyecto")
+                if etapa == "esperando_evaluacion":
+                    casos = evaluando
+                else:
+                    seleccionando = await bonita_client.obtener_casos_con_tarea_lista("Seleccionar oferta")
+                    # Una lectura durante la transición no adelanta la selección.
+                    casos = seleccionando - evaluando
+        except (BonitaClientError, httpx.RequestError):
+            raise HTTPException(503, "No se pudo consultar la etapa de las emergencias en Bonita") from None
+        return await run_in_threadpool(
+            self.listar_emergencias_paginadas, db, True, estado, pagina, por_pagina,
+            casos_bonita=casos,
         )
 
     def obtener_dashboard(

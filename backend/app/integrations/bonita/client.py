@@ -1,4 +1,6 @@
+import asyncio
 import os
+from datetime import datetime, timezone
 from typing import Any
 import httpx
 
@@ -99,6 +101,114 @@ class BonitaClient:
             )
         return str(processes[0]["id"])
 
+    async def obtener_metricas_reporte(self) -> dict[str, Any]:
+        """Consulta en Bonita las métricas requeridas por el dashboard."""
+        try:
+            async with await self._client() as client:
+                await self.login(client)
+                process_id = await self.get_process_id(client)
+                tareas_archivadas = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/archivedHumanTask",
+                    [f"processId={process_id}"],
+                )
+                convocatorias_sin_tilde = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/archivedHumanTask",
+                    [f"processId={process_id}", "name=Decidir curso de accion"],
+                )
+                convocatorias_con_tilde = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/archivedHumanTask",
+                    [f"processId={process_id}", "name=Decidir curso de acción"],
+                )
+                casos_abiertos = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/case",
+                    [f"processDefinitionId={process_id}"],
+                )
+                casos_cerrados = await self._obtener_coleccion(
+                    client,
+                    "/API/bpm/archivedCase",
+                    [f"processDefinitionId={process_id}"],
+                )
+        except httpx.RequestError as exc:
+            raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
+
+        etapas = {
+            "Generar lotes": [],
+            "Publicar pedido": [],
+            "Seleccionar oferta": [],
+            "Evaluar proyecto": [],
+        }
+        convocatorias = len(convocatorias_sin_tilde) + len(convocatorias_con_tilde)
+        for tarea in tareas_archivadas:
+            nombre = str(tarea.get("name", ""))
+            if nombre in etapas:
+                inicio = self._fecha_tarea(tarea, "ready")
+                fin = self._fecha_tarea(tarea, "completed")
+                if inicio is not None and fin is not None and fin >= inicio:
+                    etapas[nombre].append((fin - inicio).total_seconds() / 3600)
+        return {
+            "tiempos_por_etapa": [
+                {
+                    "etapa": etapa,
+                    "promedio_horas": sum(duraciones) / len(duraciones) if duraciones else 0.0,
+                    "cantidad": len(duraciones),
+                }
+                for etapa, duraciones in etapas.items()
+            ],
+            "casos": {
+                "abiertos": len(casos_abiertos),
+                "cerrados": len(casos_cerrados),
+            },
+            "convocatorias_camino_alternativo": convocatorias,
+        }
+
+    async def _obtener_coleccion(
+        self,
+        client: httpx.AsyncClient,
+        recurso: str,
+        filtros: list[str],
+    ) -> list[dict[str, Any]]:
+        try:
+            response = await client.get(
+                recurso,
+                params={"p": 0, "c": 2000, "f": filtros},
+            )
+        except httpx.RequestError as exc:
+            raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
+        if response.status_code != 200:
+            raise BonitaClientError(
+                f"Error consultando {recurso} (HTTP {response.status_code})"
+            )
+        try:
+            datos = response.json()
+        except ValueError as exc:
+            raise BonitaClientError(f"Respuesta inválida consultando {recurso}") from exc
+        if not isinstance(datos, list):
+            raise BonitaClientError(f"Respuesta inválida consultando {recurso}")
+        return datos
+
+    @staticmethod
+    def _fecha_tarea(tarea: dict[str, Any], tipo: str) -> datetime | None:
+        nombres = {
+            "ready": ("ready_date", "readyDate", "reached_state_date", "reachedStateDate"),
+            "completed": (
+                "completed_date", "completedDate", "end_date", "endDate",
+                "last_update_date", "lastUpdateDate",
+            ),
+        }[tipo]
+        for nombre in nombres:
+            valor = tarea.get(nombre)
+            if not valor:
+                continue
+            try:
+                return datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+        return None
+
     async def set_case_variables(
         self, case_id: int, variables: dict[str, Any]
     ) -> list[str]:
@@ -167,6 +277,116 @@ class BonitaClient:
             tareas = response.json()
             return tareas[0] if tareas else None
 
+    @staticmethod
+    async def _listar_recurso_paginado(
+        client: httpx.AsyncClient, recurso: str, parametros: dict,
+    ) -> list[dict]:
+        """Pagina recursos de lectura y rechaza respuestas incompletas o inválidas."""
+        registros = []
+        pagina = 0
+        por_pagina = 100
+        while True:
+            try:
+                response = await client.get(
+                    f"/API/bpm/{recurso}", params={**parametros, "p": pagina, "c": por_pagina},
+                )
+                if response.status_code != 200:
+                    raise BonitaClientError(f"Error consultando {recurso} (HTTP {response.status_code})")
+                lote = response.json()
+            except (httpx.RequestError, ValueError) as exc:
+                raise BonitaClientError(f"No se pudo consultar {recurso} en Bonita") from exc
+            if not isinstance(lote, list) or any(not isinstance(fila, dict) for fila in lote):
+                raise BonitaClientError(f"Bonita devolvió una lista inválida de {recurso}")
+            registros.extend(lote)
+            if len(lote) < por_pagina:
+                return registros
+            pagina += 1
+
+    async def obtener_casos_con_tarea_lista(self, nombre_tarea: str) -> set[str]:
+        """Busca todas las tareas ready; vuelve a comprobar los filtros del motor."""
+        async with await self._client() as client:
+            await self.login(client)
+            tareas = await self._listar_recurso_paginado(
+                client, "userTask", {"f": [f"name={nombre_tarea}", "state=ready"]},
+            )
+        return {
+            str(tarea["caseId"]) for tarea in tareas
+            if tarea.get("name") == nombre_tarea and tarea.get("state") == "ready"
+            and str(tarea.get("caseId", "")).isdecimal() and int(tarea["caseId"]) > 0
+        }
+
+    async def obtener_casos_completados(self, casos: set[str]) -> set[str]:
+        """Consulta archivos por caso original, incluyendo versiones anteriores."""
+        if not casos:
+            return set()
+        limite = asyncio.Semaphore(5)
+        async with await self._client() as client:
+            await self.login(client)
+
+            async def consultar(caso_id: str) -> tuple[str, list[dict]]:
+                async with limite:
+                    registros = await self._listar_recurso_paginado(
+                        client, "archivedCase", {"f": [f"sourceObjectId={caso_id}"]},
+                    )
+                return caso_id, registros
+
+            resultados = await asyncio.gather(
+                *(consultar(caso) for caso in sorted(casos)), return_exceptions=True,
+            )
+            for resultado in resultados:
+                if isinstance(resultado, BaseException):
+                    raise resultado
+        completados = set()
+        for caso_id, registros in resultados:
+            for registro in registros:
+                original = registro.get("sourceObjectId")
+                estado = registro.get("state")
+                if (type(original) not in (str, int) or not str(original).isdecimal()
+                        or int(original) <= 0 or not isinstance(estado, str) or not estado):
+                    raise BonitaClientError("Bonita devolvió un caso archivado inválido")
+                # El id del archivo no identifica al caso municipal original.
+                if str(original) == caso_id and estado == "completed":
+                    completados.add(caso_id)
+        return completados
+
+    async def obtener_casos_con_ofertas_abiertas(
+        self, casos: set[str], ahora: datetime | None = None,
+    ) -> set[str]:
+        """La próxima ejecución del timer determina si la ronda admite ofertas."""
+        if not casos:
+            return set()
+        limite = asyncio.Semaphore(5)
+        async with await self._client() as client:
+            await self.login(client)
+
+            async def consultar(caso_id: str) -> tuple[str, list[dict]]:
+                async with limite:
+                    registros = await self._listar_recurso_paginado(
+                        client, "timerEventTrigger", {"caseId": caso_id},
+                    )
+                return caso_id, registros
+
+            # Esperar todas las lecturas antes de cerrar la sesión también si falla una.
+            resultados = await asyncio.gather(
+                *(consultar(caso_id) for caso_id in sorted(casos)), return_exceptions=True,
+            )
+            for resultado in resultados:
+                if isinstance(resultado, BaseException):
+                    raise resultado
+        # Medir después de la consulta evita reabrir un timer vencido durante el HTTP.
+        instante = (ahora or datetime.now(timezone.utc)).timestamp() * 1000
+        abiertos = set()
+        for caso_id, registros in resultados:
+            for registro in registros:
+                if registro.get("eventInstanceName") != "TImer ofertas":
+                    continue
+                ejecucion = registro.get("executionDate")
+                if type(ejecucion) is not int:
+                    raise BonitaClientError("Bonita devolvió una fecha inválida del temporizador de ofertas")
+                if ejecucion > instante:
+                    abiertos.add(caso_id)
+        return abiertos
+
     async def obtener_miembro_actor(self, actor_id: int, solo_usuarios: bool = False) -> dict | None:
         """Devuelve el primer usuario miembro del actor Bonita, o None si no tiene."""
         async with await self._client() as client:
@@ -185,6 +405,43 @@ class BonitaClient:
                 )
             miembros = response.json()
             return miembros[0] if miembros else None
+
+    async def tarea_completada(self, case_id: int, tarea_id: str, nombre: str) -> bool:
+        """Comprueba una ejecución exacta, sin confundir vueltas del mismo caso."""
+        async with await self._client() as client:
+            await self.login(client)
+            response = await client.get(
+                "/API/bpm/archivedHumanTask",
+                params={"p": 0, "c": 20, "f": [f"sourceObjectId={tarea_id}", f"caseId={case_id}"]},
+            )
+            if response.status_code != 200:
+                raise BonitaClientError(f"Error consultando tarea archivada (HTTP {response.status_code})")
+            return any(str(tarea.get("sourceObjectId")) == str(tarea_id)
+                       and str(tarea.get("caseId")) == str(case_id)
+                       and tarea.get("name") == nombre and tarea.get("state") == "completed"
+                       for tarea in response.json())
+
+    async def tarea_completada_por_nombre(self, case_id: int, nombre: str) -> bool:
+        """Comprueba si el caso ya completó una tarea humana por nombre."""
+        async with await self._client() as client:
+            await self.login(client)
+            response = await client.get(
+                "/API/bpm/archivedHumanTask",
+                params={"p": 0, "c": 50, "f": [f"caseId={case_id}", f"name={nombre}"]},
+            )
+            if response.status_code != 200:
+                raise BonitaClientError(
+                    f"Error consultando la tarea archivada '{nombre}' (HTTP {response.status_code})"
+                )
+            tareas = response.json()
+            if not isinstance(tareas, list):
+                raise BonitaClientError("Respuesta inválida consultando la tarea archivada")
+            return any(
+                str(tarea.get("caseId")) == str(case_id)
+                and tarea.get("name") == nombre
+                and tarea.get("state") == "completed"
+                for tarea in tareas
+            )
 
     async def obtener_variable_caso(self, case_id: int, nombre: str) -> str | None:
         """Lee el valor textual, incluyendo casos ya archivados por el motor."""

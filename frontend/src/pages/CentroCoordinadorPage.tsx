@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   BORRADOR_VACIO,
@@ -9,11 +9,17 @@ import {
 import type { BorradorLote } from './formularioLote'
 import {
   ApiError,
+  obtenerEmergencia,
+  obtenerEvaluacionProyecto,
+  evaluarProyecto,
   actualizarLote,
   adjudicarOferta,
+  confirmarSeleccionOfertas,
   crearLote,
   eliminarLote,
+  finalizarOferta,
   listarBandejaEmergencias,
+  sincronizarCierresEmergencias,
   listarOfertasDeEmergencia,
   listarRecursosCloud,
   crearRecursoCloud,
@@ -26,16 +32,18 @@ import {
   claseSubPanel,
 } from '../ui/clases'
 import type {
+  AccionEvaluacionProyecto,
   BandaEmergencias,
   EstadoEmergencia,
+  EvaluacionProyectoRead,
   EmergenciaRead,
   LoteNecesidad,
   NivelGravedad,
-  OfertaRead,
   RecursoCloud,
 } from '../types'
+import type { OfertaCoordinadorRead } from '../types/oferta'
 
-type PestaniaBandeja = EstadoEmergencia
+type PestaniaBandeja = EstadoEmergencia | 'esperando_evaluacion'
 
 const NIVELES_GRAVEDAD: { valor: NivelGravedad; etiqueta: string }[] = [
   { valor: 'baja', etiqueta: 'Baja' },
@@ -59,6 +67,7 @@ const PESTANIAS_BANDEJA: {
 }[] = [
   { valor: 'esperando_lotes', etiqueta: 'Esperando lotes', titulo: 'Emergencias esperando lotes' },
   { valor: 'esperando_ofertas', etiqueta: 'Esperando ofertas', titulo: 'Emergencias esperando ofertas' },
+  { valor: 'esperando_evaluacion', etiqueta: 'Esperando Evaluacion', titulo: 'Emergencias esperando evaluación' },
   { valor: 'esperando_adjudicacion', etiqueta: 'Esperando adjudicación', titulo: 'Emergencias esperando adjudicación' },
   { valor: 'en_proceso', etiqueta: 'En proceso', titulo: 'Emergencias en proceso' },
   { valor: 'resuelta', etiqueta: 'Resueltas', titulo: 'Emergencias resueltas' },
@@ -70,9 +79,21 @@ const DESCRIPCIONES_BANDEJA: Record<PestaniaBandeja, string> = {
   esperando_ofertas:
     'Emergencias publicadas que reciben ofertas de ayuda. Tocá una fila para desplegar su detalle.',
   esperando_adjudicacion:
-    'Emergencias con ofertas listas para ser evaluadas y adjudicadas.',
+    'Emergencias listas para seleccionar y adjudicar ofertas.',
+  esperando_evaluacion:
+    'Emergencias cuya convocatoria terminó y requieren decidir cómo continuar el proyecto.',
   en_proceso: 'Emergencias con ofertas adjudicadas y atención en curso.',
   resuelta: 'Emergencias cuya atención fue resuelta.',
+}
+
+interface EstadoEvaluacionProyecto {
+  tareaId: number | null
+  accion: AccionEvaluacionProyecto | ''
+  cargando: boolean
+  enviando: boolean
+  pendiente: boolean
+  requiereConsulta: boolean
+  error?: string
 }
 
 const POR_PAGINA = 10
@@ -554,33 +575,79 @@ function ListaLotes({
   )
 }
 
+function estaAdjudicadaParaCierre(oferta: OfertaCoordinadorRead): boolean {
+  return oferta.estado_seleccion === 'adjudicada' ||
+    (oferta.estado_seleccion == null && oferta.adjudicada_en != null)
+}
+
+function puedeCerrarOferta(oferta: OfertaCoordinadorRead, ofertas: OfertaCoordinadorRead[]): boolean {
+  return estaAdjudicadaParaCierre(oferta) && ofertas
+    .filter((registro) => registro.emergencia_id === oferta.emergencia_id && estaAdjudicadaParaCierre(registro))
+    .every((registro) => registro.items.length > 0 && registro.items.every((item) => item.finalizado_en != null))
+}
+
 function PanelAdjudicacion({
   ofertas,
   lotes,
   cargando,
   errorCarga,
   adjudicando,
+  finalizando,
   errorAdjudicar,
   exitoAdjudicar,
+  errorFinalizar,
+  exitoFinalizar,
   puedeAdjudicar,
+  puedeConfirmar,
+  puedeFinalizar,
+  confirmando,
+  evaluando,
+  confirmada,
+  errorConfirmar,
+  exitoConfirmar,
+  confirmacionesPendientes,
   alAdjudicar,
+  alSolicitarConfirmacion,
+  alCancelarConfirmacion,
+  alConfirmarAdjudicacion,
+  alFinalizar,
+  alConfirmar,
 }: {
-  ofertas: OfertaRead[] | undefined
+  ofertas: OfertaCoordinadorRead[] | undefined
   lotes: LoteNecesidad[]
   cargando: boolean
   errorCarga: string | undefined
   adjudicando: number | null
+  finalizando: number | null
   errorAdjudicar: Record<number, string>
   exitoAdjudicar: Record<number, string>
+  errorFinalizar: Record<number, string>
+  exitoFinalizar: Record<number, string>
   puedeAdjudicar: boolean
-  alAdjudicar: (ofertaId: number) => void
+  puedeConfirmar: boolean
+  puedeFinalizar: boolean
+  confirmando: boolean
+  evaluando: boolean
+  confirmada: boolean
+  errorConfirmar: string | undefined
+  exitoConfirmar: string | undefined
+  confirmacionesPendientes: Record<number, boolean>
+  alAdjudicar: (ofertaId: number, paraSeleccion: boolean) => void
+  alSolicitarConfirmacion: (ofertaId: number) => void
+  alCancelarConfirmacion: (ofertaId: number) => void
+  alConfirmarAdjudicacion: (ofertaId: number) => void
+  alFinalizar: (ofertaId: number) => void
+  alConfirmar: () => void
 }) {
   const sinOfertas =
     !cargando && errorCarga === undefined && (ofertas === undefined || ofertas.length === 0)
   const hayAdjudicadas = ofertas?.some(
     (oferta) => oferta.adjudicada_en !== null || exitoAdjudicar[oferta.id] !== undefined,
   ) === true
-  const bloqueada = adjudicando !== null || hayAdjudicadas
+  const bloqueada = adjudicando !== null || finalizando !== null || confirmando || confirmada || evaluando
+  const hayCierrePendiente = ofertas?.some(
+    (oferta) => estaAdjudicadaParaCierre(oferta) && !puedeCerrarOferta(oferta, ofertas),
+  ) === true
 
   const lotePorId = new Map(lotes.map((lote) => [lote.id, lote]))
 
@@ -589,7 +656,7 @@ function PanelAdjudicacion({
       <h4 className="text-sm font-bold text-cyan-400">Ofertas recibidas</h4>
       <p className="mt-1 text-xs text-slate-400">
         {puedeAdjudicar
-          ? 'Adjudicá una sola oferta. Después de confirmar no podrás elegir otra.'
+          ? 'Selecciona las ofertas evaluadas y confirma la selección para continuar.'
           : 'La oferta adjudicada inicia la atención de la emergencia.'}
       </p>
 
@@ -604,6 +671,12 @@ function PanelAdjudicacion({
       {sinOfertas && (
         <p className="mt-3 text-sm text-slate-400">
           No hay ofertas para esta emergencia.
+        </p>
+      )}
+
+      {puedeFinalizar && !cargando && errorCarga === undefined && hayCierrePendiente && (
+        <p role="status" className="mt-3 text-sm text-slate-400">
+          Todavía hay ofertas adjudicadas con ítems pendientes de finalización.
         </p>
       )}
 
@@ -650,6 +723,11 @@ function PanelAdjudicacion({
                           <span className="font-mono text-cyan-300">
                             Ofrece: {item.cantidad_ofrecida} {unidad}
                           </span>
+                          <span className="font-mono text-cyan-300">
+                            {item.cantidad_verificada == null
+                              ? 'Pendiente de evaluación'
+                              : `Verificado por Cloud: ${item.cantidad_verificada}`}
+                          </span>
                         </div>
                         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-slate-400">
                           <span>Lote #{item.lote_necesidad_id}</span>
@@ -673,33 +751,107 @@ function PanelAdjudicacion({
                 </ul>
               </div>
 
-              {oferta.adjudicada_en !== null && (
+              {(oferta.estado_seleccion === 'adjudicada' ||
+                (confirmada && (oferta.adjudicada_en !== null || exitoAdjudicar[oferta.id] !== undefined))) && (
                 <p className="rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-300">
                   Oferta adjudicada el {formatearFecha(oferta.adjudicada_en, 'Sin fecha')}
                 </p>
               )}
 
-              {puedeAdjudicar && oferta.adjudicada_en === null && (
+              {!confirmada && (oferta.estado_seleccion === 'seleccionada_para_confirmar' ||
+                (oferta.estado_seleccion !== 'adjudicada' && exitoAdjudicar[oferta.id] !== undefined)) && (
+                <button type="button" disabled className={`${claseBotonSecundario} self-start text-sm`}>
+                  Seleccionada para confirmar
+                </button>
+              )}
+
+              {puedeAdjudicar && !confirmada && oferta.estado_seleccion === 'sin_seleccionar' &&
+                exitoAdjudicar[oferta.id] === undefined && (
                 <button
                   type="button"
-                  onClick={() => {
-                    const confirmado = window.confirm(
-                      `¿Adjudicar la oferta #${oferta.id}? Se adjudicará esta oferta y no podrás elegir otra.`,
-                    )
-                    if (confirmado) {
-                      alAdjudicar(oferta.id)
-                    }
-                  }}
-                  disabled={bloqueada || cargando || errorCarga !== undefined}
+                  onClick={() => alAdjudicar(oferta.id, true)}
+                  disabled={bloqueada || !oferta.puede_seleccionar || cargando || errorCarga !== undefined}
                   className={`${claseBotonSecundario} self-start text-sm`}
                 >
                   {adjudicando === oferta.id ? 'Adjudicando...' : 'Adjudicar'}
                 </button>
               )}
 
-              {exitoAdjudicar[oferta.id] !== undefined && (
+              {oferta.estado_seleccion === 'sin_seleccionar' && !oferta.puede_seleccionar &&
+                oferta.items.length > 0 && oferta.items.every((item) => (item.cantidad_verificada ?? 0) > 0) && (
+                <p className="text-xs text-slate-400">La selección no está habilitada en la etapa actual.</p>
+              )}
+
+              {puedeAdjudicar && !confirmada && !hayAdjudicadas && oferta.adjudicada_en === null && (
+                confirmacionesPendientes[oferta.id] === true ? (
+                  <div
+                    role="group"
+                    aria-label={`Confirmar adjudicación de la oferta #${oferta.id}`}
+                    className="flex flex-col gap-2 rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-3"
+                  >
+                    <p className="text-sm text-yellow-200">
+                      ¿Adjudicar la oferta #{oferta.id}? Se adjudicará esta oferta y no podrás elegir otra.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => alConfirmarAdjudicacion(oferta.id)}
+                        disabled={bloqueada || cargando || errorCarga !== undefined}
+                        className={`${claseBotonSecundario} text-sm`}
+                      >
+                        Confirmar adjudicación
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => alCancelarConfirmacion(oferta.id)}
+                        className={`${claseBotonSecundario} text-sm`}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => alSolicitarConfirmacion(oferta.id)}
+                    disabled={bloqueada || cargando || errorCarga !== undefined}
+                    className={`${claseBotonSecundario} self-start text-sm`}
+                  >
+                    Adjudicar solo esta oferta
+                  </button>
+                )
+              )}
+
+              {oferta.estado_seleccion === 'adjudicada' && exitoAdjudicar[oferta.id] !== undefined && (
                 <p role="status" className={claseExito}>{exitoAdjudicar[oferta.id]}</p>
               )}
+
+              {(() => {
+                if (!puedeFinalizar || !puedeCerrarOferta(oferta, ofertas)) {
+                  return null
+                }
+
+                return (
+                  <div className="flex flex-col gap-2 rounded-lg border border-cyan-500/40 bg-cyan-500/10 p-3">
+                    {exitoFinalizar[oferta.id] === undefined && (
+                      <button
+                        type="button"
+                        onClick={() => alFinalizar(oferta.id)}
+                        disabled={bloqueada || cargando || errorCarga !== undefined}
+                        className={`${claseBotonSecundario} self-start text-sm`}
+                      >
+                        {finalizando === oferta.id ? 'Cerrando oferta...' : 'Cerrar oferta'}
+                      </button>
+                    )}
+                    {exitoFinalizar[oferta.id] !== undefined && (
+                      <p role="status" className={claseExito}>{exitoFinalizar[oferta.id]}</p>
+                    )}
+                    {errorFinalizar[oferta.id] !== undefined && (
+                      <p role="alert" className={claseError}>{errorFinalizar[oferta.id]}</p>
+                    )}
+                  </div>
+                )
+              })()}
 
               {errorAdjudicar[oferta.id] !== undefined && (
                 <p role="alert" className={claseError}>
@@ -711,16 +863,34 @@ function PanelAdjudicacion({
         </ul>
       )}
 
+      {puedeConfirmar && ofertas !== undefined && ofertas.length > 0 && (
+        <button
+          type="button"
+          onClick={alConfirmar}
+          disabled={bloqueada || !hayAdjudicadas || cargando || errorCarga !== undefined}
+          className={`${claseBotonSecundario} mt-3 text-sm`}
+        >
+          {confirmada ? 'Selección confirmada' : confirmando ? 'Confirmando selección...' : 'Confirmar selección'}
+        </button>
+      )}
+      {errorConfirmar !== undefined && <p role="alert" className={claseError}>{errorConfirmar}</p>}
+      {exitoConfirmar !== undefined && <p role="status" className={claseExito}>{exitoConfirmar}</p>}
+
     </div>
   )
 }
 
 export function CentroCoordinadorPage() {
   const [pestania, setPestania] = useState<PestaniaBandeja>('esperando_lotes')
+  const pestaniaActual = useRef<PestaniaBandeja>('esperando_lotes')
+  const versionPestania = useRef(0)
+  const montada = useRef(true)
   const [pagina, setPagina] = useState(1)
   const [bandeja, setBandeja] = useState<BandaEmergencias | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [avisoSincronizacion, setAvisoSincronizacion] = useState<string | null>(null)
+  const [exitoCierre, setExitoCierre] = useState<string | null>(null)
   const [recargo, setRecargo] = useState(0)
   const [desplegadas, setDesplegadas] = useState<Set<number>>(() => new Set())
   const [borradores, setBorradores] = useState<Record<number, BorradorLote>>({})
@@ -740,34 +910,78 @@ export function CentroCoordinadorPage() {
   const [eliminandoLote, setEliminandoLote] = useState<number | null>(null)
   const [avisoLote, setAvisoLote] = useState<string | null>(null)
   const [ofertasPorEmergencia, setOfertasPorEmergencia] = useState<
-    Record<number, OfertaRead[]>
+    Record<number, OfertaCoordinadorRead[]>
   >({})
   const [cargandoOfertas, setCargandoOfertas] = useState<Record<number, boolean>>({})
   const [errorOfertas, setErrorOfertas] = useState<Record<number, string>>({})
   const [adjudicando, setAdjudicando] = useState<Record<number, number>>({})
+  const [finalizando, setFinalizando] = useState<Record<number, number>>({})
   const [errorAdjudicar, setErrorAdjudicar] = useState<Record<number, string>>({})
   const [exitoAdjudicar, setExitoAdjudicar] = useState<Record<number, string>>({})
+  const [errorFinalizar, setErrorFinalizar] = useState<Record<number, string>>({})
+  const [exitoFinalizar, setExitoFinalizar] = useState<Record<number, string>>({})
+  const [confirmando, setConfirmando] = useState<Record<number, boolean>>({})
+  const [confirmadas, setConfirmadas] = useState<Record<number, boolean>>({})
+  const [errorConfirmar, setErrorConfirmar] = useState<Record<number, string>>({})
+  const [exitoConfirmar, setExitoConfirmar] = useState<Record<number, string>>({})
+  const [confirmacionesAdjudicacion, setConfirmacionesAdjudicacion] = useState<Record<number, boolean>>({})
+  const [evaluacionesProyecto, setEvaluacionesProyecto] = useState<Record<number, EstadoEvaluacionProyecto>>({})
+  const evaluacionesVigentes = useRef<Record<number, EstadoEvaluacionProyecto>>({})
+  const versionesEvaluacion = useRef<Record<number, number>>({})
   const operacionesOfertas = useRef(new Set<number>())
   const adjudicadasRecientes = useRef(new Set<number>())
+  const confirmadasRecientes = useRef(new Set<number>())
+  const ofertasVigentes = useRef<Record<number, OfertaCoordinadorRead[]>>({})
   const revisionLotes = useRef(0)
   const versionesBusquedaRecursos = useRef<Record<number, number>>({})
   const versionBusquedaEdicion = useRef(0)
 
+  const actualizarEvaluacionProyecto = useCallback((emergenciaId: number, cambios: Partial<EstadoEvaluacionProyecto>) => {
+    const estado: EstadoEvaluacionProyecto = {
+      ...(evaluacionesVigentes.current[emergenciaId] ?? {
+        tareaId: null, accion: '', cargando: false, enviando: false, pendiente: false, requiereConsulta: false,
+      }),
+      ...cambios,
+    }
+    evaluacionesVigentes.current[emergenciaId] = estado
+    setEvaluacionesProyecto((actuales) => ({ ...actuales, [emergenciaId]: estado }))
+  }, [])
+
+  useEffect(() => {
+    montada.current = true
+    return () => { montada.current = false }
+  }, [])
+
   useEffect(() => {
     let vigente = true
+    const version = versionPestania.current
+    const sigueVigente = () => vigente && pestaniaActual.current === pestania && versionPestania.current === version
 
     async function cargar() {
       const revision = revisionLotes.current
       setCargando(true)
       setError(null)
+      setAvisoSincronizacion(null)
       try {
+        if (pestania === 'en_proceso' || pestania === 'resuelta') {
+          try {
+            await sincronizarCierresEmergencias()
+          } catch {
+            if (sigueVigente()) {
+              setAvisoSincronizacion('No se pudieron actualizar los cierres. Recargá la bandeja para volver a intentarlo.')
+            }
+          }
+          if (!sigueVigente()) return
+        }
         const datos = await listarBandejaEmergencias({
           publicada: pestania !== 'esperando_lotes',
-          estado: pestania,
+          ...(pestania === 'esperando_ofertas' || pestania === 'esperando_evaluacion' || pestania === 'esperando_adjudicacion'
+            ? { etapa_bonita: pestania }
+            : { estado: pestania }),
           pagina,
           por_pagina: POR_PAGINA,
         })
-        if (!vigente) {
+        if (!sigueVigente()) {
           return
         }
         if (revision !== revisionLotes.current) {
@@ -776,15 +990,27 @@ export function CentroCoordinadorPage() {
           return
         }
         setBandeja(datos)
+        if (pestania === 'esperando_adjudicacion') {
+          for (const emergencia of datos.items) {
+            if (evaluacionesVigentes.current[emergencia.id] !== undefined &&
+              !operacionesOfertas.current.has(emergencia.id)) {
+              // La bandeja vigente confirma la tarea de selección de este caso.
+              versionesEvaluacion.current[emergencia.id] = (versionesEvaluacion.current[emergencia.id] ?? 0) + 1
+              actualizarEvaluacionProyecto(emergencia.id, {
+                tareaId: null, accion: '', pendiente: false, cargando: false, requiereConsulta: false, error: undefined,
+              })
+            }
+          }
+        }
         if (datos.paginas > 0 && datos.pagina > datos.paginas) {
           setPagina(datos.paginas)
         }
       } catch (fallo) {
-        if (vigente) {
+        if (sigueVigente()) {
           setError(describirError(fallo))
         }
       } finally {
-        if (vigente) {
+        if (sigueVigente()) {
           setCargando(false)
         }
       }
@@ -795,24 +1021,118 @@ export function CentroCoordinadorPage() {
     return () => {
       vigente = false
     }
-  }, [pestania, pagina, recargo])
+  }, [pestania, pagina, recargo, actualizarEvaluacionProyecto])
 
-  function cambiarPestania(valor: PestaniaBandeja) {
-    setPagina(1)
-    setPestania(valor)
+  const cargarEvaluacionProyecto = useCallback(async (emergenciaId: number, incluirSeleccion = false): Promise<EvaluacionProyectoRead | undefined> => {
+    if (operacionesOfertas.current.has(emergenciaId)) return
+    const version = (versionesEvaluacion.current[emergenciaId] ?? 0) + 1
+    versionesEvaluacion.current[emergenciaId] = version
+    actualizarEvaluacionProyecto(emergenciaId, { cargando: true })
+    try {
+      const respuesta = await obtenerEvaluacionProyecto(emergenciaId, incluirSeleccion)
+      if (versionesEvaluacion.current[emergenciaId] !== version) return
+      const cambioTarea = evaluacionesVigentes.current[emergenciaId]?.tareaId !== respuesta.tarea_id
+      actualizarEvaluacionProyecto(emergenciaId, {
+        tareaId: respuesta.tarea_id, requiereConsulta: false, error: undefined,
+        ...(cambioTarea ? { accion: '' as const } : {}),
+      })
+      return respuesta
+    } catch (fallo) {
+      if (versionesEvaluacion.current[emergenciaId] !== version) return
+      actualizarEvaluacionProyecto(emergenciaId, { requiereConsulta: true, error: describirError(fallo) })
+    } finally {
+      if (versionesEvaluacion.current[emergenciaId] === version) actualizarEvaluacionProyecto(emergenciaId, { cargando: false })
+    }
+  }, [actualizarEvaluacionProyecto])
+
+  useEffect(() => {
+    if (pestania !== 'esperando_evaluacion') return
+    for (const emergencia of bandeja?.items ?? []) {
+      if (desplegadas.has(emergencia.id)) void cargarEvaluacionProyecto(emergencia.id)
+    }
+  }, [bandeja, desplegadas, pestania, cargarEvaluacionProyecto])
+
+  function evaluacionBloquea(emergenciaId: number): boolean {
+    const evaluacion = evaluacionesVigentes.current[emergenciaId]
+    return evaluacion !== undefined && (evaluacion.cargando || evaluacion.enviando || evaluacion.pendiente ||
+      evaluacion.tareaId !== null)
   }
 
-  async function cargarOfertasDeEmergencia(emergenciaId: number): Promise<void> {
+  async function actualizarEstadoProyecto(emergenciaId: number): Promise<void> {
+    if (operacionesOfertas.current.has(emergenciaId) || evaluacionesVigentes.current[emergenciaId]?.cargando) return
+    actualizarEvaluacionProyecto(emergenciaId, { cargando: true })
+    try {
+      const emergencia = await obtenerEmergencia(emergenciaId)
+      const evaluacion = await cargarEvaluacionProyecto(emergenciaId, true)
+      if (evaluacion?.tarea_id === null && (evaluacion.seleccion_oferta_lista === true ||
+        emergencia.estado === 'esperando_ofertas' || emergencia.estado === 'esperando_lotes')) {
+        actualizarEvaluacionProyecto(emergenciaId, { pendiente: false })
+        if (evaluacion.seleccion_oferta_lista === true) {
+          await cargarOfertasDeEmergencia(emergenciaId)
+          cambiarPestania('esperando_adjudicacion')
+        } else if (emergencia.estado !== null) {
+          cambiarPestania(emergencia.estado)
+        }
+        setRecargo((actual) => actual + 1)
+      }
+    } catch (fallo) {
+      actualizarEvaluacionProyecto(emergenciaId, { requiereConsulta: true, error: describirError(fallo) })
+    } finally {
+      actualizarEvaluacionProyecto(emergenciaId, { cargando: false })
+    }
+  }
+
+  async function manejarEvaluarProyecto(emergenciaId: number, tareaId: number): Promise<void> {
+    const evaluacion = evaluacionesVigentes.current[emergenciaId]
+    if (pestaniaActual.current !== 'esperando_evaluacion' || operacionesOfertas.current.has(emergenciaId) ||
+      evaluacion?.tareaId !== tareaId || evaluacion.cargando || evaluacion.enviando ||
+      evaluacion.pendiente || evaluacion.requiereConsulta || evaluacion.accion === '') return
+    operacionesOfertas.current.add(emergenciaId)
+    versionesEvaluacion.current[emergenciaId] = (versionesEvaluacion.current[emergenciaId] ?? 0) + 1
+    actualizarEvaluacionProyecto(emergenciaId, { enviando: true, error: undefined })
+    let aceptada = false
+    try {
+      const respuesta = await evaluarProyecto(emergenciaId, { tarea_id: tareaId, accion: evaluacion.accion })
+      if (respuesta.tarea_id !== tareaId) throw new ApiError(202, 'La respuesta de evaluación no pudo verificarse.')
+      aceptada = true
+      actualizarEvaluacionProyecto(emergenciaId, { tareaId: null, pendiente: true })
+    } catch (fallo) {
+      actualizarEvaluacionProyecto(emergenciaId, { requiereConsulta: true, error: describirError(fallo) })
+    } finally {
+      operacionesOfertas.current.delete(emergenciaId)
+      actualizarEvaluacionProyecto(emergenciaId, { enviando: false })
+    }
+    if (aceptada) await actualizarEstadoProyecto(emergenciaId)
+  }
+
+  function cambiarPestania(valor: PestaniaBandeja) {
+    if (pestaniaActual.current !== valor) versionPestania.current += 1
+    pestaniaActual.current = valor
+    setAvisoSincronizacion(null)
+    setExitoCierre(null)
+    setPagina(1)
+    setPestania(valor)
+    if (valor === 'esperando_ofertas' || valor === 'esperando_adjudicacion' || valor === 'en_proceso') {
+      for (const emergenciaId of desplegadas) {
+        if (ofertasVigentes.current[emergenciaId] === undefined) void cargarOfertasDeEmergencia(emergenciaId)
+      }
+    }
+  }
+
+  async function cargarOfertasDeEmergencia(emergenciaId: number): Promise<boolean> {
     setCargandoOfertas((actuales) => ({ ...actuales, [emergenciaId]: true }))
     try {
       const ofertas = await listarOfertasDeEmergencia(emergenciaId)
+      ofertasVigentes.current[emergenciaId] = ofertas
       setOfertasPorEmergencia((actuales) => ({ ...actuales, [emergenciaId]: ofertas }))
       setErrorOfertas((actuales) => sinClave(actuales, emergenciaId))
+      return true
     } catch (fallo) {
       setErrorOfertas((actuales) => ({
         ...actuales,
         [emergenciaId]: describirError(fallo),
       }))
+      return false
     } finally {
       setCargandoOfertas((actuales) => ({ ...actuales, [emergenciaId]: false }))
     }
@@ -823,11 +1143,13 @@ export function CentroCoordinadorPage() {
     ofertaId: number,
     paraSeleccion: boolean,
   ): Promise<void> {
-    const ofertas = ofertasPorEmergencia[emergenciaId]
+    const ofertas = ofertasVigentes.current[emergenciaId]
     const oferta = ofertas?.find((registro) => registro.id === ofertaId)
     if (
-      pestania !== 'esperando_adjudicacion' || oferta === undefined ||
-      operacionesOfertas.current.has(emergenciaId) ||
+      pestaniaActual.current !== 'esperando_adjudicacion' || oferta === undefined ||
+      operacionesOfertas.current.has(emergenciaId) || evaluacionBloquea(emergenciaId) ||
+      confirmadasRecientes.current.has(emergenciaId) ||
+      (paraSeleccion && !oferta.puede_seleccionar) ||
       oferta.adjudicada_en !== null || adjudicadasRecientes.current.has(ofertaId) ||
       (!paraSeleccion && ofertas?.some((registro) =>
         registro.adjudicada_en !== null || adjudicadasRecientes.current.has(registro.id),
@@ -865,6 +1187,119 @@ export function CentroCoordinadorPage() {
     } finally {
       operacionesOfertas.current.delete(emergenciaId)
       setAdjudicando((actuales) => sinClave(actuales, emergenciaId))
+      setConfirmacionesAdjudicacion((actuales) => sinClave(actuales, ofertaId))
+    }
+  }
+
+  function solicitarConfirmacionAdjudicacion(ofertaId: number) {
+    setConfirmacionesAdjudicacion((actuales) => ({ ...actuales, [ofertaId]: true }))
+  }
+
+  function cancelarConfirmacionAdjudicacion(ofertaId: number) {
+    setConfirmacionesAdjudicacion((actuales) => sinClave(actuales, ofertaId))
+  }
+
+  function confirmarAdjudicacionSoloOferta(emergenciaId: number, ofertaId: number) {
+    setConfirmacionesAdjudicacion((actuales) => sinClave(actuales, ofertaId))
+    void manejarAdjudicar(emergenciaId, ofertaId, false)
+  }
+
+  async function manejarConfirmarSeleccion(emergenciaId: number): Promise<void> {
+    const ofertas = ofertasVigentes.current[emergenciaId]
+    if (
+      (pestaniaActual.current !== 'esperando_adjudicacion' && pestaniaActual.current !== 'en_proceso') ||
+      operacionesOfertas.current.has(emergenciaId) || evaluacionBloquea(emergenciaId) || confirmadasRecientes.current.has(emergenciaId) ||
+      !ofertas?.some((oferta) => oferta.adjudicada_en !== null || adjudicadasRecientes.current.has(oferta.id))
+    ) return
+
+    operacionesOfertas.current.add(emergenciaId)
+    setConfirmando((actuales) => ({ ...actuales, [emergenciaId]: true }))
+    setErrorConfirmar((actuales) => sinClave(actuales, emergenciaId))
+    try {
+      const respuesta = await confirmarSeleccionOfertas(emergenciaId)
+      if (respuesta?.emergencia_id !== emergenciaId || typeof respuesta.ya_confirmada !== 'boolean') {
+        throw new ApiError(200, 'La respuesta de confirmación no pudo verificarse.')
+      }
+      confirmadasRecientes.current.add(emergenciaId)
+      setConfirmadas((actuales) => ({ ...actuales, [emergenciaId]: true }))
+      setExitoAdjudicar((actuales) => {
+        const siguientes = { ...actuales }
+        for (const oferta of ofertas) delete siguientes[oferta.id]
+        return siguientes
+      })
+      setExitoConfirmar((actuales) => ({
+        ...actuales,
+        [emergenciaId]: respuesta.ya_confirmada
+          ? 'La selección ya estaba confirmada.'
+          : 'Selección confirmada correctamente.',
+      }))
+      await cargarOfertasDeEmergencia(emergenciaId)
+      cambiarPestania('en_proceso')
+      setRecargo((actual) => actual + 1)
+    } catch (fallo) {
+      setErrorConfirmar((actuales) => ({ ...actuales, [emergenciaId]: describirError(fallo) }))
+    } finally {
+      operacionesOfertas.current.delete(emergenciaId)
+      setConfirmando((actuales) => sinClave(actuales, emergenciaId))
+    }
+  }
+
+  async function manejarFinalizarOferta(emergenciaId: number, ofertaId: number): Promise<void> {
+    const ofertas = ofertasVigentes.current[emergenciaId] ?? []
+    const oferta = ofertas.find((registro) => registro.id === ofertaId && registro.emergencia_id === emergenciaId)
+    if (
+      pestaniaActual.current !== 'en_proceso' || oferta === undefined ||
+      operacionesOfertas.current.has(emergenciaId) ||
+      !puedeCerrarOferta(oferta, ofertas)
+    ) return
+
+    const version = versionPestania.current
+    const sigueVigente = () => montada.current && pestaniaActual.current === 'en_proceso' && versionPestania.current === version
+    operacionesOfertas.current.add(emergenciaId)
+    setFinalizando((actuales) => ({ ...actuales, [emergenciaId]: ofertaId }))
+    setErrorFinalizar((actuales) => sinClave(actuales, ofertaId))
+    setExitoFinalizar((actuales) => sinClave(actuales, ofertaId))
+    try {
+      const respuesta = await finalizarOferta(ofertaId)
+      if (
+        respuesta?.oferta_id !== ofertaId ||
+        respuesta.estado !== 'finalizada' ||
+        typeof respuesta.mensaje !== 'string'
+      ) {
+        throw new ApiError(200, 'La respuesta de cierre de oferta no pudo verificarse.')
+      }
+      if (!sigueVigente()) return
+      setExitoFinalizar((actuales) => ({
+        ...actuales,
+        [ofertaId]: 'Se registró el cierre de la oferta.',
+      }))
+      await cargarOfertasDeEmergencia(emergenciaId)
+      if (!sigueVigente()) return
+      try {
+        const sincronizacion = await sincronizarCierresEmergencias()
+        if (!sigueVigente()) return
+        let resuelta = sincronizacion.emergencias_resueltas.includes(emergenciaId)
+        if (!resuelta) {
+          const emergencia = await obtenerEmergencia(emergenciaId)
+          resuelta = emergencia.id === emergenciaId && emergencia.estado === 'resuelta'
+        }
+        if (!sigueVigente()) return
+        if (resuelta) {
+          cambiarPestania('resuelta')
+          setExitoCierre('La emergencia fue resuelta')
+        }
+      } catch {
+        if (sigueVigente()) {
+          setAvisoSincronizacion('Se registró el cierre de la oferta, pero no se pudo actualizar su estado. Recargá la bandeja para volver a intentarlo.')
+        }
+      }
+    } catch {
+      if (sigueVigente()) {
+        setErrorFinalizar((actuales) => ({ ...actuales, [ofertaId]: 'No se pudo cerrar la oferta. Intentá de nuevo.' }))
+      }
+    } finally {
+      operacionesOfertas.current.delete(emergenciaId)
+      if (montada.current) setFinalizando((actuales) => sinClave(actuales, emergenciaId))
     }
   }
 
@@ -1218,6 +1653,9 @@ export function CentroCoordinadorPage() {
         ))}
       </nav>
 
+      {exitoCierre !== null && <p role="status" className={claseExito}>{exitoCierre}</p>}
+      {avisoSincronizacion !== null && <p role="alert" className={claseError}>{avisoSincronizacion}</p>}
+
       <div className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
         <h2 className="text-xl font-bold text-cyan-400 mb-1">{tituloBandeja}</h2>
         <p className="text-sm text-slate-400">{DESCRIPCIONES_BANDEJA[pestania]}</p>
@@ -1288,7 +1726,7 @@ export function CentroCoordinadorPage() {
                       Gravedad: {etiquetaDeGravedad(emergencia.nivel_gravedad)}
                     </span>
                     <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-300">
-                      Estado: {etiquetaDeEstado(emergencia.estado)}
+                      Estado: {pestania === 'esperando_evaluacion' ? 'Esperando Evaluacion' : etiquetaDeEstado(emergencia.estado)}
                     </span>
                     <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-300">
                       Lotes: {emergencia.lotes.length}
@@ -1332,6 +1770,45 @@ export function CentroCoordinadorPage() {
                       alEliminar={(lote) => void manejarEliminar(lote)}
                     />
 
+                    {pestania === 'esperando_evaluacion' && (
+                      <div className={claseSubPanel}>
+                        {evaluacionesProyecto[emergencia.id]?.tareaId != null && !evaluacionesProyecto[emergencia.id]?.pendiente && (
+                          <>
+                            <h4 className="text-sm font-bold text-cyan-400">Evaluar proyecto</h4>
+                            <label htmlFor={`evaluacion-proyecto-${emergencia.id}`} className={claseEtiqueta}>Decisión</label>
+                            <select
+                              id={`evaluacion-proyecto-${emergencia.id}`}
+                              value={evaluacionesProyecto[emergencia.id].accion}
+                              disabled={evaluacionesProyecto[emergencia.id].cargando || evaluacionesProyecto[emergencia.id].enviando || evaluacionesProyecto[emergencia.id].requiereConsulta}
+                              onChange={(evento) => actualizarEvaluacionProyecto(emergencia.id, { accion: evento.target.value as AccionEvaluacionProyecto })}
+                              className={claseCampo}
+                            >
+                              <option value="" disabled>Elegir una decisión</option>
+                              <option value="REABRIR">Reabrir convocatoria</option>
+                              <option value="REFORMULAR">Reformular pedido</option>
+                              <option value="CONTINUAR_PARCIAL">Continuar con cobertura parcial</option>
+                            </select>
+                            <button
+                              type="button"
+                              disabled={evaluacionesProyecto[emergencia.id].cargando || evaluacionesProyecto[emergencia.id].enviando || evaluacionesProyecto[emergencia.id].requiereConsulta || evaluacionesProyecto[emergencia.id].accion === ''}
+                              onClick={() => void manejarEvaluarProyecto(emergencia.id, evaluacionesProyecto[emergencia.id].tareaId!)}
+                              className={`${claseBotonSecundario} mt-3 text-sm`}
+                            >
+                              {evaluacionesProyecto[emergencia.id].enviando ? 'Enviando decisión...' : 'Confirmar decisión'}
+                            </button>
+                          </>
+                        )}
+                        {evaluacionesProyecto[emergencia.id]?.error && <p role="alert" className={claseError}>{evaluacionesProyecto[emergencia.id].error}</p>}
+                        {evaluacionesProyecto[emergencia.id]?.pendiente && <p role="status" className="text-sm text-slate-300">Decisión enviada. Esperando el siguiente paso del proceso.</p>}
+                        {evaluacionesProyecto[emergencia.id]?.cargando && <p className="text-sm text-slate-400">Consultando etapa del proyecto...</p>}
+                        <button
+                          type="button"
+                          disabled={evaluacionesProyecto[emergencia.id]?.cargando || evaluacionesProyecto[emergencia.id]?.enviando}
+                          onClick={() => void actualizarEstadoProyecto(emergencia.id)}
+                          className={`${claseBotonSecundario} mt-3 text-sm`}
+                        >Actualizar estado</button>
+                      </div>
+                    )}
                     {(pestania === 'esperando_ofertas' || pestania === 'esperando_adjudicacion' || pestania === 'en_proceso') && (
                       <PanelAdjudicacion
                         ofertas={ofertasPorEmergencia[emergencia.id]}
@@ -1339,10 +1816,26 @@ export function CentroCoordinadorPage() {
                         cargando={cargandoOfertas[emergencia.id] === true}
                         errorCarga={errorOfertas[emergencia.id]}
                         adjudicando={adjudicando[emergencia.id] ?? null}
+                        finalizando={finalizando[emergencia.id] ?? null}
                         errorAdjudicar={errorAdjudicar}
                         exitoAdjudicar={exitoAdjudicar}
-                        alAdjudicar={(ofertaId) => void manejarAdjudicar(emergencia.id, ofertaId, false)}
+                        errorFinalizar={errorFinalizar}
+                        exitoFinalizar={exitoFinalizar}
+                        alAdjudicar={(ofertaId, paraSeleccion) => void manejarAdjudicar(emergencia.id, ofertaId, paraSeleccion)}
+                        alFinalizar={(ofertaId) => void manejarFinalizarOferta(emergencia.id, ofertaId)}
+                        evaluando={pestania === 'esperando_ofertas' || evaluacionBloquea(emergencia.id)}
+                        confirmando={confirmando[emergencia.id] === true}
+                        confirmada={confirmadas[emergencia.id] === true}
+                        errorConfirmar={errorConfirmar[emergencia.id]}
+                        exitoConfirmar={exitoConfirmar[emergencia.id]}
+                        confirmacionesPendientes={confirmacionesAdjudicacion}
+                        alSolicitarConfirmacion={solicitarConfirmacionAdjudicacion}
+                        alCancelarConfirmacion={cancelarConfirmacionAdjudicacion}
+                        alConfirmarAdjudicacion={(ofertaId) => confirmarAdjudicacionSoloOferta(emergencia.id, ofertaId)}
+                        alConfirmar={() => void manejarConfirmarSeleccion(emergencia.id)}
                         puedeAdjudicar={pestania === 'esperando_adjudicacion'}
+                        puedeConfirmar={pestania === 'esperando_adjudicacion'}
+                        puedeFinalizar={pestania === 'en_proceso'}
                       />
                     )}
 

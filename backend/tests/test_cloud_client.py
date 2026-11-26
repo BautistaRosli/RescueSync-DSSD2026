@@ -249,3 +249,19 @@ def test_catalogo_cloud_crea_item_con_token(monkeypatch):
         headers={"Authorization": "Bearer token-catalogo"},
         timeout=10.0,
     )
+
+
+def test_libera_emergencia_cloud_con_token_y_sin_cuerpo(monkeypatch):
+    monkeypatch.setenv("CLOUD_API_URL", "https://cloud.example.test/base/")
+    llamada = Mock(return_value=httpx.Response(200, json={"emergencia_id": 17,
+        "total_liberado": 0, "compromisos_liberados": []}))
+    monkeypatch.setattr(httpx, "post", llamada)
+
+    respuesta = cloud_client.liberar_emergencia(17, "token-aplicacion")
+
+    assert respuesta.status_code == 200
+    llamada.assert_called_once_with(
+        "https://cloud.example.test/base/emergencias/17/liberar",
+        headers={"Authorization": "Bearer token-aplicacion"},
+        timeout=10.0,
+    )

@@ -21,3 +21,11 @@ async def setear_variables_prueba(
         await bonita_client.set_case_variables(case_id, variables)
     except BonitaClientError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+
+
+async def obtener_metricas_reporte() -> dict:
+    """Obtiene del motor Bonita las métricas del dashboard."""
+    try:
+        return await bonita_client.obtener_metricas_reporte()
+    except BonitaClientError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))

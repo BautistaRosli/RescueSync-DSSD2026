@@ -33,6 +33,12 @@ export interface OfertaRead {
   items: OfertaItemRead[]
 }
 
+export interface OfertaCoordinadorRead extends OfertaRead {
+  puede_seleccionar: boolean
+  estado_seleccion: 'sin_seleccionar' | 'seleccionada_para_confirmar' | 'adjudicada'
+  items: (OfertaItemRead & { cantidad_verificada: number | null })[]
+}
+
 export interface OfertaCreateRequest {
   emergencia_id: number
   organizacion_id: number
@@ -68,6 +74,13 @@ export interface OfertasConsolidadas {
 
 export interface AdjudicacionRespuesta {
   oferta_id: number
+  mensaje: string
+}
+
+export interface FinalizarOfertaRespuesta {
+  oferta_id: number
+  estado: 'finalizada'
+  ya_finalizada?: boolean
   mensaje: string
 }
 

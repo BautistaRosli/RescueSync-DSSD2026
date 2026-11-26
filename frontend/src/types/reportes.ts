@@ -21,6 +21,13 @@ export interface ReporteTiempoPublicacion { promedio_horas: number; minimo_horas
 export interface ReporteTiempoAdjudicacion { promedio_horas: number }
 export interface ReporteRankingOng { organizacion_id: number; organizacion_nombre: string; ofertas_presentadas: number; ofertas_adjudicadas: number; participaciones_consorcios: number; actividades_finalizadas: number }
 export interface ReporteDemandaOferta { tipo_recurso: string; cantidad_pedida: number; cantidad_ofrecida: number }
+export interface ReporteBonitaTiempoEtapa { etapa: string; promedio_horas: number; cantidad: number }
+export interface ReporteBonitaCasos { abiertos: number; cerrados: number }
+export interface ReporteBonita {
+  tiempos_por_etapa: ReporteBonitaTiempoEtapa[]
+  casos: ReporteBonitaCasos
+  convocatorias_camino_alternativo: number
+}
 
 export interface FiltrosReportes {
   desde?: string

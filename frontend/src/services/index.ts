@@ -1,9 +1,13 @@
 export { ApiError } from './http'
 export { iniciarSesion, registrar, cerrarSesion, restaurarSesion } from './auth'
 export {
+  obtenerEmergencia,
+  obtenerEvaluacionProyecto,
+  evaluarProyecto,
   registrarEmergencia,
   listarEmergencias,
   listarBandejaEmergencias,
+  sincronizarCierresEmergencias,
   obtenerDashboardEmergencias,
   crearLote,
   actualizarLote,
@@ -33,6 +37,7 @@ export {
   confirmarSeleccionOfertas,
   crearOferta,
   finalizarItemOferta,
+  finalizarOferta,
   listarOfertasDeEmergencia,
   listarOfertasDeOrganizacion,
   obtenerOfertasConsolidadas,
@@ -45,6 +50,7 @@ export {
 } from './inventario'
 export {
   obtenerReporteCoberturaLotes,
+  obtenerReporteBonita,
   obtenerReporteConsorcios,
   obtenerReporteDemandaOferta,
   obtenerReporteEmergencias,

@@ -56,13 +56,17 @@ def notificar_adjudicacion(
     zona_afectada: str,
     lotes_adjudicados: list[str],
     fecha_hora_adjudicacion: datetime,
+    *,
+    estricto: bool = False,
 ) -> None:
     """Avisa a la ONG que su oferta fue adjudicada para una emergencia.
 
-    Nunca propaga errores: la adjudicacion ya fue resuelta y una falla de
-    correo no debe hacerla fallar.
+    El camino exclusivo conserva el envío tolerante a fallas. El consumidor
+    durable usa modo estricto para conservar pendientes ante cualquier falta.
     """
     if not destinatarios:
+        if estricto:
+            raise EmailClientError("La oferta no tiene destinatarios disponibles")
         logger.info(
             "No hay destinatarios para la ONG de la oferta: "
             f"no se notifico la adjudicacion de la oferta {oferta_id}"
@@ -84,6 +88,8 @@ def notificar_adjudicacion(
     )
 
     if not email_client.configurado:
+        if estricto:
+            raise EmailClientError("SMTP no configurado")
         logger.info(
             "SMTP no configurado, se loguea el email en lugar de enviarlo. "
             f"destinatarios={destinatarios}, asunto={asunto!r}, cuerpo:\n{cuerpo}"
@@ -93,4 +99,6 @@ def notificar_adjudicacion(
     try:
         email_client.enviar(destinatarios, asunto, cuerpo)
     except EmailClientError as exc:
+        if estricto:
+            raise
         logger.error(f"Fallo la notificacion por email de la adjudicacion: {exc}")

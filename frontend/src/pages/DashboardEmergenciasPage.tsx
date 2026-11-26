@@ -16,6 +16,7 @@ import {
   obtenerTiempoVida,
   exportarReporteCompleto,
   obtenerReporteCoberturaLotes,
+  obtenerReporteBonita,
   obtenerReporteConsorcios,
   obtenerReporteDemandaOferta,
   obtenerReporteEmergencias,
@@ -31,6 +32,7 @@ import type {
   FiltrosReportes,
   FormatoReporte,
   ReporteCoberturaLotes,
+  ReporteBonita,
   ReporteConsorcios,
   ReporteDemandaOferta,
   ReporteEmergenciaGravedad,
@@ -99,6 +101,7 @@ export function DashboardEmergenciasPage() {
         obtenerReporteTiempoAdjudicacion(),
         obtenerReporteRankingOngs(),
         obtenerReporteDemandaOferta(),
+        obtenerReporteBonita(),
       ])
       if (!vigente) return
 
@@ -117,6 +120,7 @@ export function DashboardEmergenciasPage() {
       asignarReporte<ReporteTiempoAdjudicacion>(17, 'tiempo de adjudicación', (valor) => { datosReportes.tiempoAdjudicacion = valor })
       asignarReporte<ReporteRankingOng[]>(18, 'ranking de ONG', (valor) => { datosReportes.rankingOngs = valor })
       asignarReporte<ReporteDemandaOferta[]>(19, 'demanda y oferta', (valor) => { datosReportes.demandaOferta = valor })
+      asignarReporte<ReporteBonita>(20, 'ejecución de Bonita', (valor) => { datosReportes.bonita = valor })
       setReportes(datosReportes)
 
       const resultadoEmergencias = resultados[0]
@@ -204,7 +208,6 @@ export function DashboardEmergenciasPage() {
           <p className="mb-2 text-sm font-semibold text-slate-300">Exportar reporte filtrado</p>
           <p className="mb-3 text-xs text-slate-400">Descargá todas las métricas del dashboard usando los filtros seleccionados.</p>
           <div className="flex flex-col gap-2 sm:flex-row"><select value={formatoExportar} onChange={(evento) => setFormatoExportar(evento.target.value as FormatoReporte)} className="rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-white"><option value="csv">CSV</option><option value="json">JSON</option></select><button type="button" onClick={() => void descargarReporte()} disabled={exportando} className="rounded-lg bg-cyan-500 px-4 py-2 font-semibold text-slate-950 disabled:opacity-50">{exportando ? 'Exportando...' : 'Descargar reporte completo'}</button></div>
-          <p className="mt-3 text-xs text-slate-500">Las métricas de ejecución de Bonita requieren un endpoint agregado que todavía no está disponible.</p>
         </div>
       </div>
       {cargando && <p className="rounded-xl border border-slate-700 bg-slate-800 p-6 text-sm text-slate-400">Cargando dashboard...</p>}
