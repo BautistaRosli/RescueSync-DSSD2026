@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from ..dto import LoteNecesidadRespuesta
-from ..integrations.bonita.client import BonitaClientError, bonita_client
 from ..models import CursoAccionEmergencia, LoteNecesidad, LoteRecursoCloud
 from ..repositories import LoteNecesidadRepository
 from ..schemas import LoteNecesidadActualizar, LoteNecesidadCrear
@@ -46,44 +45,7 @@ class LoteService:
                     "sus lotes no se pueden modificar"
                 ),
             )
-        curso = self._verificar_publicacion_pendiente(db, emergencia_id)
-
-        # Barrera de sincronizacion: el proceso Bonita "Generar lotes" solo
-        # avanza cuando se crea un lote aca. Se libera ANTES de insertar para
-        # que, si Bonita falla, el lote no quede creado.
-        # La tarea debe asignarse a un usuario real del actor porque el usuario
-        # tecnico no puede autoasignarse para ejecutarla por API.
-        try:
-            # En reformulación la barrera espera la publicación explícita,
-            # también cuando el coordinador sólo edita lotes existentes.
-            if (emergencia.bonita_case_id
-                    and not (curso is not None and curso.accion == "REFORMULAR"
-                             and curso.caso_id == emergencia.bonita_case_id)):
-                tarea = await bonita_client.obtener_tarea_pendiente(
-                    int(emergencia.bonita_case_id), "Generar lotes"
-                )
-                if tarea is not None:
-                    miembro = await bonita_client.obtener_miembro_actor(
-                        int(tarea["actorId"])
-                    )
-                    if miembro is None:
-                        raise HTTPException(
-                            status_code=503,
-                            detail=(
-                                "No se pudo liberar la barrera en Bonita: "
-                                "la tarea 'Generar lotes' no tiene "
-                                "usuarios asignados a su actor"
-                            ),
-                        )
-                    await bonita_client.asignar_tarea(
-                        tarea["id"], int(miembro["user_id"])
-                    )
-                    await bonita_client.ejecutar_tarea(tarea["id"])
-        except BonitaClientError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=f"No se pudo liberar la barrera en Bonita: {exc}",
-            )
+        self._verificar_publicacion_pendiente(db, emergencia_id)
 
         valores = data.model_dump(exclude={"tipo_recurso_id"})
         valores["tipo"] = normalizar_nombre_recurso(valores["tipo"])

@@ -85,6 +85,24 @@ class CursoAccionService:
                     return EmergenciaRespuesta.model_validate(emergencia)
                 raise HTTPException(409, "La emergencia ya fue publicada")
             if not reformulada:
+                if emergencia.estado != EstadoEmergencia.ESPERA_LOTES or not emergencia.bonita_case_id:
+                    raise HTTPException(409, "La emergencia no está lista para la publicación de lotes")
+                if not emergencia.lotes:
+                    raise HTTPException(400, "La emergencia no tiene lotes de necesidad cargados: no se puede publicar")
+                caso_id = int(emergencia.bonita_case_id)
+                tarea = await bonita_client.obtener_tarea_pendiente(caso_id, "Generar lotes")
+                if tarea is None:
+                    raise HTTPException(409, "El caso aún no tiene pendiente la tarea Generar lotes")
+                self._validar_tarea(tarea, caso_id)
+                asignado = int(tarea.get("assigned_id") or 0)
+                if asignado <= 0:
+                    miembro = await bonita_client.obtener_miembro_actor(int(tarea["actorId"]), solo_usuarios=True)
+                    if not miembro or int(miembro.get("user_id", 0)) <= 0:
+                        raise HTTPException(503, "El actor de Generar lotes no tiene un usuario directo autorizado")
+                    asignado = int(miembro["user_id"])
+                if not int(tarea.get("assigned_id") or 0):
+                    await bonita_client.asignar_tarea(str(tarea["id"]), asignado)
+                await bonita_client.ejecutar_tarea(str(tarea["id"]))
                 return await run_in_threadpool(EmergenciaService().publicar_emergencia, db, emergencia_id)
             if emergencia.estado != EstadoEmergencia.ESPERA_LOTES or not emergencia.bonita_case_id:
                 raise HTTPException(409, "La emergencia no está esperando la publicación de lotes reformulados")

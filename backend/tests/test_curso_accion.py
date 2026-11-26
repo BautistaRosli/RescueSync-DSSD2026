@@ -187,7 +187,8 @@ def test_primer_ciclo_conserva_barrera_en_alta_y_publicacion_local(entorno, monk
             db.get(Emergencia, 1).fecha_publicacion = datetime(2026, 1, 1, tzinfo=timezone.utc)
             db.commit()
     assert cliente.post(f"{RUTA}/bonita/iniciar", headers=cabecera(COORDINADOR)).status_code == 200
-    tarea = AsyncMock(return_value={"id": "10", "actorId": "7"})
+    tarea = AsyncMock(return_value={"id": "10", "caseId": "42", "name": "Generar lotes",
+                                    "actorId": "7", "assigned_id": "0", "state": "ready"})
     ejecutar = AsyncMock()
     monkeypatch.setattr(bonita_client, "obtener_tarea_pendiente", tarea)
     monkeypatch.setattr(bonita_client, "obtener_miembro_actor", AsyncMock(return_value={"user_id": "12"}))
@@ -195,9 +196,9 @@ def test_primer_ciclo_conserva_barrera_en_alta_y_publicacion_local(entorno, monk
     monkeypatch.setattr(bonita_client, "ejecutar_tarea", ejecutar)
     assert cliente.post(f"{RUTA}/lotes", headers=cabecera(COORDINADOR),
                         json={"tipo": "Agua", "cantidad": 4}).status_code == 201
+    assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 200
     tarea.assert_awaited_once_with(42, "Generar lotes")
     ejecutar.assert_awaited_once_with("10")
-    assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 200
     assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 409
     tarea.assert_awaited_once()
 
