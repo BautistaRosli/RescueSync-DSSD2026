@@ -59,7 +59,7 @@ test('Las ofertas del coordinador usan la consulta por emergencia con la evaluac
   }
 })
 
-test('Adjudicar conserva el modo individual y prepara selecciones sin enviar cuerpo', async () => {
+test('Adjudicar prepara selecciones con paraSeleccion y sin enviar cuerpo', async () => {
   const fetchOriginal = globalThis.fetch
   const almacenamiento = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
   Object.defineProperty(globalThis, 'localStorage', {
@@ -71,15 +71,13 @@ test('Adjudicar conserva el modo individual y prepara selecciones sin enviar cue
     return new Response(JSON.stringify({ oferta_id: 12, mensaje: 'Operación registrada.' }))
   }
   try {
-    for (const argumentos of [[12], [12, true], [12, false]]) {
+    for (const argumentos of [[12, true]]) {
       assert.deepEqual(await servicios.adjudicarOferta(...argumentos), {
         oferta_id: 12, mensaje: 'Operación registrada.',
       })
     }
     assert.deepEqual(peticiones.map(({ url }) => url), [
-      'http://localhost:8000/api/v1/ofertas/12/adjudicar',
       'http://localhost:8000/api/v1/ofertas/12/adjudicar?para_seleccion=true',
-      'http://localhost:8000/api/v1/ofertas/12/adjudicar',
     ])
     for (const { opciones } of peticiones) {
       assert.equal(opciones.method, 'POST')
@@ -630,31 +628,9 @@ test('Una adjudicación rechazada no marca la oferta y una respuesta de otra sel
   } finally { pagina.limpiar() }
 })
 
-test('La adjudicación individual es exclusiva, bloquea doble clic y no ofrece confirmar en proceso', async () => {
-  const pagina = await montarPagina({ componente: 'municipio', conMarca: false })
-  try {
-    const pendiente = diferida()
-    pagina.control.adjudicar = () => pendiente.promesa
-    const directa = pagina.botones('Adjudicar solo esta oferta')[0]
-    directa.props.onClick()
-    directa.props.onClick()
-    pagina.botones('Adjudicar')[1].props.onClick()
-    assert.deepEqual(pagina.llamadas.adjudicar, [{ id: 11, paraSeleccion: false }])
-    pendiente.resolver({ oferta_id: 11, mensaje: 'Adjudicación individual registrada.' })
-    await pagina.asentar()
-    await pagina.asentar()
-    assert.equal(pagina.botones('Adjudicar').length, 0)
-    assert.equal(pagina.botones('Adjudicar solo esta oferta').length, 0)
-    assert.equal(pagina.botones('Confirmar selección').length, 0)
-    assert.ok(pagina.renderizar().some((nodo) => nodo.props?.role === 'status' && /Adjudicación individual registrada/.test(pagina.texto(nodo))))
-    assert.deepEqual(pagina.llamadas.confirmar, [])
-  } finally { pagina.limpiar() }
-})
-
 test('En proceso no ofrece confirmar la selección aunque existan adjudicaciones persistidas', async () => {
   const pagina = await montarPagina({ componente: 'municipio', estado: 'en_proceso' })
   try {
-    assert.equal(pagina.botones('Adjudicar solo esta oferta').length, 0)
     assert.equal(pagina.botones('Confirmar selección').length, 0)
     assert.deepEqual(pagina.llamadas.adjudicar, [])
     assert.deepEqual(pagina.llamadas.confirmar, [])
@@ -687,7 +663,7 @@ test('El coordinador ve las ofertas sin adjudicar ni confirmar y conserva el cie
     try {
       assert.ok(pagina.renderizar().some((nodo) => nodo.type === 'span' && pagina.texto(nodo) === 'Oferta #12'))
       assert.equal(pagina.renderizar().filter((nodo) => nodo.props?.role === 'note' && pagina.texto(nodo) === 'La adjudicación la realiza el municipio.').length, 2)
-      for (const etiqueta of ['Adjudicar', 'Adjudicar solo esta oferta', 'Confirmar selección']) {
+      for (const etiqueta of ['Adjudicar', 'Confirmar selección']) {
         assert.equal(pagina.botones(etiqueta).length, 0, etiqueta)
       }
       assert.equal(pagina.botones('Cerrar oferta').length, estado === 'en_proceso' ? 1 : 0)
@@ -697,14 +673,12 @@ test('El coordinador ve las ofertas sin adjudicar ni confirmar y conserva el cie
   }
 })
 
-test('Se pueden preparar varias ofertas y el modo individual desaparece al marcar la primera', async () => {
+test('Se pueden preparar varias ofertas para confirmar la selección', async () => {
   const pagina = await montarPagina({ componente: 'municipio', conMarca: false })
   try {
     pagina.botones('Adjudicar')[0].props.onClick()
     await pagina.asentar()
     assert.equal(pagina.botones('Seleccionada para confirmar').length, 1)
-    // La segunda emergencia continúa ofreciendo el recorrido individual.
-    assert.equal(pagina.botones('Adjudicar solo esta oferta').length, 1)
     pagina.botones('Adjudicar')[0].props.onClick()
     await pagina.asentar()
     assert.deepEqual(pagina.llamadas.adjudicar, [
@@ -1145,7 +1119,6 @@ test('La decisión bloquea su emergencia, descarta doble clic y espera la habili
     const select = pagina.renderizar().find((nodo) => nodo.type === 'select' && nodo.props.id === 'evaluacion-proyecto-1')
     select.props.onChange({ target: { value: 'CONTINUAR_PARCIAL' } })
     const decidir = pagina.botones('Confirmar decisión')[0]
-    assert.equal(pagina.botones('Adjudicar solo esta oferta').length, 0)
     decidir.props.onClick()
     decidir.props.onClick()
     assert.equal(pagina.botones('Confirmar selección').length, 0)
@@ -1238,7 +1211,6 @@ test('La consulta pendiente bloquea sólo su emergencia y un fallo deja disponib
     assert.equal(pagina.botones('Confirmar decisión').length, 1)
     assert.equal(pagina.botones('Actualizar estado')[0].props.disabled, true)
     assert.equal(pagina.botones('Actualizar estado').at(-1).props.disabled, false)
-    assert.equal(pagina.botones('Adjudicar solo esta oferta').length, 0)
     assert.deepEqual(pagina.llamadas.adjudicar, [])
     pendiente.rechazar(new ApiError(503, 'Bonita no disponible.'))
     await pagina.asentar()
