@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Navbar } from './components'
 import {
+  AdjudicacionMunicipioPage,
   CentroCoordinadorPage,
   DashboardEmergenciasPage,
   EmergenciasPage,
@@ -15,7 +16,7 @@ import { cerrarSesion } from './services'
 
 type Vista = 'bandeja' | 'registro' | 'registro-ong'
 
-type VistaOperador = 'registrar' | 'emergencias'
+type VistaOperador = 'registrar' | 'emergencias' | 'adjudicar'
 
 type VistaAcceso = 'login' | 'registro'
 
@@ -28,6 +29,7 @@ const ROLES_DASHBOARD = ['DIRECTOR_AUDITOR']
 const PESTANIAS_OPERADOR: { valor: VistaOperador; etiqueta: string }[] = [
   { valor: 'registrar', etiqueta: 'Registrar emergencia' },
   { valor: 'emergencias', etiqueta: 'Emergencias' },
+  { valor: 'adjudicar', etiqueta: 'Adjudicar ofertas' },
 ]
 
 function clasePestania(activa: boolean): string {
@@ -69,8 +71,8 @@ function App() {
                 Operador municipal
               </h2>
               <p className="text-sm text-slate-400">
-                Registrá una emergencia del desastre o consultá las que están sin
-                publicar.
+                Registrá una emergencia del desastre, consultá las que están sin
+                publicar o adjudicá las ofertas validadas.
               </p>
             </div>
 
@@ -93,6 +95,8 @@ function App() {
 
             {vistaOperador === 'registrar' ? (
               <RegistrarEmergenciaPage />
+            ) : vistaOperador === 'adjudicar' ? (
+              <AdjudicacionMunicipioPage />
             ) : (
               <EmergenciasPage />
             )}

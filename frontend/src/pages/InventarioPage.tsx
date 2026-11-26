@@ -54,6 +54,8 @@ export function InventarioPage({ organizacionId }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [recargas, setRecargas] = useState(0)
+  const [confirmacionesPendientes, setConfirmacionesPendientes] = useState<Record<number, boolean>>({})
+  const [eliminandoId, setEliminandoId] = useState<number | null>(null)
 
   function recargar() {
     setRecargas((actuales) => actuales + 1)
@@ -227,13 +229,17 @@ export function InventarioPage({ organizacionId }: Props) {
     }
   }
 
-  async function borrar(recursoId: number) {
-    const confirmar = window.confirm(
-      '¿Querés eliminar este recurso? La acción no se puede deshacer.',
-    )
-    if (!confirmar) return
+  function solicitarConfirmacionBorrado(recursoId: number) {
+    setConfirmacionesPendientes({ [recursoId]: true })
+  }
 
+  function cancelarConfirmacionBorrado(recursoId: number) {
+    setConfirmacionesPendientes((previas) => ({ ...previas, [recursoId]: false }))
+  }
+
+  async function borrar(recursoId: number) {
     setError(null)
+    setEliminandoId(recursoId)
     try {
       await eliminarRecurso(organizacionId, recursoId)
       if (enEdicion === recursoId) {
@@ -242,6 +248,9 @@ export function InventarioPage({ organizacionId }: Props) {
       recargar()
     } catch (fallo) {
       setError(describirError(fallo))
+    } finally {
+      setEliminandoId(null)
+      setConfirmacionesPendientes({})
     }
   }
 
@@ -494,13 +503,44 @@ export function InventarioPage({ organizacionId }: Props) {
                   >
                     Editar
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void borrar(recurso.id)}
-                    className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-red-500/50 hover:text-red-300"
-                  >
-                    Eliminar
-                  </button>
+                  {confirmacionesPendientes[recurso.id] === true ? (
+                    <div
+                      role="group"
+                      aria-label={`Confirmar eliminación del recurso ${recurso.tipo}`}
+                      className="flex flex-col gap-2 rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-3"
+                    >
+                      <p className="text-sm text-yellow-200">
+                        ¿Eliminar {recurso.tipo}? La acción no se puede deshacer.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void borrar(recurso.id)}
+                          disabled={eliminandoId !== null}
+                          className={`${claseBotonSecundario} text-sm`}
+                        >
+                          {eliminandoId === recurso.id ? 'Eliminando...' : 'Confirmar eliminación'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => cancelarConfirmacionBorrado(recurso.id)}
+                          disabled={eliminandoId !== null}
+                          className={`${claseBotonSecundario} text-sm`}
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => solicitarConfirmacionBorrado(recurso.id)}
+                      disabled={eliminandoId !== null}
+                      className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-red-500/50 hover:text-red-300"
+                    >
+                      Eliminar
+                    </button>
+                  )}
                 </div>
               </li>
             )

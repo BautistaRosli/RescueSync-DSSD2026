@@ -409,8 +409,10 @@ def test_vinculacion_nacional_ambigua_no_combina_ongs(solicitud):
     assert estado(sesiones) == anterior
 
 
-def test_adjudicacion_persiste_y_bloquea_oferta_alternativa(solicitud):
-    cliente, sesiones, _, _ = solicitud
+def test_adjudicacion_persiste_y_bloquea_oferta_alternativa(solicitud, monkeypatch):
+    from app.services.evaluacion_cloud_service import EvaluacionCloudService
+
+    cliente, sesiones, _, lotes = solicitud
     primera = crear_oferta(solicitud, conjunta=False)
     segunda = crear_oferta(solicitud, conjunta=False)
     assert primera.status_code == 201 and segunda.status_code == 201
@@ -420,10 +422,18 @@ def test_adjudicacion_persiste_y_bloquea_oferta_alternativa(solicitud):
         headers=cabecera(COORDINADOR),
     )
     assert evaluacion.status_code == 200, evaluacion.text
+    # Validación nacional guardada para ambas ofertas.
+    with sesiones() as db:
+        db.get(Emergencia, 1).bonita_case_id = "42"
+        db.commit()
+    resultados = [{"oferta_id": oferta.json()["id"], "lote_id": lote, "cantidad_verificada": 8}
+                  for oferta in (primera, segunda) for lote in lotes]
+    monkeypatch.setattr(EvaluacionCloudService, "obtener", staticmethod(
+        lambda db, emergencia_id, caso_id: {"emergencia_id": 1, "resultados": resultados}))
 
     adjudicacion = cliente.post(
         f"/api/v1/ofertas/{primera.json()['id']}/adjudicar",
-        headers=cabecera(COORDINADOR),
+        headers=cabecera(OPERADOR),
     )
     assert adjudicacion.status_code == 200, adjudicacion.text
     with sesiones() as db:
@@ -432,7 +442,7 @@ def test_adjudicacion_persiste_y_bloquea_oferta_alternativa(solicitud):
 
     alternativa = cliente.post(
         f"/api/v1/ofertas/{segunda.json()['id']}/adjudicar",
-        headers=cabecera(COORDINADOR),
+        headers=cabecera(OPERADOR),
     )
     assert alternativa.status_code == 409
     assert "adjudicar" in alternativa.json()["detail"]

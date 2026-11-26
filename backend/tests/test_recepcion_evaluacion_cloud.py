@@ -77,7 +77,7 @@ def test_persistencia_completa_y_seleccion_sin_variable(recepcion):
     assert listado.status_code == 200
     assert listado.json()[0]["items"][0]["cantidad_verificada"] == 3
     assert listado.json()[0]["puede_seleccionar"] is True
-    seleccion = cliente.post("/api/v1/ofertas/1/adjudicar?para_seleccion=true", headers=cabecera(COORDINADOR))
+    seleccion = cliente.post("/api/v1/ofertas/1/adjudicar?para_seleccion=true", headers=cabecera(OPERADOR))
     assert seleccion.status_code == 200, seleccion.text
     anterior = estado(sesiones)
     assert recibir(cliente, data).status_code == 204
@@ -148,10 +148,10 @@ def test_pendiente_no_reutiliza_variable_y_respeta_tarea(recepcion):
     bonita_client.obtener_variable_caso.return_value = json.dumps(data["evaluacion"])
     listado = cliente.get(f"{RUTA}/ofertas", headers=cabecera(COORDINADOR)).json()
     assert listado[0]["items"][0]["cantidad_verificada"] is None
-    assert cliente.post("/api/v1/ofertas/1/adjudicar?para_seleccion=true", headers=cabecera(COORDINADOR)).status_code == 409
+    assert cliente.post("/api/v1/ofertas/1/adjudicar?para_seleccion=true", headers=cabecera(OPERADOR)).status_code == 409
     assert recibir(cliente, data, AUDITOR).status_code == 204
     bonita_client.obtener_tarea_pendiente.return_value = None
-    assert cliente.post("/api/v1/ofertas/1/adjudicar?para_seleccion=true", headers=cabecera(COORDINADOR)).status_code == 409
+    assert cliente.post("/api/v1/ofertas/1/adjudicar?para_seleccion=true", headers=cabecera(OPERADOR)).status_code == 409
     bonita_client.obtener_variable_caso.assert_not_awaited()
 
 
@@ -251,12 +251,12 @@ def test_confirmacion_usa_evaluacion_local(recepcion, monkeypatch):
     cliente, sesiones = recepcion
     data = cuerpo(preparar(cliente))
     assert recibir(cliente, data).status_code == 204
-    assert cliente.post("/api/v1/ofertas/1/adjudicar?para_seleccion=true", headers=cabecera(COORDINADOR)).status_code == 200
+    assert cliente.post("/api/v1/ofertas/1/adjudicar?para_seleccion=true", headers=cabecera(OPERADOR)).status_code == 200
     monkeypatch.setattr(bonita_client, "obtener_miembro_actor", AsyncMock(return_value={"user_id": "12"}))
     bonita_client.obtener_tarea_pendiente.return_value.update({"actorId": "7", "assigned_id": "0"})
     monkeypatch.setattr(bonita_client, "asignar_tarea", AsyncMock())
     monkeypatch.setattr(bonita_client, "ejecutar_tarea", AsyncMock())
-    respuesta = cliente.post(f"{RUTA}/confirmar-seleccion", headers=cabecera(COORDINADOR))
+    respuesta = cliente.post(f"{RUTA}/confirmar-seleccion", headers=cabecera(OPERADOR))
     assert respuesta.status_code == 200, respuesta.text
     assert all(llamada.args[1] == "seleccionOfertasJson"
                for llamada in bonita_client.obtener_variable_caso.await_args_list)

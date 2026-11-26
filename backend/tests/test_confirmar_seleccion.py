@@ -97,7 +97,7 @@ def seleccion(entorno, monkeypatch):
     return cliente, sesiones, motor, dobles
 
 
-def confirmar(seleccion, rol=COORDINADOR):
+def confirmar(seleccion, rol=OPERADOR):
     return seleccion[0].post(RUTA, headers=cabecera(rol))
 
 
@@ -126,7 +126,7 @@ def preparar_marcas(seleccion):
         db.commit()
 
 
-def adjudicar(seleccion, oferta_id=1, para_seleccion=False, rol=COORDINADOR):
+def adjudicar(seleccion, oferta_id=1, para_seleccion=False, rol=OPERADOR):
     return seleccion[0].post(
         f"/api/v1/ofertas/{oferta_id}/adjudicar",
         params={"para_seleccion": para_seleccion}, headers=cabecera(rol))
@@ -141,7 +141,7 @@ def test_diez_ofrecidas_cero_verificadas_no_marca_ni_notifica(seleccion):
     anterior = estado(seleccion[1])
     respuesta = adjudicar(seleccion, 1, True)
     assert respuesta.status_code == 409, respuesta.text
-    assert "lote 2" in respuesta.json()["detail"]
+    assert respuesta.json()["detail"] == "La oferta no fue validada por el Sistema Nacional"
     assert estado(seleccion[1]) == anterior
     seleccion[3][1].assert_not_called()
 
@@ -333,7 +333,7 @@ def test_rechazo_al_ejecutar_tarea_permite_reintentar_sin_duplicar_aviso(selecci
 
 def test_adjudicacion_individual_sin_opciones_conserva_contrato_y_confirma(seleccion):
     preparar_marcas(seleccion)
-    respuesta = seleccion[0].post("/api/v1/ofertas/1/adjudicar", headers=cabecera(COORDINADOR))
+    respuesta = seleccion[0].post("/api/v1/ofertas/1/adjudicar", headers=cabecera(OPERADOR))
     assert respuesta.status_code == 200
     assert respuesta.json() == {"oferta_id": 1, "mensaje": "Notificación de adjudicación enviada"}
     anterior = estado(seleccion[1])
@@ -510,11 +510,11 @@ def test_aceptacion_remota_y_fallo_local_congelan_seleccion_entre_clientes(selec
     otro_cliente = TestClient(app)
     try:
         nueva = otro_cliente.post("/api/v1/ofertas/2/adjudicar?para_seleccion=true",
-                                  headers=cabecera(COORDINADOR))
+                                  headers=cabecera(OPERADOR))
         assert nueva.status_code == 409, nueva.text
         assert estado(seleccion[1]) == anterior
         assert adjudicar(seleccion, 1, True).status_code == 409
-        reintento = otro_cliente.post(RUTA, headers=cabecera(COORDINADOR))
+        reintento = otro_cliente.post(RUTA, headers=cabecera(OPERADOR))
         assert reintento.status_code == 200 and reintento.json()["ya_confirmada"] is True
     finally:
         otro_cliente.close()
@@ -615,8 +615,8 @@ def test_resuelta_con_confirmacion_previa_mantiene_idempotencia_sin_reabrir(sele
     assert seleccion[2]["ejecuciones"] == []
 
 
-@pytest.mark.parametrize("rol,codigo", [(ONG, 403), (OPERADOR, 200), (AUDITOR, 200), (COORDINADOR, 200)])
-def test_marcas_conservan_roles_existentes(seleccion, rol, codigo):
+@pytest.mark.parametrize("rol,codigo", [(ONG, 403), (OPERADOR, 200), (AUDITOR, 403), (COORDINADOR, 403)])
+def test_marcas_solo_las_hace_el_operador_municipal(seleccion, rol, codigo):
     preparar_marcas(seleccion)
     anterior = estado(seleccion[1])
     respuesta = adjudicar(seleccion, 1, True, rol)
@@ -632,7 +632,7 @@ def test_marcas_conservan_errores_de_entrada(seleccion):
     assert cliente.post("/api/v1/ofertas/1/adjudicar?para_seleccion=true").status_code == 401
     assert adjudicar(seleccion, 999, True).status_code == 404
     assert cliente.post("/api/v1/ofertas/1/adjudicar?para_seleccion=invalido",
-                        headers=cabecera(COORDINADOR)).status_code == 422
+                        headers=cabecera(OPERADOR)).status_code == 422
     with seleccion[1]() as db:
         oferta = db.get(OfertaAyuda, 2)
         oferta.items.clear()
@@ -933,13 +933,70 @@ def test_confirmacion_congela_ofertas_sin_invertir_bloqueos(sesiones_pg, monkeyp
         assert db.get(OfertaAyuda, 2).observaciones is None
 
 
-@pytest.mark.parametrize("rol,codigo", [(ONG, 403), (OPERADOR, 403), (AUDITOR, 200)])
-def test_roles_y_alcance_existentes(seleccion, rol, codigo):
+@pytest.mark.parametrize("rol,codigo", [(ONG, 403), (OPERADOR, 200), (AUDITOR, 403), (COORDINADOR, 403)])
+def test_confirmar_solo_lo_hace_el_operador_municipal(seleccion, rol, codigo):
+    anterior = estado(seleccion[1])
     respuesta = confirmar(seleccion, rol)
     assert respuesta.status_code == codigo, respuesta.text
+    if codigo == 403:
+        assert estado(seleccion[1]) == anterior
+        assert seleccion[2]["ejecuciones"] == []
 
 
 def test_sin_autenticacion_y_emergencia_inexistente(seleccion):
     cliente = seleccion[0]
     assert cliente.post(RUTA).status_code == 401
-    assert cliente.post(RUTA.replace("/2/", "/999/"), headers=cabecera(COORDINADOR)).status_code == 404
+    assert cliente.post(RUTA.replace("/2/", "/999/"), headers=cabecera(OPERADOR)).status_code == 404
+
+
+# --- Adjudicación por el municipio (OPERADOR_MUNICIPAL) ---
+
+@pytest.mark.parametrize("rol", [COORDINADOR, AUDITOR])
+@pytest.mark.parametrize("para_seleccion", [False, True])
+def test_coordinador_y_auditor_no_adjudican(seleccion, rol, para_seleccion):
+    preparar_marcas(seleccion)
+    anterior = estado(seleccion[1])
+    assert adjudicar(seleccion, 1, para_seleccion, rol).status_code == 403
+    assert estado(seleccion[1]) == anterior
+    seleccion[3][1].assert_not_called()
+
+
+def test_operador_adjudica_oferta_validada(seleccion):
+    preparar_marcas(seleccion)
+    respuesta = adjudicar(seleccion, 1)
+    assert respuesta.status_code == 200, respuesta.text
+    with seleccion[1]() as db:
+        assert db.get(OfertaAyuda, 1).adjudicada_en is not None
+
+
+@pytest.mark.parametrize("para_seleccion", [False, True])
+def test_adjudicar_oferta_no_validada_responde_409(seleccion, para_seleccion):
+    preparar_marcas(seleccion)
+    seleccion[2]["evaluacion"]["resultados"][0]["cantidad_verificada"] = 0
+    anterior = estado(seleccion[1])
+    respuesta = adjudicar(seleccion, 1, para_seleccion)
+    assert respuesta.status_code == 409, respuesta.text
+    assert respuesta.json()["detail"] == "La oferta no fue validada por el Sistema Nacional"
+    assert estado(seleccion[1]) == anterior
+    seleccion[3][1].assert_not_called()
+
+
+def test_operador_lista_solo_ofertas_validadas(seleccion):
+    preparar_marcas(seleccion)
+    seleccion[2]["evaluacion"]["resultados"][1]["cantidad_verificada"] = 0
+    operador = seleccion[0].get("/api/v1/emergencias/2/ofertas", headers=cabecera(OPERADOR))
+    assert operador.status_code == 200, operador.text
+    assert [o["id"] for o in operador.json()] == [1]
+    assert all(item["cantidad_verificada"] > 0 for o in operador.json() for item in o["items"])
+    coordinador = seleccion[0].get("/api/v1/emergencias/2/ofertas", headers=cabecera(COORDINADOR))
+    assert sorted(o["id"] for o in coordinador.json()) == [1, 2]
+
+
+def test_operador_sin_evaluacion_nacional_recibe_lista_vacia(seleccion):
+    preparar_marcas(seleccion)
+    seleccion[2]["evaluacion"] = None
+    operador = seleccion[0].get("/api/v1/emergencias/2/ofertas", headers=cabecera(OPERADOR))
+    assert operador.status_code == 200, operador.text
+    assert operador.json() == []
+    coordinador = seleccion[0].get("/api/v1/emergencias/2/ofertas", headers=cabecera(COORDINADOR))
+    assert sorted(o["id"] for o in coordinador.json()) == [1, 2]

@@ -13,8 +13,6 @@ import {
   obtenerEvaluacionProyecto,
   evaluarProyecto,
   actualizarLote,
-  adjudicarOferta,
-  confirmarSeleccionOfertas,
   crearLote,
   eliminarLote,
   finalizarOferta,
@@ -25,12 +23,14 @@ import {
   crearRecursoCloud,
   publicarEmergencia,
 } from '../services'
+import { PanelAdjudicacion } from '../components'
 import {
-  claseBadge,
+  claseAviso,
   claseBotonSecundario,
   claseExito,
   claseSubPanel,
 } from '../ui/clases'
+import { puedeCerrarOferta } from '../utils/ofertas'
 import type {
   AccionEvaluacionProyecto,
   BandaEmergencias,
@@ -79,7 +79,7 @@ const DESCRIPCIONES_BANDEJA: Record<PestaniaBandeja, string> = {
   esperando_ofertas:
     'Emergencias publicadas que reciben ofertas de ayuda. Tocá una fila para desplegar su detalle.',
   esperando_adjudicacion:
-    'Emergencias listas para seleccionar y adjudicar ofertas.',
+    'Emergencias a la espera de que el municipio seleccione y adjudique ofertas.',
   esperando_evaluacion:
     'Emergencias cuya convocatoria terminó y requieren decidir cómo continuar el proyecto.',
   en_proceso: 'Emergencias con ofertas adjudicadas y atención en curso.',
@@ -442,6 +442,7 @@ function ListaLotes({
   errorEdicion,
   guardandoEdicion,
   eliminandoLote,
+  confirmacionesPendientes,
   alAbrirEdicion,
   alCancelarEdicion,
   alCambiarCampoEdicion,
@@ -450,6 +451,8 @@ function ListaLotes({
   alSeleccionarRecursoEdicion,
   alCrearRecursoEdicion,
   alEnviarEdicion,
+  alSolicitarEliminar,
+  alCancelarEliminar,
   alEliminar,
 }: {
   lotes: LoteNecesidad[]
@@ -459,6 +462,7 @@ function ListaLotes({
   errorEdicion: string | undefined
   guardandoEdicion: boolean
   eliminandoLote: number | null
+  confirmacionesPendientes: Record<number, boolean>
   alAbrirEdicion: (lote: LoteNecesidad) => void
   alCancelarEdicion: () => void
   alCambiarCampoEdicion: (campo: keyof BorradorLote, valor: string) => void
@@ -470,6 +474,8 @@ function ListaLotes({
     evento: FormEvent<HTMLFormElement>,
     lote: LoteNecesidad,
   ) => void
+  alSolicitarEliminar: (loteId: number) => void
+  alCancelarEliminar: (loteId: number) => void
   alEliminar: (lote: LoteNecesidad) => void
 }) {
   if (lotes.length === 0) {
@@ -559,325 +565,50 @@ function ListaLotes({
                   >
                     Editar
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => alEliminar(lote)}
-                    disabled={eliminandoLote !== null || guardandoEdicion}
-                    className="rounded-lg border border-red-500/50 px-3 py-1 text-xs font-semibold text-red-300 transition hover:border-red-400 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {eliminandoLote === lote.id ? 'Eliminando...' : 'Eliminar'}
-                  </button>
+                  {confirmacionesPendientes[lote.id] === true ? (
+                    <div
+                      role="group"
+                      aria-label={`Confirmar eliminación del lote ${lote.tipo}`}
+                      className="flex flex-col gap-2 rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-3"
+                    >
+                      <p className="text-sm text-yellow-200">
+                        ¿Eliminar el lote {lote.tipo}? La acción no se puede deshacer.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => alEliminar(lote)}
+                          disabled={eliminandoLote !== null || guardandoEdicion}
+                          className="rounded-lg border border-red-500/50 px-3 py-1 text-xs font-semibold text-red-300 transition hover:border-red-400 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {eliminandoLote === lote.id ? 'Eliminando...' : 'Confirmar eliminación'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => alCancelarEliminar(lote.id)}
+                          disabled={eliminandoLote !== null}
+                          className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-cyan-400 hover:text-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => alSolicitarEliminar(lote.id)}
+                      disabled={eliminandoLote !== null || guardandoEdicion}
+                      className="rounded-lg border border-red-500/50 px-3 py-1 text-xs font-semibold text-red-300 transition hover:border-red-400 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Eliminar
+                    </button>
+                  )}
                 </div>
               )}
             </li>
           ),
         )}
       </ul>
-    </div>
-  )
-}
-
-function estaAdjudicadaParaCierre(oferta: OfertaCoordinadorRead): boolean {
-  return oferta.estado_seleccion === 'adjudicada' ||
-    (oferta.estado_seleccion == null && oferta.adjudicada_en != null)
-}
-
-function puedeCerrarOferta(oferta: OfertaCoordinadorRead, ofertas: OfertaCoordinadorRead[]): boolean {
-  return estaAdjudicadaParaCierre(oferta) && ofertas
-    .filter((registro) => registro.emergencia_id === oferta.emergencia_id && estaAdjudicadaParaCierre(registro))
-    .every((registro) => registro.items.length > 0 && registro.items.every((item) => item.finalizado_en != null))
-}
-
-function PanelAdjudicacion({
-  ofertas,
-  lotes,
-  cargando,
-  errorCarga,
-  adjudicando,
-  finalizando,
-  errorAdjudicar,
-  exitoAdjudicar,
-  errorFinalizar,
-  exitoFinalizar,
-  puedeAdjudicar,
-  puedeConfirmar,
-  puedeFinalizar,
-  confirmando,
-  evaluando,
-  confirmada,
-  errorConfirmar,
-  exitoConfirmar,
-  confirmacionesPendientes,
-  alAdjudicar,
-  alSolicitarConfirmacion,
-  alCancelarConfirmacion,
-  alConfirmarAdjudicacion,
-  alFinalizar,
-  alConfirmar,
-}: {
-  ofertas: OfertaCoordinadorRead[] | undefined
-  lotes: LoteNecesidad[]
-  cargando: boolean
-  errorCarga: string | undefined
-  adjudicando: number | null
-  finalizando: number | null
-  errorAdjudicar: Record<number, string>
-  exitoAdjudicar: Record<number, string>
-  errorFinalizar: Record<number, string>
-  exitoFinalizar: Record<number, string>
-  puedeAdjudicar: boolean
-  puedeConfirmar: boolean
-  puedeFinalizar: boolean
-  confirmando: boolean
-  evaluando: boolean
-  confirmada: boolean
-  errorConfirmar: string | undefined
-  exitoConfirmar: string | undefined
-  confirmacionesPendientes: Record<number, boolean>
-  alAdjudicar: (ofertaId: number, paraSeleccion: boolean) => void
-  alSolicitarConfirmacion: (ofertaId: number) => void
-  alCancelarConfirmacion: (ofertaId: number) => void
-  alConfirmarAdjudicacion: (ofertaId: number) => void
-  alFinalizar: (ofertaId: number) => void
-  alConfirmar: () => void
-}) {
-  const sinOfertas =
-    !cargando && errorCarga === undefined && (ofertas === undefined || ofertas.length === 0)
-  const hayAdjudicadas = ofertas?.some(
-    (oferta) => oferta.adjudicada_en !== null || exitoAdjudicar[oferta.id] !== undefined,
-  ) === true
-  const bloqueada = adjudicando !== null || finalizando !== null || confirmando || confirmada || evaluando
-  const hayCierrePendiente = ofertas?.some(
-    (oferta) => estaAdjudicadaParaCierre(oferta) && !puedeCerrarOferta(oferta, ofertas),
-  ) === true
-
-  const lotePorId = new Map(lotes.map((lote) => [lote.id, lote]))
-
-  return (
-    <div className={claseSubPanel}>
-      <h4 className="text-sm font-bold text-cyan-400">Ofertas recibidas</h4>
-      <p className="mt-1 text-xs text-slate-400">
-        {puedeAdjudicar
-          ? 'Selecciona las ofertas evaluadas y confirma la selección para continuar.'
-          : 'La oferta adjudicada inicia la atención de la emergencia.'}
-      </p>
-
-      {cargando && <p className="mt-3 text-sm text-slate-400">Cargando ofertas...</p>}
-
-      {errorCarga !== undefined && (
-        <p role="alert" className={`mt-3 ${claseError}`}>
-          No se pudieron cargar las ofertas. {errorCarga}
-        </p>
-      )}
-
-      {sinOfertas && (
-        <p className="mt-3 text-sm text-slate-400">
-          No hay ofertas para esta emergencia.
-        </p>
-      )}
-
-      {puedeFinalizar && !cargando && errorCarga === undefined && hayCierrePendiente && (
-        <p role="status" className="mt-3 text-sm text-slate-400">
-          Todavía hay ofertas adjudicadas con ítems pendientes de finalización.
-        </p>
-      )}
-
-      {ofertas !== undefined && ofertas.length > 0 && (
-        <ul className="mt-3 flex flex-col gap-2">
-          {ofertas.map((oferta) => (
-            <li
-              key={oferta.id}
-              className="rounded-xl bg-slate-800 border border-slate-700 p-3 flex flex-col gap-2"
-            >
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <span className="text-sm font-semibold text-white">
-                  {oferta.organizaciones[0]?.nombre ?? `ONG #${oferta.organizacion_id}`}
-                </span>
-                <span className="font-mono text-xs text-slate-500">
-                  Oferta #{oferta.id}
-                </span>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <span className={claseBadge}>
-                  {formatearFecha(oferta.fecha_hora_oferta, 'Sin fecha')}
-                </span>
-                <span className={claseBadge}>Ítems: {oferta.items.length}</span>
-              </div>
-
-              <div className="rounded-lg border border-slate-700/80 bg-slate-900/60 p-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Recursos ofrecidos
-                </p>
-                <ul className="mt-2 flex flex-col gap-2">
-                  {oferta.items.map((item) => {
-                    const lote = lotePorId.get(item.lote_necesidad_id)
-                    const nombreRecurso = item.descripcion ?? lote?.tipo ?? 'Recurso sin nombre'
-                    const unidad = lote?.unidad ?? 'unidades'
-
-                    return (
-                      <li
-                        key={item.id}
-                        className="rounded-md border border-slate-700 bg-slate-800/70 px-3 py-2 text-xs"
-                      >
-                        <div className="flex flex-wrap items-baseline justify-between gap-2">
-                          <span className="font-semibold text-slate-200">{nombreRecurso}</span>
-                          <span className="font-mono text-cyan-300">
-                            Ofrece: {item.cantidad_ofrecida} {unidad}
-                          </span>
-                          <span className="font-mono text-cyan-300">
-                            {item.cantidad_verificada == null
-                              ? 'Pendiente de evaluación'
-                              : `Verificado por Cloud: ${item.cantidad_verificada}`}
-                          </span>
-                        </div>
-                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-slate-400">
-                          <span>Lote #{item.lote_necesidad_id}</span>
-                          {lote !== undefined && (
-                            <span>
-                              Requerido: {lote.cantidad} {lote.unidad ?? 'unidades'}
-                            </span>
-                          )}
-                          {item.finalizado_en !== null && (
-                            <span className="text-emerald-300">
-                              Finalizado: {formatearFecha(item.finalizado_en, 'Sin fecha')}
-                            </span>
-                          )}
-                        </div>
-                        {lote?.descripcion !== null && lote?.descripcion !== undefined && (
-                          <p className="mt-1 text-slate-500">Necesidad: {lote.descripcion}</p>
-                        )}
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
-
-              {(oferta.estado_seleccion === 'adjudicada' ||
-                (confirmada && (oferta.adjudicada_en !== null || exitoAdjudicar[oferta.id] !== undefined))) && (
-                <p className="rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-300">
-                  Oferta adjudicada el {formatearFecha(oferta.adjudicada_en, 'Sin fecha')}
-                </p>
-              )}
-
-              {!confirmada && (oferta.estado_seleccion === 'seleccionada_para_confirmar' ||
-                (oferta.estado_seleccion !== 'adjudicada' && exitoAdjudicar[oferta.id] !== undefined)) && (
-                <button type="button" disabled className={`${claseBotonSecundario} self-start text-sm`}>
-                  Seleccionada para confirmar
-                </button>
-              )}
-
-              {puedeAdjudicar && !confirmada && oferta.estado_seleccion === 'sin_seleccionar' &&
-                exitoAdjudicar[oferta.id] === undefined && (
-                <button
-                  type="button"
-                  onClick={() => alAdjudicar(oferta.id, true)}
-                  disabled={bloqueada || !oferta.puede_seleccionar || cargando || errorCarga !== undefined}
-                  className={`${claseBotonSecundario} self-start text-sm`}
-                >
-                  {adjudicando === oferta.id ? 'Adjudicando...' : 'Adjudicar'}
-                </button>
-              )}
-
-              {oferta.estado_seleccion === 'sin_seleccionar' && !oferta.puede_seleccionar &&
-                oferta.items.length > 0 && oferta.items.every((item) => (item.cantidad_verificada ?? 0) > 0) && (
-                <p className="text-xs text-slate-400">La selección no está habilitada en la etapa actual.</p>
-              )}
-
-              {puedeAdjudicar && !confirmada && !hayAdjudicadas && oferta.adjudicada_en === null && (
-                confirmacionesPendientes[oferta.id] === true ? (
-                  <div
-                    role="group"
-                    aria-label={`Confirmar adjudicación de la oferta #${oferta.id}`}
-                    className="flex flex-col gap-2 rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-3"
-                  >
-                    <p className="text-sm text-yellow-200">
-                      ¿Adjudicar la oferta #{oferta.id}? Se adjudicará esta oferta y no podrás elegir otra.
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => alConfirmarAdjudicacion(oferta.id)}
-                        disabled={bloqueada || cargando || errorCarga !== undefined}
-                        className={`${claseBotonSecundario} text-sm`}
-                      >
-                        Confirmar adjudicación
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => alCancelarConfirmacion(oferta.id)}
-                        className={`${claseBotonSecundario} text-sm`}
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => alSolicitarConfirmacion(oferta.id)}
-                    disabled={bloqueada || cargando || errorCarga !== undefined}
-                    className={`${claseBotonSecundario} self-start text-sm`}
-                  >
-                    Adjudicar solo esta oferta
-                  </button>
-                )
-              )}
-
-              {oferta.estado_seleccion === 'adjudicada' && exitoAdjudicar[oferta.id] !== undefined && (
-                <p role="status" className={claseExito}>{exitoAdjudicar[oferta.id]}</p>
-              )}
-
-              {(() => {
-                if (!puedeFinalizar || !puedeCerrarOferta(oferta, ofertas)) {
-                  return null
-                }
-
-                return (
-                  <div className="flex flex-col gap-2 rounded-lg border border-cyan-500/40 bg-cyan-500/10 p-3">
-                    {exitoFinalizar[oferta.id] === undefined && (
-                      <button
-                        type="button"
-                        onClick={() => alFinalizar(oferta.id)}
-                        disabled={bloqueada || cargando || errorCarga !== undefined}
-                        className={`${claseBotonSecundario} self-start text-sm`}
-                      >
-                        {finalizando === oferta.id ? 'Cerrando oferta...' : 'Cerrar oferta'}
-                      </button>
-                    )}
-                    {exitoFinalizar[oferta.id] !== undefined && (
-                      <p role="status" className={claseExito}>{exitoFinalizar[oferta.id]}</p>
-                    )}
-                    {errorFinalizar[oferta.id] !== undefined && (
-                      <p role="alert" className={claseError}>{errorFinalizar[oferta.id]}</p>
-                    )}
-                  </div>
-                )
-              })()}
-
-              {errorAdjudicar[oferta.id] !== undefined && (
-                <p role="alert" className={claseError}>
-                  {errorAdjudicar[oferta.id]}
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {puedeConfirmar && ofertas !== undefined && ofertas.length > 0 && (
-        <button
-          type="button"
-          onClick={alConfirmar}
-          disabled={bloqueada || !hayAdjudicadas || cargando || errorCarga !== undefined}
-          className={`${claseBotonSecundario} mt-3 text-sm`}
-        >
-          {confirmada ? 'Selección confirmada' : confirmando ? 'Confirmando selección...' : 'Confirmar selección'}
-        </button>
-      )}
-      {errorConfirmar !== undefined && <p role="alert" className={claseError}>{errorConfirmar}</p>}
-      {exitoConfirmar !== undefined && <p role="status" className={claseExito}>{exitoConfirmar}</p>}
-
     </div>
   )
 }
@@ -910,29 +641,20 @@ export function CentroCoordinadorPage() {
     useState<EstadoBusquedaRecurso>(BUSQUEDA_RECURSO_VACIA)
   const [guardandoEdicion, setGuardandoEdicion] = useState(false)
   const [eliminandoLote, setEliminandoLote] = useState<number | null>(null)
+  const [confirmacionesPendientes, setConfirmacionesPendientes] = useState<Record<number, boolean>>({})
   const [avisoLote, setAvisoLote] = useState<string | null>(null)
   const [ofertasPorEmergencia, setOfertasPorEmergencia] = useState<
     Record<number, OfertaCoordinadorRead[]>
   >({})
   const [cargandoOfertas, setCargandoOfertas] = useState<Record<number, boolean>>({})
   const [errorOfertas, setErrorOfertas] = useState<Record<number, string>>({})
-  const [adjudicando, setAdjudicando] = useState<Record<number, number>>({})
   const [finalizando, setFinalizando] = useState<Record<number, number>>({})
-  const [errorAdjudicar, setErrorAdjudicar] = useState<Record<number, string>>({})
-  const [exitoAdjudicar, setExitoAdjudicar] = useState<Record<number, string>>({})
   const [errorFinalizar, setErrorFinalizar] = useState<Record<number, string>>({})
   const [exitoFinalizar, setExitoFinalizar] = useState<Record<number, string>>({})
-  const [confirmando, setConfirmando] = useState<Record<number, boolean>>({})
-  const [confirmadas, setConfirmadas] = useState<Record<number, boolean>>({})
-  const [errorConfirmar, setErrorConfirmar] = useState<Record<number, string>>({})
-  const [exitoConfirmar, setExitoConfirmar] = useState<Record<number, string>>({})
-  const [confirmacionesAdjudicacion, setConfirmacionesAdjudicacion] = useState<Record<number, boolean>>({})
   const [evaluacionesProyecto, setEvaluacionesProyecto] = useState<Record<number, EstadoEvaluacionProyecto>>({})
   const evaluacionesVigentes = useRef<Record<number, EstadoEvaluacionProyecto>>({})
   const versionesEvaluacion = useRef<Record<number, number>>({})
   const operacionesOfertas = useRef(new Set<number>())
-  const adjudicadasRecientes = useRef(new Set<number>())
-  const confirmadasRecientes = useRef(new Set<number>())
   const ofertasVigentes = useRef<Record<number, OfertaCoordinadorRead[]>>({})
   const revisionLotes = useRef(0)
   const versionesBusquedaRecursos = useRef<Record<number, number>>({})
@@ -1157,112 +879,6 @@ export function CentroCoordinadorPage() {
       return false
     } finally {
       setCargandoOfertas((actuales) => ({ ...actuales, [emergenciaId]: false }))
-    }
-  }
-
-  async function manejarAdjudicar(
-    emergenciaId: number,
-    ofertaId: number,
-    paraSeleccion: boolean,
-  ): Promise<void> {
-    const ofertas = ofertasVigentes.current[emergenciaId]
-    const oferta = ofertas?.find((registro) => registro.id === ofertaId)
-    if (
-      pestaniaActual.current !== 'esperando_adjudicacion' || oferta === undefined ||
-      operacionesOfertas.current.has(emergenciaId) || evaluacionBloquea(emergenciaId) ||
-      confirmadasRecientes.current.has(emergenciaId) ||
-      (paraSeleccion && !oferta.puede_seleccionar) ||
-      oferta.adjudicada_en !== null || adjudicadasRecientes.current.has(ofertaId) ||
-      (!paraSeleccion && ofertas?.some((registro) =>
-        registro.adjudicada_en !== null || adjudicadasRecientes.current.has(registro.id),
-      ))
-    ) return
-
-    operacionesOfertas.current.add(emergenciaId)
-    setAdjudicando((actuales) => ({ ...actuales, [emergenciaId]: ofertaId }))
-    setErrorAdjudicar((actuales) => sinClave(actuales, ofertaId))
-    setExitoAdjudicar((actuales) => sinClave(actuales, ofertaId))
-    try {
-      const respuesta = await adjudicarOferta(ofertaId, paraSeleccion)
-      if (respuesta?.oferta_id !== ofertaId || typeof respuesta.mensaje !== 'string') {
-        throw new ApiError(200, 'La respuesta de adjudicación no pudo verificarse.')
-      }
-      adjudicadasRecientes.current.add(ofertaId)
-      setExitoAdjudicar((actuales) => ({
-        ...actuales,
-        [ofertaId]: respuesta.mensaje,
-      }))
-      await cargarOfertasDeEmergencia(emergenciaId)
-      if (!paraSeleccion) {
-        cambiarPestania('en_proceso')
-        setRecargo((actual) => actual + 1)
-      }
-    } catch (fallo) {
-      if (fallo instanceof ApiError && fallo.status === 409) {
-        await cargarOfertasDeEmergencia(emergenciaId)
-        setRecargo((actual) => actual + 1)
-      }
-      setErrorAdjudicar((actuales) => ({
-        ...actuales,
-        [ofertaId]: describirError(fallo),
-      }))
-    } finally {
-      operacionesOfertas.current.delete(emergenciaId)
-      setAdjudicando((actuales) => sinClave(actuales, emergenciaId))
-      setConfirmacionesAdjudicacion((actuales) => sinClave(actuales, ofertaId))
-    }
-  }
-
-  function solicitarConfirmacionAdjudicacion(ofertaId: number) {
-    setConfirmacionesAdjudicacion((actuales) => ({ ...actuales, [ofertaId]: true }))
-  }
-
-  function cancelarConfirmacionAdjudicacion(ofertaId: number) {
-    setConfirmacionesAdjudicacion((actuales) => sinClave(actuales, ofertaId))
-  }
-
-  function confirmarAdjudicacionSoloOferta(emergenciaId: number, ofertaId: number) {
-    setConfirmacionesAdjudicacion((actuales) => sinClave(actuales, ofertaId))
-    void manejarAdjudicar(emergenciaId, ofertaId, false)
-  }
-
-  async function manejarConfirmarSeleccion(emergenciaId: number): Promise<void> {
-    const ofertas = ofertasVigentes.current[emergenciaId]
-    if (
-      (pestaniaActual.current !== 'esperando_adjudicacion' && pestaniaActual.current !== 'en_proceso') ||
-      operacionesOfertas.current.has(emergenciaId) || evaluacionBloquea(emergenciaId) || confirmadasRecientes.current.has(emergenciaId) ||
-      !ofertas?.some((oferta) => oferta.adjudicada_en !== null || adjudicadasRecientes.current.has(oferta.id))
-    ) return
-
-    operacionesOfertas.current.add(emergenciaId)
-    setConfirmando((actuales) => ({ ...actuales, [emergenciaId]: true }))
-    setErrorConfirmar((actuales) => sinClave(actuales, emergenciaId))
-    try {
-      const respuesta = await confirmarSeleccionOfertas(emergenciaId)
-      if (respuesta?.emergencia_id !== emergenciaId || typeof respuesta.ya_confirmada !== 'boolean') {
-        throw new ApiError(200, 'La respuesta de confirmación no pudo verificarse.')
-      }
-      confirmadasRecientes.current.add(emergenciaId)
-      setConfirmadas((actuales) => ({ ...actuales, [emergenciaId]: true }))
-      setExitoAdjudicar((actuales) => {
-        const siguientes = { ...actuales }
-        for (const oferta of ofertas) delete siguientes[oferta.id]
-        return siguientes
-      })
-      setExitoConfirmar((actuales) => ({
-        ...actuales,
-        [emergenciaId]: respuesta.ya_confirmada
-          ? 'La selección ya estaba confirmada.'
-          : 'Selección confirmada correctamente.',
-      }))
-      await cargarOfertasDeEmergencia(emergenciaId)
-      cambiarPestania('en_proceso')
-      setRecargo((actual) => actual + 1)
-    } catch (fallo) {
-      setErrorConfirmar((actuales) => ({ ...actuales, [emergenciaId]: describirError(fallo) }))
-    } finally {
-      operacionesOfertas.current.delete(emergenciaId)
-      setConfirmando((actuales) => sinClave(actuales, emergenciaId))
     }
   }
 
@@ -1598,14 +1214,15 @@ export function CentroCoordinadorPage() {
     }
   }
 
-  async function manejarEliminar(lote: LoteNecesidad) {
-    const confirmado = window.confirm(
-      `¿Eliminar el lote "${lote.tipo}" (${lote.cantidad} ${lote.unidad ?? 'unidades'})? Esta acción no se puede deshacer.`,
-    )
-    if (!confirmado) {
-      return
-    }
+  function solicitarConfirmacionBorrado(loteId: number) {
+    setConfirmacionesPendientes({ [loteId]: true })
+  }
 
+  function cancelarConfirmacionBorrado(loteId: number) {
+    setConfirmacionesPendientes((previas) => ({ ...previas, [loteId]: false }))
+  }
+
+  async function manejarEliminar(lote: LoteNecesidad) {
     setEliminandoLote(lote.id)
     try {
       await eliminarLote(lote.id)
@@ -1625,6 +1242,7 @@ export function CentroCoordinadorPage() {
       setAvisoLote(describirError(fallo))
     } finally {
       setEliminandoLote(null)
+      setConfirmacionesPendientes({})
     }
   }
 
@@ -1779,6 +1397,7 @@ export function CentroCoordinadorPage() {
                       errorEdicion={errorEdicion}
                       guardandoEdicion={guardandoEdicion}
                       eliminandoLote={eliminandoLote}
+                      confirmacionesPendientes={confirmacionesPendientes}
                       alAbrirEdicion={abrirEdicionLote}
                       alCancelarEdicion={cerrarEdicionLote}
                       alCambiarCampoEdicion={cambiarCampoEdicion}
@@ -1789,6 +1408,8 @@ export function CentroCoordinadorPage() {
                       alEnviarEdicion={(evento, lote) =>
                         void manejarEnvioEdicion(evento, lote)
                       }
+                      alSolicitarEliminar={solicitarConfirmacionBorrado}
+                      alCancelarEliminar={cancelarConfirmacionBorrado}
                       alEliminar={(lote) => void manejarEliminar(lote)}
                     />
 
@@ -1850,32 +1471,22 @@ export function CentroCoordinadorPage() {
                         >Actualizar estado</button>
                       </div>
                     )}
+                    {(pestania === 'esperando_adjudicacion' || pestania === 'en_proceso') && (
+                      <p role="note" className={claseAviso}>
+                        La adjudicación la realiza el municipio.
+                      </p>
+                    )}
                     {(pestania === 'esperando_ofertas' || pestania === 'esperando_adjudicacion' || pestania === 'en_proceso') && (
                       <PanelAdjudicacion
                         ofertas={ofertasPorEmergencia[emergencia.id]}
                         lotes={emergencia.lotes}
                         cargando={cargandoOfertas[emergencia.id] === true}
                         errorCarga={errorOfertas[emergencia.id]}
-                        adjudicando={adjudicando[emergencia.id] ?? null}
                         finalizando={finalizando[emergencia.id] ?? null}
-                        errorAdjudicar={errorAdjudicar}
-                        exitoAdjudicar={exitoAdjudicar}
                         errorFinalizar={errorFinalizar}
                         exitoFinalizar={exitoFinalizar}
-                        alAdjudicar={(ofertaId, paraSeleccion) => void manejarAdjudicar(emergencia.id, ofertaId, paraSeleccion)}
                         alFinalizar={(ofertaId) => void manejarFinalizarOferta(emergencia.id, ofertaId)}
                         evaluando={pestania === 'esperando_ofertas' || evaluacionBloquea(emergencia.id)}
-                        confirmando={confirmando[emergencia.id] === true}
-                        confirmada={confirmadas[emergencia.id] === true}
-                        errorConfirmar={errorConfirmar[emergencia.id]}
-                        exitoConfirmar={exitoConfirmar[emergencia.id]}
-                        confirmacionesPendientes={confirmacionesAdjudicacion}
-                        alSolicitarConfirmacion={solicitarConfirmacionAdjudicacion}
-                        alCancelarConfirmacion={cancelarConfirmacionAdjudicacion}
-                        alConfirmarAdjudicacion={(ofertaId) => confirmarAdjudicacionSoloOferta(emergencia.id, ofertaId)}
-                        alConfirmar={() => void manejarConfirmarSeleccion(emergencia.id)}
-                        puedeAdjudicar={pestania === 'esperando_adjudicacion'}
-                        puedeConfirmar={pestania === 'esperando_adjudicacion'}
                         puedeFinalizar={pestania === 'en_proceso'}
                       />
                     )}
