@@ -196,14 +196,22 @@ export function MisOfertasPage({ organizacionId }: Props) {
     }
   }
 
+  // Las postulaciones permanecen ocultas hasta que cierre la convocatoria.
+  // Si la emergencia aún no está cargada, se muestran para no ocultarlas por error.
+  const ofertasVisibles = ofertas.filter((oferta) => {
+    const emergencia = emergencias[oferta.emergencia_id]
+    return !(emergencia !== undefined && convocatoriaAbierta(emergencia))
+  })
+
   return (
     <section className="flex flex-col gap-4">
       <div className={claseCard}>
         <h2 className={claseTitulo}>Mis ofertas</h2>
         <p className={claseSubtitulo}>
           Postulaciones de tu organización, incluidos los consorcios en los que
-          participás. Podés modificarlas mientras la convocatoria siga abierta y
-          marcar tus actividades como finalizadas.
+          participás. Podés modificarlas mientras la convocatoria siga abierta.
+          Una vez adjudicada tu oferta, podés marcar tus actividades como
+          finalizadas.
         </p>
       </div>
 
@@ -225,9 +233,18 @@ export function MisOfertasPage({ organizacionId }: Props) {
         </p>
       )}
 
-      {!cargando && error === null && ofertas.length > 0 && (
+      {!cargando &&
+        error === null &&
+        ofertas.length > 0 &&
+        ofertasVisibles.length === 0 && (
+          <p className="rounded-xl bg-slate-800 border border-slate-700 p-6 text-sm text-slate-400 shadow-2xl">
+            Tus postulaciones se mostrarán cuando cierre la convocatoria.
+          </p>
+        )}
+
+      {!cargando && error === null && ofertasVisibles.length > 0 && (
         <ul className="flex flex-col gap-3">
-          {ofertas.map((oferta) => {
+          {ofertasVisibles.map((oferta) => {
             const desplegada = desplegadas.has(oferta.id)
             const emergencia = emergencias[oferta.emergencia_id]
             const abierta =
@@ -363,18 +380,20 @@ export function MisOfertasPage({ organizacionId }: Props) {
                                     )}
                                   </span>
                                 ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      void finalizarActividad(oferta.id, item.id)
-                                    }
-                                    disabled={finalizando === item.id}
-                                    className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-emerald-400 hover:text-emerald-400"
-                                  >
-                                    {finalizando === item.id
-                                      ? 'Finalizando...'
-                                      : 'Marcar actividad como finalizada'}
-                                  </button>
+                                  oferta.adjudicada_en !== null && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void finalizarActividad(oferta.id, item.id)
+                                      }
+                                      disabled={finalizando === item.id}
+                                      className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-emerald-400 hover:text-emerald-400"
+                                    >
+                                      {finalizando === item.id
+                                        ? 'Finalizando...'
+                                        : 'Marcar actividad como finalizada'}
+                                    </button>
+                                  )
                                 )}
 
                                 {errorFinalizar[item.id] !== undefined && (
