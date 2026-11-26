@@ -19,11 +19,12 @@ def denegar() -> None:
 
 
 def filtrar_publicada(usuario: Usuario, publicada: bool | None) -> bool | None:
-    alcance = {OPERADOR: False, ONG: True}.get(usuario.rol.nombre)
-    if alcance is not None:
-        if publicada is not None and publicada != alcance:
+    # El operador municipal también lee las publicadas para adjudicar; sus
+    # escrituras siguen limitadas por los roles de cada ruta.
+    if usuario.rol.nombre == ONG:
+        if publicada is False:
             denegar()
-        return alcance
+        return True
     return publicada
 
 

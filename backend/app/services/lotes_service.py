@@ -1,13 +1,14 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from ..dto import LoteNecesidadRespuesta
-from ..integrations.bonita.client import BonitaClientError, bonita_client
-from ..models import LoteNecesidad
+from ..models import CursoAccionEmergencia, LoteNecesidad, LoteRecursoCloud
 from ..repositories import LoteNecesidadRepository
 from ..schemas import LoteNecesidadActualizar, LoteNecesidadCrear
 from .emergencias_service import EmergenciaService
 from .ofertas_service import OfertaService
+from ..utils.recursos import normalizar_nombre_recurso
 
 
 class LoteService:
@@ -32,8 +33,9 @@ class LoteService:
     async def crear_lote(
         self, db: Session, emergencia_id: int, data: LoteNecesidadCrear
     ) -> LoteNecesidadRespuesta:
-        emergencia = self._emergencias.obtener_emergencia_entidad(
-            db, emergencia_id
+        emergencia = await run_in_threadpool(
+            self._emergencias.obtener_emergencia_entidad,
+            db, emergencia_id, bloquear=True,
         )
         if emergencia.publicada:
             raise HTTPException(
@@ -43,43 +45,13 @@ class LoteService:
                     "sus lotes no se pueden modificar"
                 ),
             )
+        self._verificar_publicacion_pendiente(db, emergencia_id)
 
-        # Barrera de sincronizacion: el proceso Bonita "Generar lotes" solo
-        # avanza cuando se crea un lote aca. Se libera ANTES de insertar para
-        # que, si Bonita falla, el lote no quede creado.
-        # La tarea debe asignarse a un usuario real del actor porque el usuario
-        # tecnico no puede autoasignarse para ejecutarla por API.
-        try:
-            if emergencia.bonita_case_id:
-                tarea = await bonita_client.obtener_tarea_pendiente(
-                    int(emergencia.bonita_case_id), "Generar lotes"
-                )
-                if tarea is not None:
-                    miembro = await bonita_client.obtener_miembro_actor(
-                        int(tarea["actorId"])
-                    )
-                    if miembro is None:
-                        raise HTTPException(
-                            status_code=503,
-                            detail=(
-                                "No se pudo liberar la barrera en Bonita: "
-                                "la tarea 'Generar lotes' no tiene "
-                                "usuarios asignados a su actor"
-                            ),
-                        )
-                    await bonita_client.asignar_tarea(
-                        tarea["id"], int(miembro["user_id"])
-                    )
-                    await bonita_client.ejecutar_tarea(tarea["id"])
-        except BonitaClientError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=f"No se pudo liberar la barrera en Bonita: {exc}",
-            )
-
-        lote = LoteNecesidad(
-            emergencia_id=emergencia_id, **data.model_dump()
-        )
+        valores = data.model_dump(exclude={"tipo_recurso_id"})
+        valores["tipo"] = normalizar_nombre_recurso(valores["tipo"])
+        lote = LoteNecesidad(emergencia_id=emergencia_id, **valores)
+        if data.tipo_recurso_id is not None:
+            lote.referencia_cloud = LoteRecursoCloud(tipo_recurso_id=data.tipo_recurso_id)
         creado = self._repository.crear(db, lote)
         return LoteNecesidadRespuesta.model_validate(creado)
 
@@ -89,7 +61,34 @@ class LoteService:
         lote = self._obtener_lote_entidad(db, lote_id)
         self._verificar_emergencia_no_publicada(db, lote.emergencia_id)
         lote = self._obtener_lote_entidad(db, lote_id)
-        for field, value in data.model_dump(exclude_unset=True).items():
+        cambios = data.model_dump(exclude_unset=True)
+        if "tipo" in cambios and cambios["tipo"] is not None:
+            cambios["tipo"] = normalizar_nombre_recurso(cambios["tipo"])
+        # Una oferta conserva su cantidad en la unidad e identidad originales.
+        # Cambiar sólo demanda o descripción no reinterpreta sus aportes.
+        nacional_actual = lote.referencia_cloud.tipo_recurso_id if lote.referencia_cloud else None
+        cambia_identidad = (
+            ("tipo" in cambios and cambios["tipo"] != normalizar_nombre_recurso(lote.tipo))
+            or ("unidad" in cambios and cambios["unidad"] != lote.unidad)
+            or ("tipo_recurso_id" in cambios and cambios["tipo_recurso_id"] != nacional_actual)
+        )
+        curso = db.get(CursoAccionEmergencia, lote.emergencia_id)
+        if (cambia_identidad and curso is not None and curso.accion == "REFORMULAR"
+                and self._ofertas.existe_referencia_a_lote(db, lote_id)):
+            raise HTTPException(409, "No se puede cambiar el recurso o la unidad de un lote con ofertas asociadas")
+        if "tipo_recurso_id" in cambios:
+            nacional = cambios.pop("tipo_recurso_id")
+            if nacional is None:
+                lote.referencia_cloud = None
+            elif lote.referencia_cloud is None:
+                lote.referencia_cloud = LoteRecursoCloud(tipo_recurso_id=nacional)
+            else:
+                lote.referencia_cloud.tipo_recurso_id = nacional
+        elif ("tipo" in cambios and cambios["tipo"] != lote.tipo
+              and not (curso is not None and curso.accion == "REFORMULAR"
+                       and cambios["tipo"] == normalizar_nombre_recurso(lote.tipo))):
+            lote.referencia_cloud = None
+        for field, value in cambios.items():
             setattr(lote, field, value)
         actualizado = self._repository.actualizar(db, lote)
         return LoteNecesidadRespuesta.model_validate(actualizado)
@@ -124,6 +123,13 @@ class LoteService:
                     "sus lotes no se pueden modificar"
                 ),
             )
+        self._verificar_publicacion_pendiente(db, emergencia_id)
+
+    def _verificar_publicacion_pendiente(self, db: Session, emergencia_id: int):
+        curso = db.get(CursoAccionEmergencia, emergencia_id, populate_existing=True)
+        if curso is not None and curso.tarea_publicacion_id is not None:
+            raise HTTPException(409, "La publicación de los lotes está en curso; vuelva a intentar publicar antes de editar")
+        return curso
 
     def _obtener_lote_entidad(
         self, db: Session, lote_id: int

@@ -62,14 +62,40 @@ function disponibleEnInventario(
   inventario: RecursoInventario[],
   lote: LoteRead,
 ): RecursoInventario | undefined {
+  if (lote.tipo_recurso_id !== null) {
+    const vinculado = inventario.find(
+      (recurso) => recurso.tipo_recurso_id === lote.tipo_recurso_id,
+    )
+    if (vinculado !== undefined) return vinculado
+  }
+  // Respaldo por nombre para filas o lotes sin vínculo al Sistema Nacional.
   return inventario.find(
     (recurso) => recurso.tipo.trim().toLowerCase() === lote.tipo.trim().toLowerCase(),
   )
 }
 
+function cantidadDisponible(recurso: RecursoInventario): number {
+  return recurso.disponible ?? recurso.cantidad_total
+}
+
 function cantidadDeTexto(texto: string): number {
   const numero = Number(texto)
   return Number.isFinite(numero) && numero > 0 ? Math.floor(numero) : 0
+}
+
+function repartoInicial(
+  oferta: OfertaRead | null,
+  loteId: number,
+  participantes: number[],
+): Record<number, string> {
+  const item = oferta?.items.find((i) => i.lote_necesidad_id === loteId)
+  const aportes = item?.aportes ?? []
+  return Object.fromEntries(
+    participantes.map((id) => {
+      const aporte = aportes.find((actual) => actual.organizacion_id === id)
+      return [id, aporte === undefined ? '' : String(aporte.cantidad)]
+    }),
+  )
 }
 
 export function FormularioOfertaPage({
@@ -83,6 +109,9 @@ export function FormularioOfertaPage({
   const [inventario, setInventario] = useState<RecursoInventario[]>([])
   const [cantidades, setCantidades] = useState<Record<number, string>>({})
   const [descripciones, setDescripciones] = useState<Record<number, string>>({})
+  const [aportes, setAportes] = useState<
+    Record<number, Record<number, string>>
+  >({})
   const [observaciones, setObservaciones] = useState(
     ofertaExistente?.observaciones ?? '',
   )
@@ -130,6 +159,20 @@ export function FormularioOfertaPage({
             ]),
           ),
         )
+        const participantes = [
+          organizacionId,
+          ...(ofertaExistente?.organizaciones
+            .map((organizacion) => organizacion.id)
+            .filter((id) => id !== organizacionId) ?? []),
+        ]
+        setAportes(
+          Object.fromEntries(
+            lotesCargados.map((lote) => [
+              lote.id,
+              repartoInicial(ofertaExistente, lote.id, participantes),
+            ]),
+          ),
+        )
       } catch (fallo) {
         if (vigente) setError(describirError(fallo))
       } finally {
@@ -167,29 +210,69 @@ export function FormularioOfertaPage({
     setEsConjunta(marcada)
     if (!marcada) {
       setSociasIds([])
+      setAportes({})
     }
+  }
+
+  function ajustarAportes(participantes: number[]) {
+    setAportes((actuales) =>
+      Object.fromEntries(
+        Object.entries(actuales).map(([loteId, reparto]) => [
+          loteId,
+          Object.fromEntries(
+            participantes.map((id) => [id, reparto[id] ?? '']),
+          ),
+        ]),
+      ),
+    )
   }
 
   function agregarSocia(evento: ChangeEvent<HTMLSelectElement>) {
     const id = Number(evento.target.value)
     if (id > 0) {
-      setSociasIds((actuales) =>
-        actuales.includes(id) ? actuales : [...actuales, id],
-      )
+      if (!sociasIds.includes(id)) {
+        const nuevas = [...sociasIds, id]
+        setSociasIds(nuevas)
+        ajustarAportes([organizacionId, ...nuevas])
+      }
     }
     evento.target.value = ''
   }
 
   function quitarSocia(id: number) {
-    setSociasIds((actuales) => actuales.filter((socia) => socia !== id))
+    const nuevas = sociasIds.filter((socia) => socia !== id)
+    setSociasIds(nuevas)
+    ajustarAportes([organizacionId, ...nuevas])
+  }
+
+  function manejarAporte(loteId: number, organizacionIdAporte: number) {
+    return (evento: ChangeEvent<HTMLInputElement>) => {
+      const valor = evento.target.value
+      setAportes((actuales) => ({
+        ...actuales,
+        [loteId]: {
+          ...(actuales[loteId] ?? {}),
+          [organizacionIdAporte]: valor,
+        },
+      }))
+    }
   }
 
   function construirItems(): OfertaItemRequest[] {
+    const participantes = [organizacionId, ...sociasIds]
     return lotes
       .map((lote) => ({
         lote_necesidad_id: lote.id,
         cantidad_ofrecida: cantidadDeTexto(cantidades[lote.id] ?? ''),
         descripcion: (descripciones[lote.id] ?? '').trim() || null,
+        ...(esConjunta
+          ? {
+              aportes: participantes.map((id) => ({
+                organizacion_id: id,
+                cantidad: cantidadDeTexto(aportes[lote.id]?.[id] ?? ''),
+              })),
+            }
+          : {}),
       }))
       .filter((item) => item.cantidad_ofrecida > 0)
   }
@@ -213,6 +296,36 @@ export function FormularioOfertaPage({
     if (esConjunta && sociasIds.length === 0) {
       setError('Agregá al menos una ONG socia o desmarcá la oferta conjunta.')
       return
+    }
+
+    if (esConjunta) {
+      const participantes = [organizacionId, ...sociasIds]
+      for (const item of items) {
+        const lote = lotes.find(
+          (actual) => actual.id === item.lote_necesidad_id,
+        )
+        const nombreLote = lote?.tipo ?? String(item.lote_necesidad_id)
+        const reparto = participantes.map((id) => ({
+          organizacion_id: id,
+          cantidad: cantidadDeTexto(aportes[item.lote_necesidad_id]?.[id] ?? ''),
+        }))
+        if (reparto.some((aporte) => aporte.cantidad <= 0)) {
+          setError(
+            `Indicá un aporte mayor a 0 para cada organización en el lote ${nombreLote}.`,
+          )
+          return
+        }
+        const totalAportes = reparto.reduce(
+          (suma, aporte) => suma + aporte.cantidad,
+          0,
+        )
+        if (totalAportes !== item.cantidad_ofrecida) {
+          setError(
+            `Los aportes de ${nombreLote} deben sumar exactamente ${item.cantidad_ofrecida}.`,
+          )
+          return
+        }
+      }
     }
 
     setEnviando(true)
@@ -355,7 +468,8 @@ export function FormularioOfertaPage({
             const recurso = disponibleEnInventario(inventario, lote)
             const ofrecido = cantidadDeTexto(cantidades[lote.id] ?? '')
             const excedeInventario =
-              recurso !== undefined && ofrecido > recurso.cantidad_total
+              recurso !== undefined && ofrecido > cantidadDisponible(recurso)
+            const participantes = [organizacionId, ...sociasIds]
 
             return (
               <div key={lote.id} className={claseSubPanel}>
@@ -379,7 +493,7 @@ export function FormularioOfertaPage({
                       htmlFor={`oferta-cantidad-${lote.id}`}
                       className={claseEtiqueta}
                     >
-                      Cantidad
+                      Cantidad total
                     </label>
                     <input
                       id={`oferta-cantidad-${lote.id}`}
@@ -413,7 +527,7 @@ export function FormularioOfertaPage({
 
                 {recurso !== undefined && (
                   <p className="mt-2 text-xs text-slate-400">
-                    Disponible en tu inventario: {recurso.cantidad_total}
+                    Disponible en tu inventario: {cantidadDisponible(recurso)}
                     {recurso.unidad ? ` ${recurso.unidad}` : ''}
                   </p>
                 )}
@@ -424,6 +538,34 @@ export function FormularioOfertaPage({
                       Estás ofreciendo más de lo que figura en tu inventario
                     </span>
                   </p>
+                )}
+
+                {esConjunta && (
+                  <div className="mt-4 border-t border-slate-700 pt-3">
+                    <p className={claseEtiqueta}>Aporte de cada organización</p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {participantes.map((id) => (
+                        <div key={id}>
+                          <label
+                            htmlFor={`aporte-${lote.id}-${id}`}
+                            className="mb-1 block text-xs text-slate-400"
+                          >
+                            {nombreDeOrganizacion(id)}
+                          </label>
+                          <input
+                            id={`aporte-${lote.id}-${id}`}
+                            type="number"
+                            min={0}
+                            max={999999}
+                            value={aportes[lote.id]?.[id] ?? ''}
+                            onChange={manejarAporte(lote.id, id)}
+                            placeholder="0"
+                            className={claseCampo}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             )

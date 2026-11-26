@@ -1,37 +1,32 @@
+export type { AuthResponse, LoginRequest, RegistroRequest, UsuarioRead } from './auth'
 export type {
-  AuthResponse,
-  LoginRequest,
-  RegistroRequest,
-  UsuarioRead,
-} from './auth'
-export type {
-  BandaEmergencias,
-  BandaEmergenciasParams,
-  EstadoEmergencia,
-  EmergenciaCreateRequest,
-  EmergenciaCreada,
-  EmergenciaRead,
-  LoteNecesidad,
-  LoteNecesidadCreateRequest,
-  LoteNecesidadUpdateRequest,
-  NivelGravedad,
+  AccionEvaluacionProyecto, EvaluacionProyectoRead, EvaluacionProyectoRequest,
+  EvaluacionProyectoAceptada, BandaEmergencias, BandaEmergenciasParams, DashboardEmergencias,
+  DemandaVsOfertaPorRecurso, EstadoEmergencia, EtapaBonitaBandeja, EmergenciaPorEstadoYGravedad,
+  EmergenciaCreateRequest, EmergenciaCreada, EmergenciaRead, EmergenciaRespuesta,
+  EvolucionAbiertasResueltas, RankingOng, ParticipacionConsorcios,
+  RecursoAdjudicadoPorMes, LoteNecesidad, LoteNecesidadCreateRequest,
+  LoteNecesidadUpdateRequest, NivelGravedad, SincronizacionCierresRespuesta,
 } from './emergencia'
-export type { RecursoInventario, RecursoInventarioRequest } from './inventario'
+export type {
+  RecursoInventario,
+  RecursoInventarioRequest,
+  RecursoInventarioUpdateRequest,
+} from './inventario'
 export type { LoteRead } from './lote'
 export type {
-  AdjudicacionRespuesta,
-  OfertaConsolidada,
-  OfertaCreateRequest,
-  OfertaItemConsolidado,
-  OfertaItemRead,
-  OfertaItemRequest,
-  OfertaRead,
-  OfertaUpdateRequest,
-  OfertasConsolidadas,
+  AdjudicacionRespuesta, AporteOferta, FinalizarOfertaRespuesta, OfertaConsolidada, OfertaCreateRequest,
+  OfertaItemConsolidado, OfertaItemRead, OfertaItemRequest, OfertaRead,
+  OfertaUpdateRequest, OfertasConsolidadas, SeleccionOfertasRespuesta,
 } from './oferta'
-export type {
-  OrganizacionCreateRequest,
-  OrganizacionRead,
-  OrganizacionResumen,
-} from './organizacion'
+export type { OrganizacionCreateRequest, OrganizacionRead, OrganizacionResumen } from './organizacion'
 export type { Rol } from './rol'
+export type { RecursoCloud, RecursoCloudCreateRequest } from './recursosCloud'
+export type {
+  AlcanceIndicador, BonitaTablero, CantidadPorUnidad, EstadoCasoBonita, FilaEstadoGravedad,
+  FilaEvolucion, FilaRankingOng, FiltrosReportes, FormatoReporte, FuenteIndicador, Indicador,
+  IndicadorConsorcios, IndicadorConteo, IndicadorEstadoGravedad, IndicadorEvolucion,
+  IndicadorPromedioHoras, IndicadorPromedioValor, IndicadorResolucion, ProyectoTablero,
+  ProyectosTablero, RecursoPorLote, RecursosTablero, ResumenTablero, Tablero, TiempoEtapaBonita,
+  TotalRecursoMes, VerificacionCasoBonita,
+} from './reportes'

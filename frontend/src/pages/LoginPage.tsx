@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { ApiError, iniciarSesion } from '../services'
+import { ApiError, iniciarSesion, restaurarSesion } from '../services'
 import type { AuthResponse, LoginRequest } from '../types'
 
 const claseCampo =
@@ -46,10 +46,16 @@ export function LoginPage({
 
   useEffect(() => {
     vigente.current = true
+
+    void restaurarSesion().then((sesionRestaurada) => {
+      if (!vigente.current || sesionRestaurada === null) return
+      onSesionIniciada(sesionRestaurada)
+    })
+
     return () => {
       vigente.current = false
     }
-  }, [])
+  }, [onSesionIniciada])
 
   async function manejarEnvio(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault()

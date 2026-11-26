@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from sqlalchemy import ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
 
@@ -25,3 +25,8 @@ class RecursoInventario(Base):
     cantidad_total: Mapped[int] = mapped_column(Integer, nullable=False)
     unidad: Mapped[Optional[str]] = mapped_column(String(50))
     descripcion: Mapped[Optional[str]] = mapped_column(Text)
+    # Equivalencia con el catálogo nacional en tabla aparte: sin migraciones,
+    # create_all no agrega columnas a una tabla existente.
+    referencia_cloud: Mapped[Optional["RecursoInventarioCloud"]] = relationship(
+        cascade="all, delete-orphan", single_parent=True, lazy="selectin"
+    )

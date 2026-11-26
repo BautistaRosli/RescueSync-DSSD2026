@@ -11,17 +11,33 @@ async function compilarServicio(nombre) {
 }
 
 const moduloHttp = `data:text/javascript;base64,${Buffer.from(await compilarServicio('http')).toString('base64')}`
-const codigoAuth = (await compilarServicio('auth')).replace("'./http'", JSON.stringify(moduloHttp))
-const { iniciarSesion, registrar, cerrarSesion } = await import(
+const codigoRol = (await compilarServicio('rol')).replace("'./http'", JSON.stringify(moduloHttp))
+const moduloRol = `data:text/javascript;base64,${Buffer.from(codigoRol).toString('base64')}`
+const codigoAuth = (await compilarServicio('auth'))
+  .replace("'./http'", JSON.stringify(moduloHttp))
+  .replace("'./rol'", JSON.stringify(moduloRol))
+const { iniciarSesion, registrar, cerrarSesion, restaurarSesion } = await import(
   `data:text/javascript;base64,${Buffer.from(codigoAuth).toString('base64')}`
 )
 const { apiGet, ApiError } = await import(moduloHttp)
 
 test('Login autentica las consultas; crear usuario conserva el token y logout lo elimina', async () => {
   const fetchOriginal = globalThis.fetch
+  const almacenamientoOriginal = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  const almacenamiento = new Map()
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (clave) => almacenamiento.get(clave) ?? null,
+      setItem: (clave, valor) => almacenamiento.set(clave, valor),
+      removeItem: (clave) => almacenamiento.delete(clave),
+    },
+  })
   const peticiones = []
   globalThis.fetch = async (url, opciones) => {
     peticiones.push({ url, opciones })
+    if (url.endsWith('/auth/me')) return new Response(JSON.stringify({ id: 1, rol_id: 2 }))
+    if (url.endsWith('/roles')) return new Response(JSON.stringify([{ id: 2, nombre: 'centro_coordinador' }]))
     return new Response(JSON.stringify({
       access_token: url.endsWith('/auth/login') ? 'token-coordinador' : 'token-nuevo-usuario',
     }), { status: 200 })
@@ -30,6 +46,9 @@ test('Login autentica las consultas; crear usuario conserva el token y logout lo
     await iniciarSesion({ email: 'coordinador@ejemplo.com', password: 'secreto' })
     assert.equal(peticiones.at(-1).opciones.headers.Authorization, undefined)
     await apiGet('/emergencias')
+    assert.equal(peticiones.at(-1).opciones.headers.Authorization, 'Bearer token-coordinador')
+    assert.equal((await restaurarSesion()).rol, 'centro_coordinador')
+    assert.ok(peticiones.at(-1).url.endsWith('/roles'))
     assert.equal(peticiones.at(-1).opciones.headers.Authorization, 'Bearer token-coordinador')
     await registrar({ nombre: 'Ana', apellido: 'Gomez', rol_id: 3, organizacion_id: 2 })
     assert.equal(peticiones.at(-1).opciones.headers.Authorization, 'Bearer token-coordinador')
@@ -47,5 +66,7 @@ test('Login autentica las consultas; crear usuario conserva el token y logout lo
   } finally {
     cerrarSesion()
     globalThis.fetch = fetchOriginal
+    if (almacenamientoOriginal) Object.defineProperty(globalThis, 'localStorage', almacenamientoOriginal)
+    else delete globalThis.localStorage
   }
 })

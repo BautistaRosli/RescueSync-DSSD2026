@@ -23,7 +23,7 @@ __all__ = [
     "OrganizacionService",
     "ROLES_INICIALES",
     "RolService",
-    "generar_token",
     "hashear_password",
+    "generar_token",
     "verificar_password",
 ]

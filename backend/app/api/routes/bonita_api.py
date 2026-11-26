@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from ..dependencias import requiere_roles, solo_development
-from ...services.permisos_service import COORDINADOR
+from ...services.permisos_service import AUDITOR, COORDINADOR
 
 from ...integrations.bonita.schemas import BonitaTestVariablesRequest
 from ...integrations.bonita.service import (
@@ -10,7 +10,7 @@ from ...integrations.bonita.service import (
 )
 
 router = APIRouter(prefix="/bonita", tags=["Bonita"], dependencies=[
-    Depends(requiere_roles(COORDINADOR)), Depends(solo_development)
+    Depends(requiere_roles(COORDINADOR, AUDITOR)), Depends(solo_development)
 ])
 
 

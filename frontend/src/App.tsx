@@ -1,19 +1,22 @@
 import { useState } from 'react'
 import { Navbar } from './components'
 import {
+  AdjudicacionMunicipioPage,
   CentroCoordinadorPage,
+  DashboardEmergenciasPage,
   EmergenciasPage,
   LoginPage,
   PanelOngPage,
-  RegistroPage,
+  RegistroUsuarioPage,
+  RegistroOngPage,
   RegistrarEmergenciaPage,
 } from './pages'
 import type { AuthResponse } from './types'
 import { cerrarSesion } from './services'
 
-type Vista = 'bandeja' | 'registro'
+type Vista = 'bandeja' | 'registro' | 'registro-ong'
 
-type VistaOperador = 'registrar' | 'emergencias'
+type VistaOperador = 'registrar' | 'emergencias' | 'adjudicar'
 
 type VistaAcceso = 'login' | 'registro'
 
@@ -21,10 +24,12 @@ const ROL_OPERADOR_MUNICIPAL = 'OPERADOR_MUNICIPAL'
 
 const ROL_REPRESENTANTE_ONG = 'REPRESENTANTE_ONG'
 const ROL_CENTRO_COORDINADOR = 'CENTRO_COORDINADOR'
+const ROLES_DASHBOARD = ['DIRECTOR_AUDITOR']
 
 const PESTANIAS_OPERADOR: { valor: VistaOperador; etiqueta: string }[] = [
   { valor: 'registrar', etiqueta: 'Registrar emergencia' },
   { valor: 'emergencias', etiqueta: 'Emergencias' },
+  { valor: 'adjudicar', etiqueta: 'Adjudicar ofertas' },
 ]
 
 function clasePestania(activa: boolean): string {
@@ -35,6 +40,7 @@ function clasePestania(activa: boolean): string {
 
 function App() {
   const [vista, setVista] = useState<Vista>('bandeja')
+  const [origenRegistroOng, setOrigenRegistroOng] = useState<'bandeja' | 'registro'>('bandeja')
   const [vistaOperador, setVistaOperador] = useState<VistaOperador>('registrar')
   const [sesion, setSesion] = useState<AuthResponse | null>(null)
   const [vistaAcceso, setVistaAcceso] = useState<VistaAcceso>('login')
@@ -51,7 +57,7 @@ function App() {
       <main className="mx-auto max-w-3xl px-4 py-8">
         {sesion === null ? (
           vistaAcceso === 'registro' ? (
-            <RegistroPage onVolver={() => setVistaAcceso('login')} />
+            <RegistroUsuarioPage onVolver={() => setVistaAcceso('login')} />
           ) : (
             <LoginPage
               onSesionIniciada={setSesion}
@@ -65,8 +71,8 @@ function App() {
                 Operador municipal
               </h2>
               <p className="text-sm text-slate-400">
-                Registrá una emergencia del desastre o consultá las que están sin
-                publicar.
+                Registrá una emergencia del desastre, consultá las que están sin
+                publicar o adjudicá las ofertas validadas.
               </p>
             </div>
 
@@ -89,6 +95,8 @@ function App() {
 
             {vistaOperador === 'registrar' ? (
               <RegistrarEmergenciaPage />
+            ) : vistaOperador === 'adjudicar' ? (
+              <AdjudicacionMunicipioPage />
             ) : (
               <EmergenciasPage />
             )}
@@ -96,15 +104,33 @@ function App() {
         ) : sesion.rol === ROL_REPRESENTANTE_ONG ? (
           <PanelOngPage sesion={sesion} />
         ) : sesion.rol === ROL_CENTRO_COORDINADOR ? (
-          vista === 'registro' ? (
-            <RegistroPage onVolver={() => setVista('bandeja')} />
+          <CentroCoordinadorPage />
+        ) : ROLES_DASHBOARD.includes(sesion.rol) ? (
+          vista === 'registro-ong' ? (
+            <RegistroOngPage onVolver={() => setVista(origenRegistroOng)} />
+          ) : vista === 'registro' ? (
+            <RegistroUsuarioPage
+              onVolver={() => setVista('bandeja')}
+              onCrearOng={() => {
+                setOrigenRegistroOng('registro')
+                setVista('registro-ong')
+              }}
+            />
           ) : (
             <section className="flex flex-col gap-4">
-              {/* <button type="button" onClick={() => setVista('registro')}
-                className={clasePestania(false)}>
-                Crear usuario
-              </button> */}
-              <CentroCoordinadorPage />
+              <div className="flex gap-2 w-full">
+                <button type="button" onClick={() => setVista('registro')}
+                  className={`flex-1 ${clasePestania(false)}`}>
+                  Crear usuario
+                </button>
+                <button type="button" onClick={() => {
+                  setOrigenRegistroOng('bandeja')
+                  setVista('registro-ong')
+                }} className={`flex-1 ${clasePestania(false)}`}>
+                  Crear ONG
+                </button>
+              </div>
+              <DashboardEmergenciasPage />
             </section>
           )
         ) : (

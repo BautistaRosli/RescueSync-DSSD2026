@@ -1,16 +1,26 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from ..schemas.ofertas_schema import OfertaItemBase
+class AporteOrganizacionRespuesta(BaseModel):
+    """Cantidad del ítem aportada por cada organización participante."""
 
-
-class OfertaItemRespuesta(OfertaItemBase):
     model_config = ConfigDict(from_attributes=True)
 
+    organizacion_id: int
+    cantidad: int = Field(gt=0)
+
+
+class OfertaItemRespuesta(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    lote_necesidad_id: int
+    cantidad_ofrecida: int = Field(gt=0)
+    descripcion: Optional[str] = None
     id: int
     finalizado_en: Optional[datetime] = None
+    aportes: List[AporteOrganizacionRespuesta] = []
 
 
 class OrganizacionResumen(BaseModel):
@@ -36,6 +46,10 @@ class OfertaRespuesta(BaseModel):
     items: List[OfertaItemRespuesta] = []
 
 
+class OfertaItemListadoRespuesta(OfertaItemRespuesta):
+    cantidad_verificada: Optional[int] = None
+
+
 class OfertaListadoRespuesta(BaseModel):
     id: int
     emergencia_id: int
@@ -46,7 +60,9 @@ class OfertaListadoRespuesta(BaseModel):
     es_conjunta: bool = False
     adjudicada_en: Optional[datetime] = None
     organizaciones: List[OrganizacionResumen] = []
-    items: List[OfertaItemRespuesta] = []
+    items: List[OfertaItemListadoRespuesta] = []
+    puede_seleccionar: bool = False
+    estado_seleccion: Literal["sin_seleccionar", "seleccionada_para_confirmar", "adjudicada"] = "sin_seleccionar"
 
 
 class OfertaItemConsolidado(BaseModel):
@@ -71,3 +87,26 @@ class AdjudicacionRespuesta(BaseModel):
 
     oferta_id: int
     mensaje: str
+
+
+class FinalizacionOfertaRespuesta(BaseModel):
+    oferta_id: int
+    estado: Literal["finalizada"]
+    ya_finalizada: bool = False
+    tarea_bonita: Literal["Supervisar proyecto"] = "Supervisar proyecto"
+    mensaje: str
+
+
+class EstadoFinalizacionOfertaRespuesta(BaseModel):
+    oferta_id: int
+    items_finalizados: bool
+    tarea_ong_completada: bool
+    supervisar_proyecto_pendiente: bool
+    habilitada: bool
+    mensaje: str
+
+
+class SeleccionOfertasRespuesta(BaseModel):
+    emergencia_id: int
+    cantidad_pares: int
+    ya_confirmada: bool = False

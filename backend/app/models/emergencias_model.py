@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
@@ -19,8 +19,53 @@ class NivelGravedad:
 class EstadoEmergencia:
     ESPERA_LOTES = "esperando_lotes"
     ESPERA_OFERTAS = "esperando_ofertas"
+    ESPERANDO_ADJUDICACION = "esperando_adjudicacion"
     EN_PROCESO = "en_proceso"
     RESUELTA = "resuelta"
+
+
+class ConfirmacionSeleccion(Base):
+    """Selección congelada antes de intentar completar la tarea de Bonita.
+
+    Se elimina junto con el avance local confirmado. Su tabla independiente
+    permite incorporarla con create_all sin alterar emergencias existentes.
+    """
+
+    __tablename__ = "confirmaciones_seleccion"
+
+    emergencia_id: Mapped[int] = mapped_column(
+        ForeignKey("emergencias.id", ondelete="CASCADE"), primary_key=True
+    )
+    caso_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    seleccion_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class CursoAccionEmergencia(Base):
+    """Última decisión y tarea de republicación, sin alterar el contrato inicial."""
+
+    __tablename__ = "cursos_accion_emergencia"
+
+    emergencia_id: Mapped[int] = mapped_column(
+        ForeignKey("emergencias.id", ondelete="CASCADE"), primary_key=True
+    )
+    caso_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    accion: Mapped[str] = mapped_column(String(30), nullable=False)
+    tarea_publicacion_id: Mapped[Optional[str]] = mapped_column(String(50))
+    publicacion_completada: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class CierreEmergencia(Base):
+    """Momento en que la emergencia se marcó resuelta; se escribe una sola vez.
+
+    Tabla independiente para incorporarla con create_all sin alterar emergencias.
+    """
+
+    __tablename__ = "cierres_emergencia"
+
+    emergencia_id: Mapped[int] = mapped_column(
+        ForeignKey("emergencias.id", ondelete="CASCADE"), primary_key=True
+    )
+    resuelta_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class Emergencia(Base):
@@ -48,6 +93,8 @@ class Emergencia(Base):
     estado: Mapped[Optional[str]] = mapped_column(
         String(50), default=EstadoEmergencia.ESPERA_LOTES, nullable=False
     )
+    # Prioridad calculada por el servicio de prioridad (valor de 1 a 10).
+    prioridad: Mapped[Optional[int]] = mapped_column(Integer)
 
     lotes: Mapped[List["LoteNecesidad"]] = relationship(
         back_populates="emergencia", cascade="all, delete-orphan"

@@ -1,9 +1,18 @@
 const API_BASE = 'http://localhost:8000/api/v1'
 
-let tokenSesion: string | null = null
+const CLAVE_TOKEN_SESION = 'rescuesync:token_sesion' as const
+
+export function leerTokenSesion(): string | null {
+  const guardado = localStorage.getItem(CLAVE_TOKEN_SESION)
+  return guardado !== null && guardado !== '' ? guardado : null
+}
 
 export function establecerTokenSesion(token: string | null): void {
-  tokenSesion = token
+  if (token === null) {
+    localStorage.removeItem(CLAVE_TOKEN_SESION)
+    return
+  }
+  localStorage.setItem(CLAVE_TOKEN_SESION, token)
 }
 
 export class ApiError extends Error {
@@ -62,13 +71,15 @@ async function apiPeticion<T>(
 ): Promise<T> {
   let respuesta: Response
 
+  const tokenActual = leerTokenSesion()
+
   try {
     respuesta = await fetch(`${API_BASE}${ruta}`, {
       method: metodo,
       headers: {
         'Content-Type': 'application/json',
-        ...(tokenSesion && ruta !== '/auth/login'
-          ? { Authorization: `Bearer ${tokenSesion}` }
+        ...(tokenActual && ruta !== '/auth/login'
+          ? { Authorization: `Bearer ${tokenActual}` }
           : {}),
       },
       body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
@@ -99,6 +110,24 @@ export async function apiPost<T>(ruta: string, cuerpo: unknown): Promise<T> {
 
 export async function apiGet<T>(ruta: string): Promise<T> {
   return apiPeticion<T>(ruta, 'GET')
+}
+
+export async function apiDescargar(ruta: string): Promise<Blob> {
+  const tokenActual = leerTokenSesion()
+  let respuesta: Response
+  try {
+    respuesta = await fetch(`${API_BASE}${ruta}`, {
+      method: 'GET',
+      headers: tokenActual ? { Authorization: `Bearer ${tokenActual}` } : {},
+    })
+  } catch {
+    throw new ApiError(0, escribirDetalle(null, 0))
+  }
+  if (!respuesta.ok) {
+    const cuerpo = await respuesta.json().catch(() => null)
+    throw new ApiError(respuesta.status, escribirDetalle(cuerpo, respuesta.status))
+  }
+  return respuesta.blob()
 }
 
 export async function apiPatch<T>(ruta: string, cuerpo: unknown): Promise<T> {

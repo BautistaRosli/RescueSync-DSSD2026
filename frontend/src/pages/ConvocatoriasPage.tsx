@@ -65,6 +65,68 @@ function totalOfrecidoDelLote(
   )
 }
 
+function DetalleOfertaConjunta({
+  oferta,
+  lotes,
+}: {
+  oferta: OfertaRead
+  lotes: LoteRead[]
+}) {
+  const nombreDeLote = (loteId: number) =>
+    lotes.find((lote) => lote.id === loteId)?.tipo ?? `Lote #${loteId}`
+  const unidadDeLote = (loteId: number) =>
+    lotes.find((lote) => lote.id === loteId)?.unidad
+  const nombreDeOrganizacion = (organizacionId: number) =>
+    oferta.organizaciones.find(
+      (organizacion) => organizacion.id === organizacionId,
+    )?.nombre ?? `Organización #${organizacionId}`
+
+  return (
+    <div className={claseSubPanel}>
+      <p className="text-xs font-semibold text-slate-400">
+        Aportes del consorcio
+      </p>
+      <ul className="mt-2 flex flex-col gap-3">
+        {oferta.items.map((item) => {
+          const aportes = item.aportes ?? []
+          const unidad = unidadDeLote(item.lote_necesidad_id)
+
+          return (
+            <li
+              key={item.id}
+              className="border-t border-slate-700 pt-2 first:border-t-0 first:pt-0"
+            >
+              <p className="font-semibold text-white">
+                {nombreDeLote(item.lote_necesidad_id)}: {item.cantidad_ofrecida}{' '}
+                {unidad ?? ''} en total
+              </p>
+              {aportes.length === 0 ? (
+                <p className="mt-1 text-xs text-slate-500">
+                  Todavía no fue declarado el reparto.
+                </p>
+              ) : (
+                <ul className="mt-1 flex flex-col gap-1 text-xs text-slate-300">
+                  {aportes.map((aporte) => (
+                    <li
+                      key={aporte.organizacion_id}
+                      className="flex justify-between gap-2"
+                    >
+                      <span>{nombreDeOrganizacion(aporte.organizacion_id)}</span>
+                      <span className="font-mono text-cyan-400">
+                        {aporte.cantidad} {unidad ?? ''}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
 function LotesDeConvocatoria({
   emergenciaId,
   detalle,
@@ -199,7 +261,7 @@ export function ConvocatoriasPage({ organizacionId }: Props) {
     try {
       const [lotes, consolidadas] = await Promise.all([
         listarLotes(emergenciaId),
-        obtenerOfertasConsolidadas(emergenciaId),
+        obtenerOfertasConsolidadas(emergenciaId).catch(() => null),
       ])
       setDetalles((actuales) => ({
         ...actuales,
@@ -251,11 +313,22 @@ export function ConvocatoriasPage({ organizacionId }: Props) {
   }
 
   if (seleccionada !== null) {
+    const oferta = ofertaDeEmergencia(seleccionada.id)
+    const esLider = oferta === null || oferta.organizacion_id === organizacionId
+
+    if (!esLider) {
+      return (
+        <p className={claseSubPanel}>
+          Solo la ONG dueña puede editar esta oferta.
+        </p>
+      )
+    }
+
     return (
       <FormularioOfertaPage
         organizacionId={organizacionId}
         emergencia={seleccionada}
-        ofertaExistente={ofertaDeEmergencia(seleccionada.id)}
+        ofertaExistente={oferta}
         onVolver={volverDelFormulario}
       />
     )
@@ -294,6 +367,8 @@ export function ConvocatoriasPage({ organizacionId }: Props) {
           {convocatorias.map((emergencia) => {
             const desplegada = desplegadas.has(emergencia.id)
             const miOferta = ofertaDeEmergencia(emergencia.id)
+            const esLider =
+              miOferta === null || miOferta.organizacion_id === organizacionId
             const restante = tiempoRestante(emergencia)
 
             return (
@@ -362,15 +437,28 @@ export function ConvocatoriasPage({ organizacionId }: Props) {
                       detalle={detalles[emergencia.id]}
                     />
 
-                    <button
-                      type="button"
-                      onClick={() => setSeleccionada(emergencia)}
-                      className={claseBotonPrimario}
-                    >
-                      {miOferta !== null
-                        ? 'Editar mi oferta'
-                        : 'Postular recursos'}
-                    </button>
+                    {miOferta?.es_conjunta && (
+                      <DetalleOfertaConjunta
+                        oferta={miOferta}
+                        lotes={detalles[emergencia.id]?.lotes ?? []}
+                      />
+                    )}
+
+                    {esLider ? (
+                      <button
+                        type="button"
+                        onClick={() => setSeleccionada(emergencia)}
+                        className={claseBotonPrimario}
+                      >
+                        {miOferta !== null
+                          ? 'Editar mi oferta'
+                          : 'Postular recursos'}
+                      </button>
+                    ) : (
+                      <p className={claseSubPanel}>
+                        Solo la ONG dueña puede editar esta oferta.
+                      </p>
+                    )}
                   </div>
                 )}
               </li>

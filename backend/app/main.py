@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,9 +16,13 @@ from .api.routes import (
     ofertas_api,
     organizaciones_api,
     roles_api,
+    recursos_cloud_api,
+    reportes_api,
 )
 from .database import Base, SessionLocal, engine
-from .services.usuarios_service import RolService
+from .services.datos_demo_service import sembrar_datos_demo
+from .services.usuarios_service import AuthService, RolService
+from .services.notificaciones_adjudicacion_service import consumir_avisos
 
 with engine.begin() as conexion:
     if conexion.dialect.name == "postgresql":
@@ -26,6 +31,7 @@ with engine.begin() as conexion:
     Base.metadata.create_all(bind=conexion)
 
 rol_service = RolService()
+auth_service = AuthService()
 
 
 @asynccontextmanager
@@ -33,9 +39,21 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         rol_service.sembrar_roles(db)
+        auth_service.sembrar_usuarios_iniciales(db)
+        sembrar_datos_demo(db)
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
-    yield
+    detener_avisos = asyncio.Event()
+    consumidor = asyncio.create_task(consumir_avisos(detener_avisos, SessionLocal))
+    try:
+        yield
+    finally:
+        detener_avisos.set()
+        # Espera el intento en curso para no liberar el lock antes de SMTP.
+        await consumidor
 
 
 app = FastAPI(title="RescueSync API", lifespan=lifespan)
@@ -57,6 +75,8 @@ app.include_router(lotes_api.router, prefix=API_PREFIX)
 app.include_router(inventario_api.router, prefix=API_PREFIX)
 app.include_router(ofertas_api.router, prefix=API_PREFIX)
 app.include_router(bonita_api.router, prefix=API_PREFIX)
+app.include_router(recursos_cloud_api.router, prefix=API_PREFIX)
+app.include_router(reportes_api.router, prefix=API_PREFIX)
 
 
 @app.get("/")
