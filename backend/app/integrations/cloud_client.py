@@ -119,3 +119,12 @@ def bloquear_recursos(solicitud: dict, token: str) -> httpx.Response:
         f"{url}/recursos/bloquear", json=solicitud,
         headers={"Authorization": f"Bearer {token}"}, timeout=TIEMPO_LIMITE,
     )
+
+
+def liberar_emergencia(emergencia_id: int, token: str) -> httpx.Response:
+    """Libera los compromisos activos de la emergencia en Cloud."""
+    url = os.getenv("CLOUD_API_URL", "http://127.0.0.1:8002").rstrip("/")
+    return httpx.post(
+        f"{url}/emergencias/{emergencia_id}/liberar",
+        headers={"Authorization": f"Bearer {token}"}, timeout=TIEMPO_LIMITE,
+    )

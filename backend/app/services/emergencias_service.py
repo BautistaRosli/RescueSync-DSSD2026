@@ -7,6 +7,7 @@ from typing import Optional
 import httpx
 from fastapi import BackgroundTasks, HTTPException
 from starlette.concurrency import run_in_threadpool
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from ..dto import (
@@ -20,6 +21,7 @@ from ..dto import (
     RankingONG,
     RecursoAdjudicadoPorMes,
 )
+from ..integrations import cloud_client
 from ..integrations.bonita.client import BonitaClientError, bonita_client
 from ..integrations.email.service import notificar_nueva_emergencia
 from ..integrations.prioridad.client import (
@@ -32,6 +34,7 @@ from ..models import (
     LoteNecesidad,
     OfertaAyuda,
     OfertaItem,
+    RegistroRecursos,
 )
 from ..repositories import EmergenciaRepository, UsuarioRepository
 from ..schemas import (
@@ -73,10 +76,67 @@ class EmergenciaService:
             completados = await bonita_client.obtener_casos_completados({caso for _, caso in candidatos})
         except (BonitaClientError, httpx.RequestError):
             raise HTTPException(503, "No se pudo actualizar el estado de las emergencias. Intente nuevamente.") from None
-        resueltas = await run_in_threadpool(
-            self._repository.resolver_candidatos_cierre, db, candidatos, completados,
-        )
+        resueltas = []
+        pendientes = False
+        for emergencia_id, caso_id in candidatos:
+            if caso_id not in completados:
+                continue
+            try:
+                resueltas.extend(await run_in_threadpool(
+                    self._cerrar_candidato, db, emergencia_id, caso_id,
+                ))
+            except HTTPException as exc:
+                if exc.status_code != 503:
+                    raise
+                pendientes = True
+        if pendientes:
+            raise HTTPException(503, "No se pudo liberar el stock de todas las emergencias. Intente nuevamente.")
         return SincronizacionCierresRespuesta(emergencias_resueltas=resueltas)
+
+    def _cerrar_candidato(self, db: Session, emergencia_id: int, caso_id: str) -> list[int]:
+        try:
+            # Comparte el bloqueo con el registro de recursos y recarga tras esperarlo.
+            emergencia = self._repository.obtener_por_id(db, emergencia_id, bloquear=True)
+            if (emergencia is None or not emergencia.publicada
+                    or emergencia.estado != EstadoEmergencia.EN_PROCESO
+                    or emergencia.bonita_case_id != caso_id):
+                return []
+            registro = db.get(RegistroRecursos, emergencia_id, populate_existing=True)
+            if registro is not None and registro.estado != "RECHAZADO":
+                if registro.estado != "CONFIRMADO" or registro.caso_id != caso_id:
+                    raise ValueError("La reserva requiere conciliación")
+                token = cloud_client.obtener_token_aplicacion()
+                respuesta = cloud_client.liberar_emergencia(registro.emergencia_id, token)
+                if respuesta.status_code != 200:
+                    raise ValueError("Cloud no confirmó la liberación")
+                self._validar_liberacion(emergencia_id, respuesta.json())
+            # Cada cierre se confirma por separado, todavía bajo el mismo bloqueo.
+            return self._repository.resolver_candidatos_cierre(
+                db, [(emergencia_id, caso_id)], {caso_id},
+            )
+        except (cloud_client.AutenticacionAplicacionError, httpx.RequestError,
+                httpx.InvalidURL, ValueError, TypeError, KeyError, SQLAlchemyError):
+            raise HTTPException(503, "No se pudo confirmar la liberación de stock. Intente nuevamente.") from None
+        finally:
+            db.rollback()
+
+    @staticmethod
+    def _validar_liberacion(emergencia_id: int, recibo: dict) -> None:
+        if (not isinstance(recibo, dict) or type(recibo.get("emergencia_id")) is not int
+                or recibo["emergencia_id"] != emergencia_id
+                or type(recibo.get("total_liberado")) is not int or recibo["total_liberado"] < 0
+                or not isinstance(recibo.get("compromisos_liberados"), list)):
+            raise ValueError()
+        total = 0
+        for fila in recibo["compromisos_liberados"]:
+            if (not isinstance(fila, dict)
+                    or any(type(fila.get(campo)) is not int or fila[campo] <= 0
+                           for campo in ("ong_id", "item_id", "cantidad"))
+                    or fila.get("estado_anterior") not in ("BLOQUEADO", "COMPROMETIDO")):
+                raise ValueError()
+            total += fila["cantidad"]
+        if total != recibo["total_liberado"]:
+            raise ValueError()
 
     def listar_emergencias_paginadas(
         self,
