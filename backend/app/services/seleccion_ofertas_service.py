@@ -15,6 +15,12 @@ from ..models import AvisoAdjudicacion, EstadoEmergencia
 from ..repositories import EmergenciaRepository, OfertaRepository
 
 
+MENSAJE_EN_EVALUACION = (
+    "La emergencia está en evaluación del Centro Coordinador: "
+    "la cobertura no alcanzó y todavía no se puede adjudicar"
+)
+
+
 def conflicto(detalle: str) -> None:
     raise HTTPException(status_code=409, detail=detalle)
 
@@ -109,6 +115,27 @@ class SeleccionOfertasService:
             conflicto("La tarea Seleccionar oferta aún no está lista")
         return tarea
 
+    @staticmethod
+    async def _en_evaluacion(caso_id) -> bool:
+        """El camino alternativo (cobertura insuficiente) espera Evaluar proyecto."""
+        tarea = await bonita_client.obtener_tarea_pendiente(caso_id, "Evaluar proyecto")
+        return (isinstance(tarea, dict) and str(tarea.get("caseId")) == str(caso_id)
+                and tarea.get("name") == "Evaluar proyecto" and tarea.get("state", "ready") == "ready")
+
+    async def _verificar_etapa(self, caso_id) -> None:
+        """Adjudicar exige Seleccionar oferta lista y Evaluar proyecto no lista."""
+        if await self._en_evaluacion(caso_id) or await self._tarea_seleccion(caso_id) is None:
+            conflicto(MENSAJE_EN_EVALUACION)
+
+    async def verificar_etapa_adjudicacion(self, emergencia) -> None:
+        """Rechaza adjudicar mientras Bonita no habilitó la selección de ofertas."""
+        try:
+            await self._verificar_etapa(self._caso_id(emergencia))
+        except (BonitaClientError, httpx.RequestError):
+            raise HTTPException(status_code=503, detail="No se pudo consultar la fase de selección en Bonita")
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=503, detail="Bonita devolvió una respuesta inválida al consultar la fase de selección")
+
     async def preparar(self, db: Session, oferta_id: int, servicio=None):
         from .ofertas_service import OfertaService
 
@@ -119,11 +146,10 @@ class SeleccionOfertasService:
             if not oferta.items:
                 conflicto("La oferta seleccionada no tiene ítems")
             caso_id = self._caso_id(emergencia)
+            await self._verificar_etapa(caso_id)
             cantidades = await self._evaluacion(caso_id, emergencia.id, db)
             if not self.validada(oferta, cantidades):
                 conflicto("La oferta no fue validada por el Sistema Nacional")
-            if await self._tarea_seleccion(caso_id) is None:
-                conflicto("El caso no tiene pendiente la tarea Seleccionar oferta; aún no se puede seleccionar")
             if anterior is not None:
                 return anterior
             return await run_in_threadpool(servicio._marcar_oferta, db, emergencia, oferta, None, True)
@@ -166,10 +192,31 @@ class SeleccionOfertasService:
                 and emergencia.estado == EstadoEmergencia.ESPERANDO_ADJUDICACION
                 and oferta.items and all((item.cantidad_verificada or 0) > 0 for item in oferta.items)
             )
+        if solo_validadas and not await self._visible_para_municipio(emergencia):
+            return []
         if solo_validadas:
             # El municipio solo ve lo validado; sin evaluación nacional no hay ninguna.
             return [oferta for oferta in ofertas if self.validada(oferta, cantidades)]
         return ofertas
+
+    async def _visible_para_municipio(self, emergencia) -> bool:
+        """Oculta las ofertas mientras el caso espera la decisión del coordinador.
+
+        En espera de adjudicación se exige la misma etapa que para adjudicar;
+        en etapas posteriores sólo se ocultan si Evaluar proyecto sigue lista.
+        """
+        esperando = emergencia.estado == EstadoEmergencia.ESPERANDO_ADJUDICACION
+        try:
+            caso_id = self._caso_id(emergencia)
+            if esperando:
+                await self._verificar_etapa(caso_id)
+                return True
+            return not await self._en_evaluacion(caso_id)
+        except HTTPException:
+            return False
+        except (BonitaClientError, httpx.RequestError, KeyError, TypeError, ValueError):
+            # Sin Bonita no se habilita una adjudicación nueva.
+            return not esperando
 
     async def _guardar_confirmacion(self, db, emergencia, respuesta, ya_confirmada=False,
                                     ofertas=()):

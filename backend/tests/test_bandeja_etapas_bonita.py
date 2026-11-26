@@ -138,3 +138,23 @@ def test_postgresql_filtra_etapa_antes_del_conteo_y_offset(sesiones_pg, monkeypa
         resultado = asyncio.run(EmergenciaService().listar_bandeja_por_etapa(db, "esperando_evaluacion", 2, 1))
         assert resultado.total == 2 and resultado.paginas == 2
         assert [item.id for item in resultado.items] == [1]
+
+
+def test_operador_consulta_bandeja_esperando_adjudicacion(bandejas):
+    cliente, sesiones = bandejas
+    anterior = estado(sesiones)
+    respuesta = cliente.get(RUTA, params={"publicada": True, "estado": "esperando_adjudicacion",
+                                          "etapa_bonita": "esperando_adjudicacion"}, headers=cabecera(OPERADOR))
+    assert respuesta.status_code == 200, respuesta.text
+    # El caso 44 está en Evaluar proyecto y el 47 en ambas: sólo queda el 45.
+    assert [item["id"] for item in respuesta.json()["items"]] == [5]
+    assert estado(sesiones) == anterior
+
+
+@pytest.mark.parametrize("etapa", ["esperando_evaluacion", "esperando_ofertas"])
+def test_operador_no_consulta_otras_etapas(bandejas, etapa):
+    cliente, _ = bandejas
+    respuesta = cliente.get(RUTA, params={"publicada": True, "etapa_bonita": etapa}, headers=cabecera(OPERADOR))
+    assert respuesta.status_code == 403
+    bonita_client.obtener_casos_con_tarea_lista.assert_not_awaited()
+    bonita_client.obtener_casos_con_ofertas_abiertas.assert_not_awaited()
