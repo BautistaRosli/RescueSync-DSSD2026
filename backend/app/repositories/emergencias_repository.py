@@ -1,9 +1,10 @@
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from ..models import ConfirmacionSeleccion, Emergencia, EstadoEmergencia
+from ..models import CierreEmergencia, ConfirmacionSeleccion, Emergencia, EstadoEmergencia
 
 
 class EmergenciaRepository:
@@ -135,6 +136,9 @@ class EmergenciaRepository:
 
     def resolver_emergencia(self, db: Session, emergencia: Emergencia) -> Emergencia:
         emergencia.estado = EstadoEmergencia.RESUELTA
+        # La primera resolución fija la fecha de cierre; las siguientes no la pisan.
+        if db.get(CierreEmergencia, emergencia.id) is None:
+            db.add(CierreEmergencia(emergencia_id=emergencia.id, resuelta_en=datetime.now(timezone.utc)))
         db.commit()
         db.refresh(emergencia)
         return emergencia

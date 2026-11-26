@@ -153,31 +153,122 @@ class BonitaClient:
         except httpx.RequestError as exc:
             raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
 
+        tiempos_por_etapa, casos_alternativos = self._tiempos_por_etapa(
+            nodos_archivados, [*casos_abiertos, *casos_cerrados]
+        )
+        return {
+            "tiempos_por_etapa": tiempos_por_etapa,
+            "casos": {
+                "abiertos": len(casos_abiertos),
+                "cerrados": len(casos_cerrados),
+            },
+            "convocatorias_camino_alternativo": len(casos_alternativos),
+        }
+
+    async def obtener_metricas_casos(self, casos: set[str]) -> dict[str, Any]:
+        """Métricas del tablero limitadas a un conjunto de casos originales.
+
+        Por cada caso consulta /case/{id} (activo), /archivedCase por
+        sourceObjectId (completed o cancelado, con su end_date) y
+        /archivedFlowNode por caseId para los tiempos por etapa.
+        Las fechas se devuelven naive, en la hora del servidor Bonita (UTC).
+        """
+        if not casos:
+            return {"casos": {}, "tiempos_por_etapa": self._tiempos_por_etapa([], [])[0],
+                    "casos_camino_alternativo": 0}
+        limite = asyncio.Semaphore(5)
+        try:
+            async with await self._client() as client:
+                await self.login(client)
+
+                async def consultar(caso_id: str):
+                    async with limite:
+                        try:
+                            respuesta = await client.get(f"/API/bpm/case/{caso_id}")
+                        except httpx.RequestError as exc:
+                            raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
+                        if respuesta.status_code == 200:
+                            activo = respuesta.json()
+                        elif respuesta.status_code == 404:
+                            activo = None
+                        else:
+                            raise BonitaClientError(
+                                f"Error consultando el caso {caso_id} (HTTP {respuesta.status_code})"
+                            )
+                        archivados = await self._listar_recurso_paginado(
+                            client, "archivedCase", {"f": [f"sourceObjectId={caso_id}"]},
+                        )
+                        nodos = await self._listar_recurso_paginado(
+                            client, "archivedFlowNode", {"f": [f"caseId={caso_id}"]},
+                        )
+                    return caso_id, activo, archivados, nodos
+
+                resultados = await asyncio.gather(*(consultar(caso) for caso in sorted(casos)))
+        except httpx.RequestError as exc:
+            raise BonitaClientError(f"No se pudo conectar a Bonita: {exc}")
+
+        estados: dict[str, dict[str, Any]] = {}
+        registros_casos: list[dict[str, Any]] = []
+        todos_los_nodos: list[dict[str, Any]] = []
+        for caso_id, activo, archivados, nodos in resultados:
+            propios = [a for a in archivados if str(a.get("sourceObjectId")) == caso_id]
+            completado = next((a for a in propios if a.get("state") == "completed"), None)
+            if completado is not None:
+                registro, estado = completado, "completed"
+            elif propios:
+                registro, estado = propios[0], "cancelado"
+            elif isinstance(activo, dict):
+                registro, estado = activo, "activo"
+            else:
+                registro, estado = None, "no_encontrado"
+            estados[caso_id] = {
+                "estado": estado,
+                "inicio": self._parsear_fecha(registro.get("start")) if registro else None,
+                "fin": (self._parsear_fecha(registro.get("end_date"))
+                        if registro and estado in ("completed", "cancelado") else None),
+            }
+            if registro is not None:
+                registros_casos.append({"id": caso_id, "start": registro.get("start")})
+            todos_los_nodos.extend(nodos)
+        tiempos_por_etapa, casos_alternativos = self._tiempos_por_etapa(
+            todos_los_nodos, registros_casos
+        )
+        return {
+            "casos": estados,
+            "tiempos_por_etapa": tiempos_por_etapa,
+            "casos_camino_alternativo": len(casos_alternativos & set(casos)),
+        }
+
+    @classmethod
+    def _tiempos_por_etapa(
+        cls, nodos_archivados: list[dict[str, Any]], casos: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], set[str]]:
+        """Promedio por etapa del dashboard y casos que pasaron por el camino alternativo."""
         inicio_por_caso: dict[str, datetime] = {}
-        for caso in [*casos_abiertos, *casos_cerrados]:
-            inicio = self._parsear_fecha(caso.get("start"))
+        for caso in casos:
+            inicio = cls._parsear_fecha(caso.get("start"))
             if inicio is None:
                 continue
             for clave in ("sourceObjectId", "id"):
                 if caso.get(clave) not in (None, ""):
                     inicio_por_caso.setdefault(str(caso[clave]), inicio)
 
-        duraciones = self._duraciones_por_nodo(nodos_archivados, inicio_por_caso)
+        duraciones = cls._duraciones_por_nodo(nodos_archivados, inicio_por_caso)
         nombre_a_etapa = {
-            nodo: etapa for etapa, nodo in self.ETAPAS_REPORTE.items() if nodo
+            nodo: etapa for etapa, nodo in cls.ETAPAS_REPORTE.items() if nodo
         }
-        etapas: dict[str, list[float]] = {etapa: [] for etapa in self.ETAPAS_REPORTE}
+        etapas: dict[str, list[float]] = {etapa: [] for etapa in cls.ETAPAS_REPORTE}
         casos_alternativos: set[str] = set()
         publicaciones_por_caso: dict[str, list[datetime]] = {}
         obtenciones_por_caso: dict[str, list[datetime]] = {}
         for caso, nombre, horas, fin, inicio_mas_temprano in duraciones:
-            if nombre == self.NODO_CAMINO_ALTERNATIVO:
+            if nombre == cls.NODO_CAMINO_ALTERNATIVO:
                 casos_alternativos.add(caso)
             if nombre in nombre_a_etapa and horas is not None:
                 etapas[nombre_a_etapa[nombre]].append(horas)
-            if nombre == self.NODO_FIN_PUBLICACION:
+            if nombre == cls.NODO_FIN_PUBLICACION:
                 publicaciones_por_caso.setdefault(caso, []).append(fin)
-            elif nombre == self.NODO_INICIO_OFERTAS:
+            elif nombre == cls.NODO_INICIO_OFERTAS:
                 obtenciones_por_caso.setdefault(caso, []).append(inicio_mas_temprano)
 
         # Cada "Obtener ofertas locales" se empareja con el último "Publicar
@@ -187,25 +278,18 @@ class BonitaClient:
             for inicio_ofertas in inicios:
                 previas = [fin for fin in publicaciones if fin <= inicio_ofertas]
                 if previas:
-                    etapas[self.ETAPA_VENTANA_OFERTAS].append(
+                    etapas[cls.ETAPA_VENTANA_OFERTAS].append(
                         (inicio_ofertas - max(previas)).total_seconds() / 3600
                     )
 
-        return {
-            "tiempos_por_etapa": [
-                {
-                    "etapa": etapa,
-                    "promedio_horas": sum(horas) / len(horas) if horas else 0.0,
-                    "cantidad": len(horas),
-                }
-                for etapa, horas in etapas.items()
-            ],
-            "casos": {
-                "abiertos": len(casos_abiertos),
-                "cerrados": len(casos_cerrados),
-            },
-            "convocatorias_camino_alternativo": len(casos_alternativos),
-        }
+        return [
+            {
+                "etapa": etapa,
+                "promedio_horas": sum(horas) / len(horas) if horas else 0.0,
+                "cantidad": len(horas),
+            }
+            for etapa, horas in etapas.items()
+        ], casos_alternativos
 
     @classmethod
     def _duraciones_por_nodo(

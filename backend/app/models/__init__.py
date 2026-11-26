@@ -1,4 +1,4 @@
-from .emergencias_model import CursoAccionEmergencia, ConfirmacionSeleccion, Emergencia, EstadoEmergencia, NivelGravedad
+from .emergencias_model import CierreEmergencia, CursoAccionEmergencia, ConfirmacionSeleccion, Emergencia, EstadoEmergencia, NivelGravedad
 from .inventario_model import RecursoInventario
 from .lotes_model import LoteNecesidad
 from .ofertas_model import AvisoAdjudicacion, OfertaAyuda, OfertaItem
@@ -12,6 +12,7 @@ __all__ = [
     "LoteRecursoCloud",
     "OrganizacionCloud",
     "RecursoInventarioCloud",
+    "CierreEmergencia",
     "Emergencia",
     "ConfirmacionSeleccion",
     "CursoAccionEmergencia",
