@@ -665,8 +665,10 @@ test('El municipio consulta las emergencias publicadas por estado y avisa si no 
   for (const estado of ['esperando_adjudicacion', 'en_proceso']) {
     const pagina = await montarPagina({ componente: 'municipio', estado, sinOfertas: true })
     try {
-      assert.deepEqual(pagina.llamadas.bandeja.at(-1), { publicada: true, estado, pagina: 1, por_pagina: 10 })
-      assert.ok(pagina.llamadas.bandeja.every((consulta) => consulta.publicada === true && consulta.etapa_bonita === undefined))
+      const etapa = estado === 'esperando_adjudicacion' ? { etapa_bonita: 'esperando_adjudicacion' } : {}
+      assert.deepEqual(pagina.llamadas.bandeja.at(-1), { publicada: true, estado, ...etapa, pagina: 1, por_pagina: 10 })
+      assert.ok(pagina.llamadas.bandeja.every((consulta) => consulta.publicada === true &&
+        consulta.etapa_bonita === (consulta.estado === 'esperando_adjudicacion' ? 'esperando_adjudicacion' : undefined)))
       assert.deepEqual(pagina.llamadas.sincronizar, [])
       assert.deepEqual(pagina.llamadas.consultarEvaluacion, [])
       assert.equal(pagina.botones(estado === 'en_proceso' ? 'En proceso' : 'Esperando adjudicación')[0].props['aria-current'], 'page')

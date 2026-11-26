@@ -160,6 +160,7 @@ export function AdjudicacionMunicipioPage() {
         const datos = await listarBandejaEmergencias({
           publicada: true,
           estado: pestania,
+          ...(pestania === 'esperando_adjudicacion' ? { etapa_bonita: 'esperando_adjudicacion' as const } : {}),
           pagina,
           por_pagina: POR_PAGINA,
         })
@@ -332,6 +333,11 @@ export function AdjudicacionMunicipioPage() {
       <div className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl">
         <h2 className="text-xl font-bold text-cyan-400 mb-1">{seccion.titulo}</h2>
         <p className="text-sm text-slate-400">{seccion.descripcion}</p>
+        {pestania === 'esperando_adjudicacion' && (
+          <p className="text-sm text-slate-400">
+            Solo aparecen las emergencias que el proceso habilitó para adjudicar. Si la cobertura no alcanzó, primero decide el Centro Coordinador.
+          </p>
+        )}
       </div>
 
       {cargando && bandeja !== null && (

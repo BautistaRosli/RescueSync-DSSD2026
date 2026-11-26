@@ -37,7 +37,7 @@ def seleccion(entorno, monkeypatch):
                   "actorId": "7", "assigned_id": "0"},
         "ejecuciones": [], "asignaciones": [], "archivado": False,
         "caido": False, "respuesta_perdida": False, "concurrente": False,
-        "respuesta_invalida": False}
+        "respuesta_invalida": False, "evaluando": False}
     barrera = Barrier(2, timeout=10)
     bloqueo = Lock()
     lecturas_iniciales = 0
@@ -64,6 +64,9 @@ def seleccion(entorno, monkeypatch):
                     valor = []
                     barrera.wait()
             return httpx.Response(200, json={"value": json.dumps(valor)})
+        if ruta == "/API/bpm/userTask" and request.url.params.get_list("f") == ["caseId=42", "name=Evaluar proyecto"]:
+            return httpx.Response(200, json=[{"id": "98", "caseId": "42", "name": "Evaluar proyecto",
+                                              "state": "ready"}] if motor["evaluando"] else [])
         if ruta == "/API/bpm/userTask":
             assert request.url.params.get_list("f") == ["caseId=42", "name=Seleccionar oferta"]
             return httpx.Response(200, json=[motor["tarea"]] if motor["tarea"] else [])
@@ -1000,3 +1003,69 @@ def test_operador_sin_evaluacion_nacional_recibe_lista_vacia(seleccion):
     assert operador.json() == []
     coordinador = seleccion[0].get("/api/v1/emergencias/2/ofertas", headers=cabecera(COORDINADOR))
     assert sorted(o["id"] for o in coordinador.json()) == [1, 2]
+
+
+MENSAJE_EN_EVALUACION = ("La emergencia está en evaluación del Centro Coordinador: "
+                         "la cobertura no alcanzó y todavía no se puede adjudicar")
+
+
+@pytest.mark.parametrize("para_seleccion", [False, True])
+@pytest.mark.parametrize("cambio", ["evaluando", "sin_seleccion"])
+def test_adjudicar_en_evaluar_proyecto_responde_409_sin_marcar(seleccion, para_seleccion, cambio):
+    preparar_marcas(seleccion)
+    if cambio == "evaluando":
+        seleccion[2]["evaluando"] = True
+    else:
+        # Camino alternativo: Seleccionar oferta nunca se habilitó.
+        seleccion[2]["evaluando"] = True
+        seleccion[2]["tarea"] = None
+    anterior = estado(seleccion[1])
+    respuesta = adjudicar(seleccion, 1, para_seleccion)
+    assert respuesta.status_code == 409, respuesta.text
+    assert respuesta.json()["detail"] == MENSAJE_EN_EVALUACION
+    assert estado(seleccion[1]) == anterior
+    with seleccion[1]() as db:
+        assert db.get(OfertaAyuda, 1).adjudicada_en is None
+        assert db.get(Emergencia, 2).estado == EstadoEmergencia.ESPERANDO_ADJUDICACION
+    seleccion[3][1].assert_not_called()
+
+
+@pytest.mark.parametrize("para_seleccion", [False, True])
+def test_adjudicar_con_seleccionar_oferta_lista(seleccion, para_seleccion):
+    preparar_marcas(seleccion)
+    respuesta = adjudicar(seleccion, 1, para_seleccion)
+    assert respuesta.status_code == 200, respuesta.text
+    with seleccion[1]() as db:
+        assert db.get(OfertaAyuda, 1).adjudicada_en is not None
+
+
+@pytest.mark.parametrize("para_seleccion", [False, True])
+def test_bonita_caido_al_adjudicar_responde_503(seleccion, para_seleccion):
+    preparar_marcas(seleccion)
+    seleccion[2]["caido"] = True
+    anterior = estado(seleccion[1])
+    respuesta = adjudicar(seleccion, 1, para_seleccion)
+    assert respuesta.status_code == 503, respuesta.text
+    assert estado(seleccion[1]) == anterior
+    seleccion[3][1].assert_not_called()
+
+
+@pytest.mark.parametrize("etapa", [EstadoEmergencia.ESPERANDO_ADJUDICACION, EstadoEmergencia.EN_PROCESO])
+def test_operador_con_caso_en_evaluacion_recibe_lista_vacia(seleccion, etapa):
+    preparar_marcas(seleccion)
+    with seleccion[1]() as db:
+        db.get(Emergencia, 2).estado = etapa
+        db.commit()
+    seleccion[2]["evaluando"] = True
+    operador = seleccion[0].get("/api/v1/emergencias/2/ofertas", headers=cabecera(OPERADOR))
+    assert operador.status_code == 200, operador.text
+    assert operador.json() == []
+    coordinador = seleccion[0].get("/api/v1/emergencias/2/ofertas", headers=cabecera(COORDINADOR))
+    assert sorted(o["id"] for o in coordinador.json()) == [1, 2]
+
+
+def test_operador_sin_seleccionar_oferta_lista_recibe_lista_vacia(seleccion):
+    preparar_marcas(seleccion)
+    seleccion[2]["tarea"] = None
+    operador = seleccion[0].get("/api/v1/emergencias/2/ofertas", headers=cabecera(OPERADOR))
+    assert operador.status_code == 200 and operador.json() == []
