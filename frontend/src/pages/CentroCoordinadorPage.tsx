@@ -605,7 +605,11 @@ function PanelAdjudicacion({
   confirmada,
   errorConfirmar,
   exitoConfirmar,
+  confirmacionesPendientes,
   alAdjudicar,
+  alSolicitarConfirmacion,
+  alCancelarConfirmacion,
+  alConfirmarAdjudicacion,
   alFinalizar,
   alConfirmar,
 }: {
@@ -627,7 +631,11 @@ function PanelAdjudicacion({
   confirmada: boolean
   errorConfirmar: string | undefined
   exitoConfirmar: string | undefined
+  confirmacionesPendientes: Record<number, boolean>
   alAdjudicar: (ofertaId: number, paraSeleccion: boolean) => void
+  alSolicitarConfirmacion: (ofertaId: number) => void
+  alCancelarConfirmacion: (ofertaId: number) => void
+  alConfirmarAdjudicacion: (ofertaId: number) => void
   alFinalizar: (ofertaId: number) => void
   alConfirmar: () => void
 }) {
@@ -775,21 +783,43 @@ function PanelAdjudicacion({
               )}
 
               {puedeAdjudicar && !confirmada && !hayAdjudicadas && oferta.adjudicada_en === null && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const confirmado = window.confirm(
-                      `¿Adjudicar la oferta #${oferta.id}? Se adjudicará esta oferta y no podrás elegir otra.`,
-                    )
-                    if (confirmado) {
-                      alAdjudicar(oferta.id, false)
-                    }
-                  }}
-                  disabled={bloqueada || cargando || errorCarga !== undefined}
-                  className={`${claseBotonSecundario} self-start text-sm`}
-                >
-                  Adjudicar solo esta oferta
-                </button>
+                confirmacionesPendientes[oferta.id] === true ? (
+                  <div
+                    role="group"
+                    aria-label={`Confirmar adjudicación de la oferta #${oferta.id}`}
+                    className="flex flex-col gap-2 rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-3"
+                  >
+                    <p className="text-sm text-yellow-200">
+                      ¿Adjudicar la oferta #{oferta.id}? Se adjudicará esta oferta y no podrás elegir otra.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => alConfirmarAdjudicacion(oferta.id)}
+                        disabled={bloqueada || cargando || errorCarga !== undefined}
+                        className={`${claseBotonSecundario} text-sm`}
+                      >
+                        Confirmar adjudicación
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => alCancelarConfirmacion(oferta.id)}
+                        className={`${claseBotonSecundario} text-sm`}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => alSolicitarConfirmacion(oferta.id)}
+                    disabled={bloqueada || cargando || errorCarga !== undefined}
+                    className={`${claseBotonSecundario} self-start text-sm`}
+                  >
+                    Adjudicar solo esta oferta
+                  </button>
+                )
               )}
 
               {oferta.estado_seleccion === 'adjudicada' && exitoAdjudicar[oferta.id] !== undefined && (
@@ -894,6 +924,7 @@ export function CentroCoordinadorPage() {
   const [confirmadas, setConfirmadas] = useState<Record<number, boolean>>({})
   const [errorConfirmar, setErrorConfirmar] = useState<Record<number, string>>({})
   const [exitoConfirmar, setExitoConfirmar] = useState<Record<number, string>>({})
+  const [confirmacionesAdjudicacion, setConfirmacionesAdjudicacion] = useState<Record<number, boolean>>({})
   const [evaluacionesProyecto, setEvaluacionesProyecto] = useState<Record<number, EstadoEvaluacionProyecto>>({})
   const evaluacionesVigentes = useRef<Record<number, EstadoEvaluacionProyecto>>({})
   const versionesEvaluacion = useRef<Record<number, number>>({})
@@ -1156,7 +1187,21 @@ export function CentroCoordinadorPage() {
     } finally {
       operacionesOfertas.current.delete(emergenciaId)
       setAdjudicando((actuales) => sinClave(actuales, emergenciaId))
+      setConfirmacionesAdjudicacion((actuales) => sinClave(actuales, ofertaId))
     }
+  }
+
+  function solicitarConfirmacionAdjudicacion(ofertaId: number) {
+    setConfirmacionesAdjudicacion((actuales) => ({ ...actuales, [ofertaId]: true }))
+  }
+
+  function cancelarConfirmacionAdjudicacion(ofertaId: number) {
+    setConfirmacionesAdjudicacion((actuales) => sinClave(actuales, ofertaId))
+  }
+
+  function confirmarAdjudicacionSoloOferta(emergenciaId: number, ofertaId: number) {
+    setConfirmacionesAdjudicacion((actuales) => sinClave(actuales, ofertaId))
+    void manejarAdjudicar(emergenciaId, ofertaId, false)
   }
 
   async function manejarConfirmarSeleccion(emergenciaId: number): Promise<void> {
@@ -1783,6 +1828,10 @@ export function CentroCoordinadorPage() {
                         confirmada={confirmadas[emergencia.id] === true}
                         errorConfirmar={errorConfirmar[emergencia.id]}
                         exitoConfirmar={exitoConfirmar[emergencia.id]}
+                        confirmacionesPendientes={confirmacionesAdjudicacion}
+                        alSolicitarConfirmacion={solicitarConfirmacionAdjudicacion}
+                        alCancelarConfirmacion={cancelarConfirmacionAdjudicacion}
+                        alConfirmarAdjudicacion={(ofertaId) => confirmarAdjudicacionSoloOferta(emergencia.id, ofertaId)}
                         alConfirmar={() => void manejarConfirmarSeleccion(emergencia.id)}
                         puedeAdjudicar={pestania === 'esperando_adjudicacion'}
                         puedeConfirmar={pestania === 'esperando_adjudicacion'}
