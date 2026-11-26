@@ -65,7 +65,7 @@ export async function crearLote(
 export async function publicarEmergencia(
   emergenciaId: number,
 ): Promise<EmergenciaRead> {
-  return apiPost<EmergenciaRead>(`/emergencias/${emergenciaId}/publicar`, undefined)
+  return apiPost<EmergenciaRead>(`/emergencias/${emergenciaId}/publicar-lotes`, undefined)
 }
 
 export async function actualizarLote(

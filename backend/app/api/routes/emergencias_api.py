@@ -157,14 +157,23 @@ def actualizar_emergencia(
     )
 
 
-@router.post("/{emergencia_id}/publicar", response_model=EmergenciaRespuesta)
-async def publicar_emergencia(
+@router.post("/{emergencia_id}/publicar-lotes", response_model=EmergenciaRespuesta)
+async def publicar_lotes(
     emergencia_id: int,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     await servicio_emergencias.iniciar_proceso_bonita(db, emergencia_id)
     return await CursoAccionService().publicar(db, emergencia_id)
+
+
+@router.post("/{emergencia_id}/publicar", response_model=EmergenciaRespuesta)
+def publicar_emergencia(
+    emergencia_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
+):
+    return servicio_emergencias.publicar_emergencia(db, emergencia_id)
 
 
 @router.post("/{emergencia_id}/curso-accion", status_code=204, response_class=Response)

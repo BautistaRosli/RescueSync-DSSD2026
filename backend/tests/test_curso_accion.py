@@ -79,9 +79,13 @@ def test_reformular_edita_y_publica_sin_liberar_la_barrera_antes(evaluada, agreg
     tarea.assert_not_awaited()
     ejecutar.assert_not_awaited()
     for _ in range(2):
-        publicada = cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR))
+        publicada = cliente.post(f"{RUTA}/publicar-lotes", headers=cabecera(COORDINADOR))
         assert publicada.status_code == 200, publicada.text
-        assert publicada.json()["publicada"] and publicada.json()["bonita_case_id"] == "42"
+        assert not publicada.json()["publicada"] and publicada.json()["bonita_case_id"] == "42"
+        with sesiones() as db:
+            emergencia = db.get(Emergencia, 1)
+            assert emergencia.estado == EstadoEmergencia.ESPERA_LOTES
+            assert not emergencia.publicada
     ejecutar.assert_awaited_once_with("101")
     assert cliente.get(f"{RUTA}/solicitud-evaluacion", headers=cabecera(COORDINADOR)).status_code == 200
 
@@ -148,7 +152,7 @@ def test_republicar_sin_tarea_no_abre_la_convocatoria(evaluada):
     cliente, sesiones, _, _ = solicitud
     assert decidir(cliente, "REFORMULAR").status_code == 204
     tarea.return_value = None
-    assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 409
+    assert cliente.post(f"{RUTA}/publicar-lotes", headers=cabecera(COORDINADOR)).status_code == 409
     with sesiones() as db:
         assert not db.get(Emergencia, 1).publicada
 
@@ -160,12 +164,12 @@ def test_republicar_reconcilia_respuesta_perdida_solo_con_tarea_exacta(evaluada,
     ejecutar.side_effect = httpx.ReadTimeout("Respuesta perdida")
     completada = AsyncMock(return_value=False)
     monkeypatch.setattr(bonita_client, "tarea_completada", completada, raising=False)
-    assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 503
+    assert cliente.post(f"{RUTA}/publicar-lotes", headers=cabecera(COORDINADOR)).status_code == 503
     with sesiones() as db:
         assert not db.get(Emergencia, 1).publicada
     tarea.return_value = None
     completada.return_value = True
-    assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 200
+    assert cliente.post(f"{RUTA}/publicar-lotes", headers=cabecera(COORDINADOR)).status_code == 200
     completada.assert_awaited_with(42, "101", "Generar lotes")
     ejecutar.assert_awaited_once()
 
@@ -196,10 +200,20 @@ def test_primer_ciclo_conserva_barrera_en_alta_y_publicacion_local(entorno, monk
     monkeypatch.setattr(bonita_client, "ejecutar_tarea", ejecutar)
     assert cliente.post(f"{RUTA}/lotes", headers=cabecera(COORDINADOR),
                         json={"tipo": "Agua", "cantidad": 4}).status_code == 201
-    assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 200
+    respuesta = cliente.post(f"{RUTA}/publicar-lotes", headers=cabecera(COORDINADOR))
+    assert respuesta.status_code == 200
+    assert not respuesta.json()["publicada"]
+    with sesiones() as db:
+        emergencia = db.get(Emergencia, 1)
+        assert emergencia.estado == EstadoEmergencia.ESPERA_LOTES
+        assert not emergencia.publicada
+        assert emergencia.fecha_publicacion == (
+            datetime(2026, 1, 1, tzinfo=timezone.utc) if fecha_historica else None
+        )
     tarea.assert_awaited_once_with(42, "Generar lotes")
     ejecutar.assert_awaited_once_with("10")
-    assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 409
+    tarea.return_value = None
+    assert cliente.post(f"{RUTA}/publicar-lotes", headers=cabecera(COORDINADOR)).status_code == 409
     tarea.assert_awaited_once()
 
 
@@ -219,45 +233,30 @@ def test_publicacion_incierta_congela_lotes_y_no_ejecuta_otra_ronda(evaluada):
     cliente, sesiones, _, lotes = solicitud
     assert decidir(cliente, "REFORMULAR").status_code == 204
     ejecutar.side_effect = BonitaClientError("Respuesta perdida")
-    assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 503
+    assert cliente.post(f"{RUTA}/publicar-lotes", headers=cabecera(COORDINADOR)).status_code == 503
     assert cliente.patch(f"/api/v1/lotes/{lotes[0]}", headers=cabecera(COORDINADOR),
                          json={"cantidad": 20}).status_code == 409
     assert cliente.post(f"{RUTA}/lotes", headers=cabecera(COORDINADOR),
                         json={"tipo": "Agua", "cantidad": 1}).status_code == 409
     tarea.return_value = {**tarea.return_value, "id": "102"}
-    assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 409
+    assert cliente.post(f"{RUTA}/publicar-lotes", headers=cabecera(COORDINADOR)).status_code == 409
     ejecutar.assert_awaited_once()
     with sesiones() as db:
         assert not db.get(Emergencia, 1).publicada
         assert db.get(CursoAccionEmergencia, 1).tarea_publicacion_id == "101"
 
 
-def test_publicacion_reconcilia_commit_local_fallido(evaluada, monkeypatch):
-    from sqlalchemy import event
-    from sqlalchemy.exc import SQLAlchemyError
-
-    solicitud, tarea, ejecutar = evaluada
+def test_publicar_lotes_no_modifica_la_publicacion_local(evaluada):
+    solicitud, _, ejecutar = evaluada
     cliente, sesiones, _, _ = solicitud
     assert decidir(cliente, "REFORMULAR").status_code == 204
-    fallar = True
-
-    def antes_commit(db):
-        nonlocal fallar
-        if fallar and any(isinstance(objeto, Emergencia) and objeto.publicada for objeto in db.dirty):
-            fallar = False
-            raise SQLAlchemyError("Commit local fallido")
-
-    event.listen(sesiones.class_, "before_commit", antes_commit)
-    try:
-        assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 503
-    finally:
-        event.remove(sesiones.class_, "before_commit", antes_commit)
-    with sesiones() as db:
-        assert not db.get(Emergencia, 1).publicada
-    tarea.return_value = None
-    monkeypatch.setattr(bonita_client, "tarea_completada", AsyncMock(return_value=True))
-    assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 200
+    assert cliente.post(f"{RUTA}/publicar-lotes", headers=cabecera(COORDINADOR)).status_code == 200
     ejecutar.assert_awaited_once()
+    with sesiones() as db:
+        emergencia = db.get(Emergencia, 1)
+        assert emergencia.estado == EstadoEmergencia.ESPERA_LOTES
+        assert not emergencia.publicada
+        assert emergencia.fecha_publicacion is not None
 
 
 def test_cada_reformulacion_registra_su_propia_tarea(evaluada):
@@ -266,7 +265,7 @@ def test_cada_reformulacion_registra_su_propia_tarea(evaluada):
     for identificador in ("101", "201"):
         assert decidir(cliente, "REFORMULAR").status_code == 204
         tarea.return_value = {**tarea.return_value, "id": identificador}
-        assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 200
+        assert cliente.post(f"{RUTA}/publicar-lotes", headers=cabecera(COORDINADOR)).status_code == 200
         with sesiones() as db:
             assert db.get(CursoAccionEmergencia, 1).tarea_publicacion_id == identificador
         assert cliente.get(f"{RUTA}/solicitud-evaluacion", headers=cabecera(COORDINADOR)).status_code == 200
@@ -292,7 +291,7 @@ def test_republicar_respeta_la_asignacion_existente_de_bonita(evaluada):
     cliente, _, _, _ = solicitud
     assert decidir(cliente, "REFORMULAR").status_code == 204
     tarea.return_value = {**tarea.return_value, "assigned_id": "99"}
-    assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 200
+    assert cliente.post(f"{RUTA}/publicar-lotes", headers=cabecera(COORDINADOR)).status_code == 200
     bonita_client.obtener_miembro_actor.assert_not_awaited()
     bonita_client.asignar_tarea.assert_not_awaited()
     ejecutar.assert_awaited_once_with("101")
@@ -313,7 +312,7 @@ def test_publicacion_incierta_congela_lotes_hasta_reconciliar(evaluada, monkeypa
     cliente, sesiones, _, lotes = solicitud
     assert decidir(cliente, "REFORMULAR").status_code == 204
     ejecutar.side_effect = BonitaClientError("Respuesta perdida")
-    assert cliente.post(f"{RUTA}/publicar", headers=cabecera(COORDINADOR)).status_code == 503
+    assert cliente.post(f"{RUTA}/publicar-lotes", headers=cabecera(COORDINADOR)).status_code == 503
     assert cliente.patch(f"/api/v1/lotes/{lotes[0]}", headers=cabecera(COORDINADOR),
                          json={"cantidad": 99}).status_code == 409
     assert cliente.post(f"{RUTA}/lotes", headers=cabecera(COORDINADOR),

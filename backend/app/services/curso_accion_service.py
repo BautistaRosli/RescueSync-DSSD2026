@@ -78,6 +78,11 @@ class CursoAccionService:
             curso = db.get(CursoAccionEmergencia, emergencia_id, populate_existing=True)
             pendiente = curso.tarea_publicacion_id if curso is not None else None
             reformulada = curso is not None and curso.accion == "REFORMULAR"
+            if (reformulada and pendiente and curso.publicacion_completada
+                    and curso.caso_id == emergencia.bonita_case_id
+                    and emergencia.estado == EstadoEmergencia.ESPERA_LOTES
+                    and not emergencia.publicada):
+                return EmergenciaRespuesta.model_validate(emergencia)
             if emergencia.publicada:
                 if (pendiente and curso.publicacion_completada
                         and curso.caso_id == emergencia.bonita_case_id
@@ -103,7 +108,7 @@ class CursoAccionService:
                 if not int(tarea.get("assigned_id") or 0):
                     await bonita_client.asignar_tarea(str(tarea["id"]), asignado)
                 await bonita_client.ejecutar_tarea(str(tarea["id"]))
-                return await run_in_threadpool(EmergenciaService().publicar_emergencia, db, emergencia_id)
+                return EmergenciaRespuesta.model_validate(emergencia)
             if emergencia.estado != EstadoEmergencia.ESPERA_LOTES or not emergencia.bonita_case_id:
                 raise HTTPException(409, "La emergencia no está esperando la publicación de lotes reformulados")
             if not emergencia.lotes:
@@ -142,8 +147,8 @@ class CursoAccionService:
                     if not await bonita_client.tarea_completada(caso_id, pendiente, "Generar lotes"):
                         raise
             curso.publicacion_completada = True
-            # Reutiliza la publicación local existente y conserva su respuesta.
-            return await run_in_threadpool(EmergenciaService().publicar_emergencia, db, emergencia_id)
+            await run_in_threadpool(db.commit)
+            return EmergenciaRespuesta.model_validate(emergencia)
         except SQLAlchemyError:
             raise HTTPException(503, "No se pudo guardar la publicación local; vuelva a intentar") from None
         except (BonitaClientError, httpx.RequestError):

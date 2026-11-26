@@ -213,12 +213,13 @@ def test_republicaciones_concurrentes_completan_una_sola_tarea(sesiones_pg, monk
                 return await CursoAccionService().publicar(db, 1)
 
         respuestas = await asyncio.wait_for(asyncio.gather(publicar(), publicar()), timeout=5)
-        assert all(respuesta.publicada for respuesta in respuestas)
+        assert all(not respuesta.publicada for respuesta in respuestas)
         assert ejecuciones == ["101"]
 
     asyncio.run(ejecutar())
     with sesiones_pg() as db:
-        assert db.get(Emergencia, 1).publicada
+        assert not db.get(Emergencia, 1).publicada
+        assert db.get(Emergencia, 1).estado == EstadoEmergencia.ESPERA_LOTES
         assert db.get(CursoAccionEmergencia, 1).publicacion_completada
 
 
