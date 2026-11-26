@@ -190,7 +190,8 @@ async function montarPagina({ estado = 'esperando_adjudicacion', conMarca = true
       const items = emergencias.filter((emergencia) => params.etapa_bonita ? emergencia.etapa === params.etapa_bonita : emergencia.estado === params.estado)
       return { items, paginas: 1, pagina: 1, total: items.length }
     },
-    async listarOfertasDeEmergencia(id) { llamadas.listar.push(id); return structuredClone(ofertas[id]) },
+    consultarOfertas: async (id) => structuredClone(ofertas[id]),
+    async listarOfertasDeEmergencia(id) { llamadas.listar.push(id); return control.consultarOfertas(id) },
     async adjudicarOferta(id, paraSeleccion) {
       llamadas.adjudicar.push({ id, paraSeleccion })
       const respuesta = await control.adjudicar(id)
@@ -807,7 +808,7 @@ test('Las pestañas derivadas consultan etapas y la evaluación se muestra entre
         assert.ok(pagina.renderizar().some((nodo) => nodo.type === 'span' && pagina.texto(nodo) === 'Estado: Esperando Evaluacion'))
         assert.equal(pagina.botones('Adjudicar').length, 0)
         assert.equal(pagina.botones('Confirmar selección').length, 0)
-        assert.deepEqual(pagina.llamadas.listar, [])
+        assert.deepEqual(pagina.llamadas.listar, [1])
       } else {
         assert.deepEqual(pagina.llamadas.consultarEvaluacion, [])
         if (estado === 'esperando_ofertas') assert.equal(pagina.botones('Confirmar selección').length, 0)
@@ -831,7 +832,7 @@ test('La consulta ampliada confirma la tarea de selección incluso sin ofertas l
     if (almacenamiento) Object.defineProperty(globalThis, 'localStorage', almacenamiento)
     else delete globalThis.localStorage
   }
-  const pagina = await montarPagina({ estado: 'esperando_evaluacion', tareas: { 1: 101 }, sinOfertas: true, puedeSeleccionar: false })
+  const pagina = await montarPagina({ estado: 'esperando_evaluacion', tareas: { 1: 101 }, puedeSeleccionar: false })
   try {
     pagina.renderizar().find((nodo) => nodo.props?.id === 'evaluacion-proyecto-1').props.onChange({ target: { value: 'CONTINUAR_PARCIAL' } })
     pagina.control.evaluar = async (id, datos) => {
@@ -845,6 +846,7 @@ test('La consulta ampliada confirma la tarea de selección incluso sin ofertas l
     assert.equal(pagina.botones('Esperando Evaluacion')[0].props['aria-current'], 'page')
     assert.ok(pagina.renderizar().some((nodo) => nodo.props?.role === 'status' && /Esperando el siguiente paso/.test(pagina.texto(nodo))))
     assert.equal(pagina.botones('Actualizar estado')[0].props.disabled, false)
+    pagina.control.ofertas[1] = []
     pagina.control.seleccionLista[1] = true
     pagina.control.emergencias[0].etapa = 'esperando_adjudicacion'
     pagina.botones('Actualizar estado')[0].props.onClick()
@@ -857,7 +859,7 @@ test('La consulta ampliada confirma la tarea de selección incluso sin ofertas l
 })
 
 test('El procesamiento pendiente conserva la fila para reconsultar aunque Bonita ya la quite de Evaluación', async () => {
-  const pagina = await montarPagina({ estado: 'esperando_evaluacion', tareas: { 1: 101 }, sinOfertas: true })
+  const pagina = await montarPagina({ estado: 'esperando_evaluacion', tareas: { 1: 101 } })
   try {
     pagina.renderizar().find((nodo) => nodo.type === 'select' && nodo.props.id === 'evaluacion-proyecto-1').props.onChange({ target: { value: 'CONTINUAR_PARCIAL' } })
     pagina.control.evaluar = async (id, datos) => {
@@ -957,6 +959,128 @@ test('Evaluar proyecto funciona sin ofertas y muestra las tres acciones únicame
       assert.deepEqual(sinTarea.llamadas.consultarEvaluacion, [])
     } finally { sinTarea.limpiar() }
   }
+})
+
+test('La cobertura parcial exige una oferta completa elegible de la misma emergencia con cantidades verificadas positivas', async () => {
+  for (const caso of [
+    { sinOfertas: true },
+    { evaluaciones: [0] },
+    { evaluaciones: [null] },
+    { evaluaciones: [4, 0] },
+    { evaluaciones: [4, null] },
+    { evaluaciones: [] },
+    { prepararOfertas: (ofertas) => ofertas[1].forEach((oferta) => { oferta.estado_seleccion = 'seleccionada_para_confirmar' }) },
+    { prepararOfertas: (ofertas) => ofertas[1].forEach((oferta) => { oferta.emergencia_id = 2 }) },
+    { evaluaciones: [4, 2], disponible: true },
+  ]) {
+    const pagina = await montarPagina({ estado: 'esperando_evaluacion', tareas: { 1: 101 }, puedeSeleccionar: false, ...caso })
+    try {
+      const opcion = pagina.renderizar().find((nodo) => nodo.type === 'option' && nodo.props.value === 'CONTINUAR_PARCIAL')
+      assert.equal(opcion.props.disabled, !caso.disponible)
+      assert.deepEqual(pagina.llamadas.listar, [1])
+      const select = pagina.renderizar().find((nodo) => nodo.props?.id === 'evaluacion-proyecto-1')
+      select.props.onChange({ target: { value: 'CONTINUAR_PARCIAL' } })
+      assert.equal(pagina.botones('Confirmar decisión')[0].props.disabled, !caso.disponible)
+      pagina.botones('Confirmar decisión')[0].props.onClick()
+      assert.equal(pagina.llamadas.evaluar.length, caso.disponible ? 1 : 0)
+      if (!caso.disponible) {
+        assert.ok(pagina.renderizar().some((nodo) => nodo.type === 'p' && /No hay ofertas elegibles con cantidad verificada positiva/.test(pagina.texto(nodo))))
+        for (const accion of ['REABRIR', 'REFORMULAR']) {
+          select.props.onChange({ target: { value: accion } })
+          assert.equal(pagina.botones('Confirmar decisión')[0].props.disabled, false)
+        }
+      }
+      await pagina.asentar()
+    } finally { pagina.limpiar() }
+  }
+})
+
+test('Reconsultar invalida la cobertura previa y sus callbacks sin bloquear las otras decisiones por las ofertas', async () => {
+  for (const fallo of [false, true]) {
+    const pagina = await montarPagina({ estado: 'esperando_evaluacion', tareas: { 1: 101 }, puedeSeleccionar: false })
+    try {
+      const selectAnterior = pagina.renderizar().find((nodo) => nodo.props?.id === 'evaluacion-proyecto-1')
+      selectAnterior.props.onChange({ target: { value: 'CONTINUAR_PARCIAL' } })
+      const confirmarAnterior = pagina.botones('Confirmar decisión')[0]
+      const pendiente = diferida()
+      pagina.control.consultarOfertas = () => pendiente.promesa
+      pagina.botones('Actualizar estado')[0].props.onClick()
+      await pagina.asentar()
+      await pagina.asentar()
+      assert.equal(pagina.botones('Confirmar decisión')[0].props.disabled, true)
+      assert.equal(pagina.renderizar().find((nodo) => nodo.type === 'option' && nodo.props.value === 'CONTINUAR_PARCIAL').props.disabled, true)
+      confirmarAnterior.props.onClick()
+      assert.deepEqual(pagina.llamadas.evaluar, [])
+      const select = pagina.renderizar().find((nodo) => nodo.props?.id === 'evaluacion-proyecto-1')
+      select.props.onChange({ target: { value: 'REABRIR' } })
+      assert.equal(pagina.botones('Confirmar decisión')[0].props.disabled, false)
+      if (fallo) pendiente.rechazar(new ApiError(503, 'Ofertas no disponibles.'))
+      else pendiente.resolver([])
+      await pagina.asentar()
+      selectAnterior.props.onChange({ target: { value: 'CONTINUAR_PARCIAL' } })
+      assert.equal(pagina.renderizar().find((nodo) => nodo.props?.id === 'evaluacion-proyecto-1').props.value, 'REABRIR')
+      assert.equal(pagina.botones('Confirmar decisión')[0].props.disabled, false)
+      if (fallo) assert.ok(pagina.renderizar().some((nodo) => nodo.type === 'p' && /No se pudo verificar la disponibilidad de cobertura parcial/.test(pagina.texto(nodo))))
+      pagina.botones('Confirmar decisión')[0].props.onClick()
+      await pagina.asentar()
+      assert.deepEqual(pagina.llamadas.evaluar, [{ id: 1, datos: { tarea_id: 101, accion: 'REABRIR' } }])
+    } finally { pagina.limpiar() }
+  }
+})
+
+test('Una respuesta de ofertas antigua no habilita cobertura tras una reconsulta o decisión completada', async () => {
+  const pagina = await montarPagina({ estado: 'esperando_evaluacion', tareas: { 1: 101, 2: 202 }, puedeSeleccionar: false })
+  try {
+    const pendiente = diferida()
+    pagina.control.consultarOfertas = (id) => id === 1 ? pendiente.promesa : Promise.resolve(pagina.control.ofertas[id])
+    pagina.botones('Actualizar estado')[0].props.onClick()
+    await pagina.asentar()
+    await pagina.asentar()
+    pagina.control.consultarOfertas = async () => []
+    pagina.botones('Actualizar estado')[0].props.onClick()
+    await pagina.asentar()
+    await pagina.asentar()
+    pendiente.resolver(pagina.control.ofertas[1])
+    await pagina.asentar()
+    assert.deepEqual(pagina.renderizar().filter((nodo) => nodo.type === 'option' && nodo.props.value === 'CONTINUAR_PARCIAL').map((nodo) => nodo.props.disabled), [true, false])
+    const otraPendiente = diferida()
+    pagina.control.consultarOfertas = () => otraPendiente.promesa
+    pagina.botones('Actualizar estado')[0].props.onClick()
+    await pagina.asentar()
+    await pagina.asentar()
+    pagina.renderizar().find((nodo) => nodo.props?.id === 'evaluacion-proyecto-1').props.onChange({ target: { value: 'REFORMULAR' } })
+    pagina.control.tareas[1] = null
+    pagina.botones('Confirmar decisión')[0].props.onClick()
+    await pagina.asentar()
+    otraPendiente.resolver(pagina.control.ofertas[1])
+    await pagina.asentar()
+    assert.equal(pagina.renderizar().some((nodo) => nodo.props?.id === 'evaluacion-proyecto-1'), false)
+    assert.equal(pagina.llamadas.evaluar.length, 1)
+  } finally { pagina.limpiar() }
+})
+
+test('Salir y volver a Evaluar proyecto descarta las ofertas de la visita anterior', async () => {
+  const pagina = await montarPagina({ estado: 'esperando_evaluacion', tareas: { 1: 101 }, puedeSeleccionar: false })
+  try {
+    const pendiente = diferida()
+    pagina.control.consultarOfertas = () => pendiente.promesa
+    pagina.botones('Actualizar estado')[0].props.onClick()
+    await pagina.asentar()
+    await pagina.asentar()
+    const selectAnterior = pagina.renderizar().find((nodo) => nodo.props?.id === 'evaluacion-proyecto-1')
+    pagina.botones('Esperando ofertas')[0].props.onClick()
+    await pagina.asentar()
+    pagina.control.consultarOfertas = async () => []
+    pagina.botones('Esperando Evaluacion')[0].props.onClick()
+    await pagina.asentar()
+    await pagina.asentar()
+    pendiente.resolver(pagina.control.ofertas[1])
+    await pagina.asentar()
+    assert.equal(pagina.renderizar().find((nodo) => nodo.type === 'option' && nodo.props.value === 'CONTINUAR_PARCIAL').props.disabled, true)
+    selectAnterior.props.onChange({ target: { value: 'CONTINUAR_PARCIAL' } })
+    pagina.botones('Confirmar decisión')[0].props.onClick()
+    assert.deepEqual(pagina.llamadas.evaluar, [])
+  } finally { pagina.limpiar() }
 })
 
 test('La decisión bloquea su emergencia, descarta doble clic y espera la habilitación real para continuar', async () => {
