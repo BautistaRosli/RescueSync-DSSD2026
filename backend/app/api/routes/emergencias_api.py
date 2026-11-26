@@ -110,7 +110,7 @@ async def sincronizar_cierres(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(requiere_roles(COORDINADOR)),
 ):
-    """Actualiza las emergencias cuyo caso asociado terminó correctamente."""
+    """Escanea en Bonita los casos completados sin resolver ni liberar recursos."""
     return await servicio_emergencias.sincronizar_cierres(db)
 
 
@@ -177,6 +177,15 @@ def publicar_emergencia(
     usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
 ):
     return servicio_emergencias.publicar_emergencia(db, emergencia_id)
+
+
+@router.post("/{emergencia_id}/resolver", response_model=EmergenciaRespuesta)
+def resolver_emergencia(
+    emergencia_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(requiere_roles(COORDINADOR, AUDITOR)),
+):
+    return servicio_emergencias.resolver_emergencia(db, emergencia_id)
 
 
 @router.post("/{emergencia_id}/curso-accion", status_code=204, response_class=Response)

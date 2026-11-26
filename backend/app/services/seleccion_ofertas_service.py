@@ -11,7 +11,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..dto.ofertas_dto import SeleccionOfertasRespuesta
 from ..integrations.bonita.client import BonitaClientError, BonitaTaskConflictError, bonita_client
-from ..models import AvisoAdjudicacion, EstadoEmergencia
+from ..models import AvisoAdjudicacion, ConfirmacionSeleccion, EstadoEmergencia
 from ..repositories import EmergenciaRepository, OfertaRepository
 
 
@@ -223,21 +223,105 @@ class SeleccionOfertasService:
         # Una respuesta perdida o un commit fallido se reconcilian con la
         # selección del caso. Nunca se retrocede una emergencia ya resuelta.
         notificar = emergencia.estado not in (EstadoEmergencia.EN_PROCESO, EstadoEmergencia.RESUELTA)
-        adjudicadas = [oferta for oferta in ofertas if oferta.adjudicada_en is not None]
         if emergencia.estado != EstadoEmergencia.RESUELTA:
             emergencia.estado = EstadoEmergencia.EN_PROCESO
         if notificar:
             # La adjudicación y su aviso se confirman o revierten juntos.
             # El lock de emergencia serializa confirmadores y la PK deduplica.
-            fecha_confirmacion = datetime.now(timezone.utc)
-            for oferta in adjudicadas:
-                if await run_in_threadpool(db.get, AvisoAdjudicacion, oferta.id) is None:
-                    await run_in_threadpool(db.add, AvisoAdjudicacion(
-                        oferta_id=oferta.id, creada_en=fecha_confirmacion,
-                    ))
+            await self._encolar_avisos(db, ofertas)
         await run_in_threadpool(EmergenciaRepository().eliminar_confirmacion, db, emergencia.id)
         await run_in_threadpool(db.commit)
         return respuesta.model_copy(update={"ya_confirmada": ya_confirmada})
+
+    @staticmethod
+    async def _encolar_avisos(db, ofertas):
+        """Requiere el lock de emergencia; conserva envío y backoff existentes."""
+        fecha_confirmacion = datetime.now(timezone.utc)
+        for oferta in ofertas:
+            if (oferta.adjudicada_en is not None
+                    and await run_in_threadpool(db.get, AvisoAdjudicacion, oferta.id) is None):
+                await run_in_threadpool(db.add, AvisoAdjudicacion(
+                    oferta_id=oferta.id, creada_en=fecha_confirmacion,
+                ))
+
+    @staticmethod
+    def _filas_adjudicadas(ofertas, emergencia_id):
+        filas = []
+        for oferta in ofertas:
+            if oferta.adjudicada_en is not None:
+                if not oferta.items:
+                    conflicto("La oferta adjudicada no tiene ítems")
+                for item in oferta.items:
+                    if item.cantidad_ofrecida <= 0 or item.lote_necesidad.emergencia_id != emergencia_id:
+                        conflicto("La oferta adjudicada contiene un ítem inválido")
+                    filas.append({"oferta_id": oferta.id, "lote_id": item.lote_necesidad_id})
+        return filas
+
+    def _validar_caso_aviso(self, emergencia, caso_id):
+        if emergencia is None:
+            raise HTTPException(status_code=404, detail="Emergencia no encontrada")
+        if self._caso_id(emergencia) != caso_id:
+            conflicto("El caso de Bonita no corresponde a esta emergencia")
+
+    @staticmethod
+    def _verificar_cola_seleccion(db, pares):
+        # EN_PROCESO y la variable de Bonita también existen en la adjudicación
+        # exclusiva, cuyo aviso ya se envía por otro circuito. Una fila durable
+        # distingue la selección confirmada y permite reparar avisos faltantes.
+        if db.query(AvisoAdjudicacion).filter(
+            AvisoAdjudicacion.oferta_id.in_({oferta_id for oferta_id, _ in pares})
+        ).first() is None:
+            conflicto("La selección no tiene una confirmación local con avisos durables")
+
+    async def notificar_adjudicacion(self, db: Session, emergencia_id: int, caso_id: int) -> None:
+        try:
+            # Descartar las lecturas de autorización antes de tomar la instantánea.
+            await run_in_threadpool(db.rollback)
+            pendiente = await run_in_threadpool(db.get, ConfirmacionSeleccion, emergencia_id,
+                                                populate_existing=True)
+            emergencia = await run_in_threadpool(EmergenciaRepository().obtener_por_id, db, emergencia_id)
+            self._validar_caso_aviso(emergencia, caso_id)
+            ofertas = await run_in_threadpool(OfertaRepository().listar_de_emergencia, db, emergencia_id)
+            pares = pares_de(self._filas_adjudicadas(ofertas, emergencia_id))
+            if not pares:
+                conflicto("La emergencia no tiene ofertas seleccionadas")
+            # ON_ENTER puede llamar mientras confirmar conserva su lock y espera
+            # la respuesta HTTP de Bonita. Solo leer aquí evita esa espera circular.
+            if pendiente is not None:
+                if (emergencia.estado not in (EstadoEmergencia.ESPERA_OFERTAS,
+                        EstadoEmergencia.ESPERANDO_ADJUDICACION, EstadoEmergencia.EN_PROCESO)
+                        or pendiente.caso_id != str(caso_id)
+                        or pares_de(json.loads(pendiente.seleccion_json)) != pares):
+                    conflicto("La selección no coincide con una confirmación pendiente del caso")
+                # Confirmar encola atómicamente después de la aceptación de Bonita.
+                return
+            if emergencia.estado not in (EstadoEmergencia.EN_PROCESO, EstadoEmergencia.RESUELTA):
+                conflicto("La selección aún no tiene una confirmación local")
+            await run_in_threadpool(self._verificar_cola_seleccion, db, pares)
+            # Nunca consultar Bonita con una transacción/lock local abierto.
+            await run_in_threadpool(db.rollback)
+            if not await self._ya_confirmada(caso_id, pares):
+                conflicto("La selección aún no está confirmada en Bonita")
+            emergencia = await run_in_threadpool(EmergenciaRepository().obtener_por_id, db,
+                                                 emergencia_id, bloquear=True)
+            self._validar_caso_aviso(emergencia, caso_id)
+            if emergencia.estado not in (EstadoEmergencia.EN_PROCESO, EstadoEmergencia.RESUELTA):
+                conflicto("La selección cambió durante la notificación")
+            ofertas = await run_in_threadpool(OfertaRepository().listar_de_emergencia, db,
+                                              emergencia_id, bloquear=True)
+            if pares_de(self._filas_adjudicadas(ofertas, emergencia_id)) != pares:
+                conflicto("La selección cambió durante la notificación")
+            await run_in_threadpool(self._verificar_cola_seleccion, db, pares)
+            await self._encolar_avisos(db, ofertas)
+            await run_in_threadpool(db.commit)
+        except SQLAlchemyError:
+            raise HTTPException(status_code=503, detail="No se pudo guardar el aviso de adjudicación; vuelva a intentar")
+        except (BonitaClientError, httpx.RequestError):
+            raise HTTPException(status_code=503, detail="No se pudo consultar la selección confirmada en Bonita")
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=503, detail="La confirmación de selección contiene una respuesta inválida")
+        finally:
+            await run_in_threadpool(db.rollback)
 
     async def _leer_json(self, caso_id: int, nombre: str):
         valor = await bonita_client.obtener_variable_caso(caso_id, nombre)
@@ -277,15 +361,7 @@ class SeleccionOfertasService:
             ofertas = await run_in_threadpool(
                 OfertaRepository().listar_de_emergencia, db, emergencia_id, bloquear=True
             )
-            filas = []
-            for oferta in ofertas:
-                if oferta.adjudicada_en is not None:
-                    if not oferta.items:
-                        conflicto("La oferta adjudicada no tiene ítems")
-                    for item in oferta.items:
-                        if item.cantidad_ofrecida <= 0 or item.lote_necesidad.emergencia_id != emergencia_id:
-                            conflicto("La oferta adjudicada contiene un ítem inválido")
-                        filas.append({"oferta_id": oferta.id, "lote_id": item.lote_necesidad_id})
+            filas = self._filas_adjudicadas(ofertas, emergencia_id)
             pares = pares_de(filas)
             if not pares:
                 conflicto("Debe adjudicar al menos una oferta antes de confirmar la selección")

@@ -29,7 +29,8 @@ from app.models import (
 from app.services.permisos_service import OPERADOR, COORDINADOR, ONG, AUDITOR
 from app.services.security_service import JWT_AUDIENCE, JWT_ISSUER, JWT_SECRET, hashear_password
 
-ROLES = [OPERADOR, COORDINADOR, ONG, AUDITOR]
+BONITA = "BONITA"
+ROLES = [OPERADOR, COORDINADOR, ONG, AUDITOR, BONITA]
 ALTA = {"nombre": "Nombre", "apellido": "Apellido", "email": "alta@example.org",
         "password": "clave-prueba-123", "rol_id": 1}
 EMERGENCIA = {"zona_afectada": "Zona", "descripcion_inicial": "Descripción", "nivel_gravedad": "media"}
@@ -60,6 +61,7 @@ CASOS = [
     ("PATCH", "/emergencias/1", {"zona_afectada": "Otra"}, [COORDINADOR, AUDITOR]),
     ("POST", "/emergencias/1/publicar-lotes", None, [COORDINADOR, AUDITOR]),
     ("POST", "/emergencias/1/publicar", None, [COORDINADOR, AUDITOR]),
+    ("POST", "/emergencias/1/resolver", None, [COORDINADOR, AUDITOR]),
     ("POST", "/emergencias/1/bonita/iniciar", None, [COORDINADOR, AUDITOR]),
     ("GET", "/emergencias/1/lotes", None, [OPERADOR, COORDINADOR, AUDITOR]),
     ("POST", "/emergencias/1/lotes", LOTE, [COORDINADOR, AUDITOR]),
@@ -101,7 +103,7 @@ def entorno(monkeypatch):
         db.add_all([Organizacion(id=1, nombre="Propia"), Organizacion(id=2, nombre="Ajena")])
         db.add_all([Usuario(id=i, email=f"usuario{i}@example.org", nombre="Nombre", apellido="Apellido",
                             password_hash="sin-login", rol_id=i, organizacion_id=1 if i == 3 else None)
-                    for i in range(1, 5)])
+                    for i in range(1, 6)])
         # La emergencia publicada queda esperando ofertas: con otro estado la
         # convocatoria está cerrada y las escrituras de ofertas darían 409.
         db.add_all([Emergencia(id=i, publicada=i == 2,
@@ -156,7 +158,7 @@ def entorno(monkeypatch):
 
 def datos_token_local(email):
     ahora = datetime.now(timezone.utc)
-    identificador = next((i for i in range(1, 5) if email == f"usuario{i}@example.org"), 999)
+    identificador = next((i for i in range(1, 6) if email == f"usuario{i}@example.org"), 999)
     return {"sub": str(identificador), "iat": ahora,
             "exp": ahora + timedelta(hours=1), "iss": JWT_ISSUER,
             "aud": [JWT_AUDIENCE]}
