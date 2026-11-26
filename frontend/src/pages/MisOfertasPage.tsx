@@ -33,6 +33,42 @@ function idPanel(ofertaId: number): string {
   return `detalle-oferta-${ofertaId}`
 }
 
+function AportesDelItem({
+  oferta,
+  item,
+  unidad,
+}: {
+  oferta: OfertaRead
+  item: OfertaRead['items'][number]
+  unidad?: string | null
+}) {
+  const aportes = item.aportes ?? []
+  const nombreDeOrganizacion = (organizacionId: number) =>
+    oferta.organizaciones.find(
+      (organizacion) => organizacion.id === organizacionId,
+    )?.nombre ?? `Organización #${organizacionId}`
+
+  return (
+    <div className="mt-2 rounded-lg border border-slate-700 bg-slate-900/40 p-2 text-xs text-slate-300">
+      <p className="font-semibold text-slate-400">Reparto del aporte</p>
+      {aportes.length === 0 ? (
+        <p className="mt-1 text-slate-500">Todavía no fue declarado el reparto.</p>
+      ) : (
+        <ul className="mt-1 flex flex-col gap-1">
+          {aportes.map((aporte) => (
+            <li key={aporte.organizacion_id} className="flex justify-between gap-2">
+              <span>{nombreDeOrganizacion(aporte.organizacion_id)}</span>
+              <span className="font-mono text-cyan-400">
+                {aporte.cantidad} {unidad ?? ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 export function MisOfertasPage({ organizacionId }: Props) {
   const [ofertas, setOfertas] = useState<OfertaRead[]>([])
   const [emergencias, setEmergencias] = useState<Record<number, EmergenciaRead>>({})
@@ -160,14 +196,22 @@ export function MisOfertasPage({ organizacionId }: Props) {
     }
   }
 
+  // Las postulaciones permanecen ocultas hasta que cierre la convocatoria.
+  // Si la emergencia aún no está cargada, se muestran para no ocultarlas por error.
+  const ofertasVisibles = ofertas.filter((oferta) => {
+    const emergencia = emergencias[oferta.emergencia_id]
+    return !(emergencia !== undefined && convocatoriaAbierta(emergencia))
+  })
+
   return (
     <section className="flex flex-col gap-4">
       <div className={claseCard}>
         <h2 className={claseTitulo}>Mis ofertas</h2>
         <p className={claseSubtitulo}>
           Postulaciones de tu organización, incluidos los consorcios en los que
-          participás. Podés modificarlas mientras la convocatoria siga abierta y
-          marcar tus actividades como finalizadas.
+          participás. Podés modificarlas mientras la convocatoria siga abierta.
+          Una vez adjudicada tu oferta, podés marcar tus actividades como
+          finalizadas.
         </p>
       </div>
 
@@ -189,9 +233,18 @@ export function MisOfertasPage({ organizacionId }: Props) {
         </p>
       )}
 
-      {!cargando && error === null && ofertas.length > 0 && (
+      {!cargando &&
+        error === null &&
+        ofertas.length > 0 &&
+        ofertasVisibles.length === 0 && (
+          <p className="rounded-xl bg-slate-800 border border-slate-700 p-6 text-sm text-slate-400 shadow-2xl">
+            Tus postulaciones se mostrarán cuando cierre la convocatoria.
+          </p>
+        )}
+
+      {!cargando && error === null && ofertasVisibles.length > 0 && (
         <ul className="flex flex-col gap-3">
-          {ofertas.map((oferta) => {
+          {ofertasVisibles.map((oferta) => {
             const desplegada = desplegadas.has(oferta.id)
             const emergencia = emergencias[oferta.emergencia_id]
             const abierta =
@@ -309,6 +362,14 @@ export function MisOfertasPage({ organizacionId }: Props) {
                                 </p>
                               )}
 
+                              {oferta.es_conjunta && (
+                                <AportesDelItem
+                                  oferta={oferta}
+                                  item={item}
+                                  unidad={lote?.unidad}
+                                />
+                              )}
+
                               <div className="mt-2">
                                 {item.finalizado_en !== null ? (
                                   <span className={claseBadgeExito}>
@@ -319,18 +380,20 @@ export function MisOfertasPage({ organizacionId }: Props) {
                                     )}
                                   </span>
                                 ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      void finalizarActividad(oferta.id, item.id)
-                                    }
-                                    disabled={finalizando === item.id}
-                                    className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-emerald-400 hover:text-emerald-400"
-                                  >
-                                    {finalizando === item.id
-                                      ? 'Finalizando...'
-                                      : 'Marcar actividad como finalizada'}
-                                  </button>
+                                  oferta.adjudicada_en !== null && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void finalizarActividad(oferta.id, item.id)
+                                      }
+                                      disabled={finalizando === item.id}
+                                      className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-emerald-400 hover:text-emerald-400"
+                                    >
+                                      {finalizando === item.id
+                                        ? 'Finalizando...'
+                                        : 'Marcar actividad como finalizada'}
+                                    </button>
+                                  )
                                 )}
 
                                 {errorFinalizar[item.id] !== undefined && (
@@ -356,7 +419,7 @@ export function MisOfertasPage({ organizacionId }: Props) {
                       </div>
                     )}
 
-                    {abierta ? (
+                    {abierta && esLider ? (
                       <button
                         type="button"
                         onClick={() => setEnEdicion(oferta)}
@@ -364,6 +427,10 @@ export function MisOfertasPage({ organizacionId }: Props) {
                       >
                         Editar oferta
                       </button>
+                    ) : abierta ? (
+                      <p className={claseSubPanel}>
+                        Solo la ONG dueña puede editar esta oferta.
+                      </p>
                     ) : (
                       <button
                         type="button"

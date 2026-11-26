@@ -1,23 +1,27 @@
 import { apiGet, apiPatch, apiPost } from './http'
+import type { OfertaCoordinadorRead } from '../types/oferta'
 import type {
   AdjudicacionRespuesta,
+  FinalizarOfertaRespuesta,
   OfertaCreateRequest,
   OfertaItemRead,
   OfertaRead,
   OfertaUpdateRequest,
   OfertasConsolidadas,
+  SeleccionOfertasRespuesta,
 } from '../types'
 
 export async function listarOfertasDeOrganizacion(
   organizacionId: number,
 ): Promise<OfertaRead[]> {
-  return apiGet<OfertaRead[]>(`/ofertas?organizacion_id=${organizacionId}`)
+  void organizacionId
+  return apiGet<OfertaRead[]>('/ofertas')
 }
 
 export async function listarOfertasDeEmergencia(
   emergenciaId: number,
-): Promise<OfertaRead[]> {
-  return apiGet<OfertaRead[]>(`/ofertas?emergencia_id=${emergenciaId}`)
+): Promise<OfertaCoordinadorRead[]> {
+  return apiGet<OfertaCoordinadorRead[]>(`/emergencias/${emergenciaId}/ofertas`)
 }
 
 export async function crearOferta(
@@ -41,13 +45,23 @@ export async function obtenerOfertasConsolidadas(
   )
 }
 
-// El endpoint de adjudicación no declara cuerpo (solo usa el id de la ruta),
-// pero apiPost exige el parámetro cuerpo, así que le mandamos un objeto vacío
-// que FastAPI ignora.
 export async function adjudicarOferta(
   ofertaId: number,
+  paraSeleccion = false,
 ): Promise<AdjudicacionRespuesta> {
-  return apiPost<AdjudicacionRespuesta>(`/ofertas/${ofertaId}/adjudicar`, {})
+  return apiPost<AdjudicacionRespuesta>(
+    `/ofertas/${ofertaId}/adjudicar${paraSeleccion ? '?para_seleccion=true' : ''}`,
+    undefined,
+  )
+}
+
+export async function confirmarSeleccionOfertas(
+  emergenciaId: number,
+): Promise<SeleccionOfertasRespuesta> {
+  return apiPost<SeleccionOfertasRespuesta>(
+    `/emergencias/${emergenciaId}/confirmar-seleccion`,
+    undefined,
+  )
 }
 
 // Finalizar una actividad tampoco declara cuerpo (los ids viajan en la ruta),
@@ -61,4 +75,10 @@ export async function finalizarItemOferta(
     `/ofertas/${ofertaId}/items/${itemId}/finalizar`,
     {},
   )
+}
+
+export async function finalizarOferta(
+  ofertaId: number,
+): Promise<FinalizarOfertaRespuesta> {
+  return apiPost<FinalizarOfertaRespuesta>(`/ofertas/${ofertaId}/finalizar`, undefined)
 }

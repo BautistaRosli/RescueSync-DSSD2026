@@ -1,12 +1,29 @@
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from ..models import Emergencia
+from ..models import CierreEmergencia, ConfirmacionSeleccion, Emergencia, EstadoEmergencia
 
 
 class EmergenciaRepository:
+    def obtener_confirmacion(self, db: Session, emergencia_id: int) -> ConfirmacionSeleccion | None:
+        """Consultar siempre después de bloquear la emergencia correspondiente."""
+        return db.get(ConfirmacionSeleccion, emergencia_id, populate_existing=True)
+
+    def preparar_confirmacion(
+        self, db: Session, emergencia_id: int, caso_id: int, seleccion_json: str
+    ) -> None:
+        db.add(ConfirmacionSeleccion(
+            emergencia_id=emergencia_id, caso_id=str(caso_id), seleccion_json=seleccion_json
+        ))
+
+    def eliminar_confirmacion(self, db: Session, emergencia_id: int) -> None:
+        confirmacion = self.obtener_confirmacion(db, emergencia_id)
+        if confirmacion is not None:
+            db.delete(confirmacion)
+
     def _consulta_con_lotes(self, db: Session):
         return db.query(Emergencia).options(selectinload(Emergencia.lotes))
 
@@ -26,6 +43,8 @@ class EmergenciaRepository:
         publicada: bool,
         pagina: int,
         por_pagina: int,
+        estado: Optional[str] = None,
+        casos_bonita: set[str] | None = None,
     ) -> list[Emergencia]:
         """Pagina un bucket de emergencias.
 
@@ -38,22 +57,91 @@ class EmergenciaRepository:
             if not publicada
             else (Emergencia.fecha_hora_registro.desc(), Emergencia.id.desc())
         )
-        return (
+        query = (
             self._consulta_con_lotes(db)
             .filter(Emergencia.publicada == publicada)
+        )
+        if estado is not None:
+            query = query.filter(Emergencia.estado == estado)
+        if casos_bonita is not None:
+            query = query.filter(Emergencia.bonita_case_id.in_(casos_bonita))
+        return (
+            query
             .order_by(*columnas)
             .limit(por_pagina)
             .offset((pagina - 1) * por_pagina)
             .all()
         )
 
-    def contar_por_publicada(self, db: Session, publicada: bool) -> int:
-        return (
-            db.query(func.count(Emergencia.id))
-            .filter(Emergencia.publicada == publicada)
-            .scalar()
-            or 0
+    def contar_por_publicada(
+        self,
+        db: Session,
+        publicada: bool,
+        estado: Optional[str] = None,
+        casos_bonita: set[str] | None = None,
+    ) -> int:
+        query = db.query(func.count(Emergencia.id)).filter(
+            Emergencia.publicada == publicada
         )
+        if estado is not None:
+            query = query.filter(Emergencia.estado == estado)
+        if casos_bonita is not None:
+            query = query.filter(Emergencia.bonita_case_id.in_(casos_bonita))
+        return query.scalar() or 0
+
+    def listar_casos_por_estado(self, db: Session, estado: str) -> set[str]:
+        """Lee sólo los casos candidatos, sin materializar emergencias ni lotes."""
+        return {
+            caso_id for (caso_id,) in db.query(Emergencia.bonita_case_id).filter(
+                Emergencia.publicada.is_(True), Emergencia.estado == estado,
+                Emergencia.bonita_case_id.isnot(None),
+            ).distinct()
+            if caso_id and caso_id.isdecimal() and int(caso_id) > 0
+        }
+
+    def listar_candidatos_cierre(self, db: Session) -> list[tuple[int, str]]:
+        """Captura los identificadores municipales y su caso actual."""
+        return [
+            (emergencia_id, caso_id)
+            for emergencia_id, caso_id in db.query(Emergencia.id, Emergencia.bonita_case_id).filter(
+                Emergencia.publicada.is_(True),
+                Emergencia.estado == EstadoEmergencia.EN_PROCESO,
+                Emergencia.bonita_case_id.isnot(None),
+            ).order_by(Emergencia.id)
+            if caso_id and caso_id.isdecimal() and int(caso_id) > 0
+        ]
+
+    def resolver_candidatos_cierre(
+        self, db: Session, candidatos: list[tuple[int, str]], casos_completados: set[str],
+    ) -> list[int]:
+        """Revalida en cada UPDATE para preservar cambios concurrentes."""
+        resueltas = []
+        try:
+            for emergencia_id, caso_id in candidatos:
+                if caso_id not in casos_completados:
+                    continue
+                cantidad = db.query(Emergencia).filter(
+                    Emergencia.id == emergencia_id,
+                    Emergencia.bonita_case_id == caso_id,
+                    Emergencia.publicada.is_(True),
+                    Emergencia.estado == EstadoEmergencia.EN_PROCESO,
+                ).update({Emergencia.estado: EstadoEmergencia.RESUELTA}, synchronize_session=False)
+                if cantidad:
+                    resueltas.append(emergencia_id)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        return resueltas
+
+    def resolver_emergencia(self, db: Session, emergencia: Emergencia) -> Emergencia:
+        emergencia.estado = EstadoEmergencia.RESUELTA
+        # La primera resolución fija la fecha de cierre; las siguientes no la pisan.
+        if db.get(CierreEmergencia, emergencia.id) is None:
+            db.add(CierreEmergencia(emergencia_id=emergencia.id, resuelta_en=datetime.now(timezone.utc)))
+        db.commit()
+        db.refresh(emergencia)
+        return emergencia
 
     def obtener_por_id(
         self, db: Session, emergencia_id: int, bloquear: bool = False

@@ -5,11 +5,22 @@ export interface RecursoInventario {
   cantidad_total: number
   unidad: string | null
   descripcion: string | null
+  tipo_recurso_id: number | null
+  comprometido: number | null
+  disponible: number | null
+  sincronizado: boolean
 }
 
 export interface RecursoInventarioRequest {
-  tipo: string
+  tipo_recurso_id: number
   cantidad_total: number
   unidad?: string | null
   descripcion?: string | null
+}
+
+export interface RecursoInventarioUpdateRequest {
+  cantidad_total: number
+  unidad?: string | null
+  descripcion?: string | null
+  tipo_recurso_id?: number
 }

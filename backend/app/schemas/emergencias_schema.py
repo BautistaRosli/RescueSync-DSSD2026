@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..models import EstadoEmergencia, NivelGravedad
 
@@ -16,6 +16,8 @@ ESTADOS_EMERGENCIA_VALIDOS = {
     for nombre, valor in vars(EstadoEmergencia).items()
     if not nombre.startswith("_") and isinstance(valor, str)
 }
+
+EtapaBonita = Literal["esperando_ofertas", "esperando_evaluacion", "esperando_adjudicacion"]
 
 
 def validar_nivel_gravedad(valor: Optional[str]) -> Optional[str]:
@@ -44,6 +46,31 @@ class EmergenciaBase(BaseModel):
     nivel_gravedad: str
     zona_afectada: str
     descripcion_inicial: str
+
+
+class CursoAccionEntrada(BaseModel):
+    """Decisión enviada por el conector ON_FINISH de Evaluar proyecto."""
+
+    model_config = ConfigDict(extra="forbid")
+    accion: Literal["REABRIR", "REFORMULAR", "CONTINUAR_PARCIAL"]
+
+
+class EvaluacionProyectoEntrada(CursoAccionEntrada):
+    """Decisión sobre una tarea exacta de Evaluar proyecto."""
+
+    tarea_id: int = Field(strict=True, gt=0)
+
+
+class EvaluacionProyectoRespuesta(BaseModel):
+    tarea_id: Optional[int]
+
+
+class SincronizacionCierresRespuesta(BaseModel):
+    emergencias_resueltas: list[int]
+
+
+class EvaluacionProyectoConSeleccionRespuesta(EvaluacionProyectoRespuesta):
+    seleccion_oferta_lista: bool
 
 
 class EmergenciaCrear(EmergenciaBase):

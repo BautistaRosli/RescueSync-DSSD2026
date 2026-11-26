@@ -1,16 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import {
+  ApiError,
   actualizarRecurso,
   crearRecurso,
   eliminarRecurso,
+  listarCatalogoRecursosCloud,
   listarInventario,
-  listarOfertasDeOrganizacion,
-  listarLotes,
 } from '../services'
 import {
   claseBadge,
   claseBadgeAviso,
+  claseBadgeExito,
   claseBotonPrimario,
   claseBotonSecundario,
   claseCampo,
@@ -22,31 +23,40 @@ import {
   claseTitulo,
 } from '../ui/clases'
 import { describirError } from '../utils/formato'
-import type { LoteRead, RecursoInventario } from '../types'
+import type { RecursoCloud, RecursoInventario } from '../types'
 
 interface Props {
   organizacionId: number
 }
 
 const VALORES_INICIALES = {
-  tipo: '',
+  tipoRecursoId: '',
   cantidad: '',
   unidad: '',
   descripcion: '',
 }
 
+function mostrarCantidad(valor: number | null): string {
+  return valor === null ? '—' : String(valor)
+}
+
 export function InventarioPage({ organizacionId }: Props) {
+  const formularioRef = useRef<HTMLFormElement>(null)
   const [recursos, setRecursos] = useState<RecursoInventario[]>([])
-  const [comprometido, setComprometido] = useState<Record<string, number>>({})
-  const [tipo, setTipo] = useState(VALORES_INICIALES.tipo)
+  const [catalogo, setCatalogo] = useState<RecursoCloud[]>([])
+  const [tipoRecursoId, setTipoRecursoId] = useState(VALORES_INICIALES.tipoRecursoId)
   const [cantidad, setCantidad] = useState(VALORES_INICIALES.cantidad)
   const [unidad, setUnidad] = useState(VALORES_INICIALES.unidad)
   const [descripcion, setDescripcion] = useState(VALORES_INICIALES.descripcion)
   const [enEdicion, setEnEdicion] = useState<number | null>(null)
+  const [vinculos, setVinculos] = useState<Record<number, string>>({})
+  const [vinculandoId, setVinculandoId] = useState<number | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [recargas, setRecargas] = useState(0)
+  const [confirmacionesPendientes, setConfirmacionesPendientes] = useState<Record<number, boolean>>({})
+  const [eliminandoId, setEliminandoId] = useState<number | null>(null)
 
   function recargar() {
     setRecargas((actuales) => actuales + 1)
@@ -55,41 +65,29 @@ export function InventarioPage({ organizacionId }: Props) {
   useEffect(() => {
     let vigente = true
 
+    async function cargarCatalogo() {
+      try {
+        const recursosNacionales = await listarCatalogoRecursosCloud()
+        if (vigente) setCatalogo(recursosNacionales)
+      } catch (fallo) {
+        if (vigente) setError(describirError(fallo))
+      }
+    }
+
+    void cargarCatalogo()
+
+    return () => {
+      vigente = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let vigente = true
+
     async function cargar() {
       try {
-        const [inventario, ofertas] = await Promise.all([
-          listarInventario(organizacionId),
-          listarOfertasDeOrganizacion(organizacionId),
-        ])
-
-        const emergenciasDeOfertas = [
-          ...new Set(ofertas.map((oferta) => oferta.emergencia_id)),
-        ]
-        const lotesPorEmergencia = await Promise.all(
-          emergenciasDeOfertas.map((emergenciaId) => listarLotes(emergenciaId)),
-        )
-        const lotesPorId: Record<number, LoteRead> = {}
-        for (const grupo of lotesPorEmergencia) {
-          for (const lote of grupo) {
-            lotesPorId[lote.id] = lote
-          }
-        }
-
-        // Lo comprometido se agrupa por tipo de recurso, que es como se vinculan
-        // el inventario local y los lotes de necesidad.
-        const totales: Record<string, number> = {}
-        for (const oferta of ofertas) {
-          for (const item of oferta.items) {
-            const lote = lotesPorId[item.lote_necesidad_id]
-            if (lote === undefined) continue
-            const clave = lote.tipo.trim().toLowerCase()
-            totales[clave] = (totales[clave] ?? 0) + item.cantidad_ofrecida
-          }
-        }
-
-        if (!vigente) return
-        setRecursos(inventario)
-        setComprometido(totales)
+        const inventario = await listarInventario(organizacionId)
+        if (vigente) setRecursos(inventario)
       } catch (fallo) {
         if (vigente) setError(describirError(fallo))
       } finally {
@@ -104,8 +102,8 @@ export function InventarioPage({ organizacionId }: Props) {
     }
   }, [organizacionId, recargas])
 
-  function manejarTipo(evento: ChangeEvent<HTMLInputElement>) {
-    setTipo(evento.target.value)
+  function manejarTipoRecurso(evento: ChangeEvent<HTMLSelectElement>) {
+    setTipoRecursoId(evento.target.value)
   }
 
   function manejarCantidad(evento: ChangeEvent<HTMLInputElement>) {
@@ -120,9 +118,16 @@ export function InventarioPage({ organizacionId }: Props) {
     setDescripcion(evento.target.value)
   }
 
+  function manejarVinculo(recursoId: number) {
+    return (evento: ChangeEvent<HTMLSelectElement>) => {
+      const valor = evento.target.value
+      setVinculos((actuales) => ({ ...actuales, [recursoId]: valor }))
+    }
+  }
+
   function limpiarFormulario() {
     setEnEdicion(null)
-    setTipo(VALORES_INICIALES.tipo)
+    setTipoRecursoId(VALORES_INICIALES.tipoRecursoId)
     setCantidad(VALORES_INICIALES.cantidad)
     setUnidad(VALORES_INICIALES.unidad)
     setDescripcion(VALORES_INICIALES.descripcion)
@@ -131,19 +136,24 @@ export function InventarioPage({ organizacionId }: Props) {
 
   function editar(recurso: RecursoInventario) {
     setEnEdicion(recurso.id)
-    setTipo(recurso.tipo)
+    setTipoRecursoId(
+      recurso.tipo_recurso_id === null ? '' : String(recurso.tipo_recurso_id),
+    )
     setCantidad(String(recurso.cantidad_total))
     setUnidad(recurso.unidad ?? '')
     setDescripcion(recurso.descripcion ?? '')
     setError(null)
+    formularioRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
   async function manejarEnvio(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault()
     setError(null)
 
-    if (!tipo.trim()) {
-      setError('Ingresá el tipo de recurso.')
+    const idSeleccionado = Number(tipoRecursoId)
+    const haySeleccion = tipoRecursoId !== '' && idSeleccionado > 0
+    if (enEdicion === null && !haySeleccion) {
+      setError('Elegí el recurso del catálogo del Sistema Nacional.')
       return
     }
     const cantidadNumero = Number(cantidad)
@@ -152,31 +162,88 @@ export function InventarioPage({ organizacionId }: Props) {
       return
     }
 
-    const datos = {
-      tipo: tipo.trim(),
-      cantidad_total: Math.floor(cantidadNumero),
-      unidad: unidad.trim() || null,
-      descripcion: descripcion.trim() || null,
+    const cantidadTotal = Math.floor(cantidadNumero)
+    const cantidadMinima = minimoDeCantidad()
+    if (cantidadTotal < cantidadMinima) {
+      setError(`La cantidad total no puede ser menor que la cantidad comprometida (${cantidadMinima}).`)
+      return
     }
+
+    const unidadFinal = unidad.trim() || null
+    const descripcionFinal = descripcion.trim() || null
 
     setGuardando(true)
     try {
       if (enEdicion !== null) {
-        await actualizarRecurso(organizacionId, enEdicion, datos)
+        const enEdicionSinVinculo = recursoEnEdicion()?.tipo_recurso_id === null
+        await actualizarRecurso(organizacionId, enEdicion, {
+          cantidad_total: cantidadTotal,
+          unidad: unidadFinal,
+          descripcion: descripcionFinal,
+          ...(enEdicionSinVinculo && haySeleccion
+            ? { tipo_recurso_id: idSeleccionado }
+            : {}),
+        })
       } else {
-        await crearRecurso(organizacionId, datos)
+        await crearRecurso(organizacionId, {
+          tipo_recurso_id: idSeleccionado,
+          cantidad_total: cantidadTotal,
+          unidad: unidadFinal,
+          descripcion: descripcionFinal,
+        })
       }
       limpiarFormulario()
       recargar()
     } catch (fallo) {
       setError(describirError(fallo))
+      if (enEdicion === null && fallo instanceof ApiError && fallo.status === 409) {
+        recargar()
+      }
     } finally {
       setGuardando(false)
     }
   }
 
+  async function vincular(recurso: RecursoInventario) {
+    const idSeleccionado = Number(vinculos[recurso.id] ?? '')
+    if (!(idSeleccionado > 0)) {
+      setError('Elegí el recurso del catálogo para vincular.')
+      return
+    }
+
+    setError(null)
+    setVinculandoId(recurso.id)
+    try {
+      await actualizarRecurso(organizacionId, recurso.id, {
+        tipo_recurso_id: idSeleccionado,
+        cantidad_total: recurso.cantidad_total,
+        unidad: recurso.unidad,
+        descripcion: recurso.descripcion,
+      })
+      setVinculos((actuales) => {
+        const siguientes = { ...actuales }
+        delete siguientes[recurso.id]
+        return siguientes
+      })
+      recargar()
+    } catch (fallo) {
+      setError(describirError(fallo))
+    } finally {
+      setVinculandoId(null)
+    }
+  }
+
+  function solicitarConfirmacionBorrado(recursoId: number) {
+    setConfirmacionesPendientes({ [recursoId]: true })
+  }
+
+  function cancelarConfirmacionBorrado(recursoId: number) {
+    setConfirmacionesPendientes((previas) => ({ ...previas, [recursoId]: false }))
+  }
+
   async function borrar(recursoId: number) {
     setError(null)
+    setEliminandoId(recursoId)
     try {
       await eliminarRecurso(organizacionId, recursoId)
       if (enEdicion === recursoId) {
@@ -185,12 +252,27 @@ export function InventarioPage({ organizacionId }: Props) {
       recargar()
     } catch (fallo) {
       setError(describirError(fallo))
+    } finally {
+      setEliminandoId(null)
+      setConfirmacionesPendientes({})
     }
   }
 
-  function comprometidoDe(recurso: RecursoInventario): number {
-    return comprometido[recurso.tipo.trim().toLowerCase()] ?? 0
+  function recursoEnEdicion(): RecursoInventario | undefined {
+    if (enEdicion === null) return undefined
+    return recursos.find((item) => item.id === enEdicion)
   }
+
+  function comprometidoEnEdicion(): number {
+    return recursoEnEdicion()?.comprometido ?? 0
+  }
+
+  function minimoDeCantidad(): number {
+    return Math.max(1, comprometidoEnEdicion())
+  }
+
+  const edicionVinculada =
+    enEdicion !== null && recursoEnEdicion()?.tipo_recurso_id != null
 
   return (
     <section className="flex flex-col gap-4">
@@ -204,6 +286,7 @@ export function InventarioPage({ organizacionId }: Props) {
       </div>
 
       <form
+        ref={formularioRef}
         onSubmit={manejarEnvio}
         className="rounded-xl bg-slate-800 border border-slate-700 p-6 shadow-2xl flex flex-col gap-4"
         noValidate
@@ -216,16 +299,34 @@ export function InventarioPage({ organizacionId }: Props) {
           <label htmlFor="inventario-tipo" className={claseEtiqueta}>
             Tipo de recurso
           </label>
-          <input
-            id="inventario-tipo"
-            type="text"
-            value={tipo}
-            onChange={manejarTipo}
-            placeholder="Paramédicos"
-            maxLength={100}
-            required
-            className={claseCampo}
-          />
+          {edicionVinculada ? (
+            <input
+              id="inventario-tipo"
+              type="text"
+              value={recursoEnEdicion()?.tipo ?? ''}
+              disabled
+              className={claseCampo}
+            />
+          ) : (
+            <select
+              id="inventario-tipo"
+              value={tipoRecursoId}
+              onChange={manejarTipoRecurso}
+              required={enEdicion === null}
+              className={claseCampo}
+            >
+              <option value="">
+                {catalogo.length === 0
+                  ? 'Sin recursos en el catálogo nacional'
+                  : 'Elegí un recurso del catálogo nacional'}
+              </option>
+              {catalogo.map((recursoNacional) => (
+                <option key={recursoNacional.id} value={recursoNacional.id}>
+                  {recursoNacional.nombre}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         <div className="flex flex-col gap-4 sm:flex-row">
@@ -236,13 +337,18 @@ export function InventarioPage({ organizacionId }: Props) {
             <input
               id="inventario-cantidad"
               type="number"
-              min={1}
+              min={minimoDeCantidad()}
               value={cantidad}
               onChange={manejarCantidad}
               placeholder="5"
               required
               className={claseCampo}
             />
+            {enEdicion !== null && comprometidoEnEdicion() > 0 && (
+              <p className="mt-1 text-xs text-slate-400">
+                Mínimo comprometido: {minimoDeCantidad()}
+              </p>
+            )}
           </div>
 
           <div className="flex-1">
@@ -320,9 +426,6 @@ export function InventarioPage({ organizacionId }: Props) {
       {!cargando && recursos.length > 0 && (
         <ul className="flex flex-col gap-3">
           {recursos.map((recurso) => {
-            const usado = comprometidoDe(recurso)
-            const disponible = recurso.cantidad_total - usado
-
             return (
               <li
                 key={recurso.id}
@@ -339,13 +442,56 @@ export function InventarioPage({ organizacionId }: Props) {
                 </div>
 
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <span className={claseBadge}>Comprometido: {usado}</span>
-                  <span
-                    className={disponible < 0 ? claseBadgeAviso : claseBadge}
-                  >
-                    Disponible: {disponible}
+                  <span className={claseBadge}>Total: {recurso.cantidad_total}</span>
+                  <span className={claseBadge}>
+                    Comprometido: {mostrarCantidad(recurso.comprometido)}
                   </span>
+                  <span className={claseBadge}>
+                    Disponible: {mostrarCantidad(recurso.disponible)}
+                  </span>
+                  {recurso.tipo_recurso_id === null ? (
+                    <span className={claseBadgeAviso}>
+                      Sin vincular al Sistema Nacional
+                    </span>
+                  ) : recurso.sincronizado ? (
+                    <span className={claseBadgeExito}>
+                      Sincronizado con el Sistema Nacional
+                    </span>
+                  ) : (
+                    <span className={claseBadgeAviso}>
+                      No se pudo consultar el Sistema Nacional
+                    </span>
+                  )}
                 </div>
+
+                {recurso.tipo_recurso_id === null && (
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <label htmlFor={`inventario-vinculo-${recurso.id}`} className="sr-only">
+                      Recurso del catálogo nacional
+                    </label>
+                    <select
+                      id={`inventario-vinculo-${recurso.id}`}
+                      value={vinculos[recurso.id] ?? ''}
+                      onChange={manejarVinculo(recurso.id)}
+                      className={`flex-1 ${claseCampo}`}
+                    >
+                      <option value="">Elegí el recurso del catálogo nacional</option>
+                      {catalogo.map((recursoNacional) => (
+                        <option key={recursoNacional.id} value={recursoNacional.id}>
+                          {recursoNacional.nombre}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void vincular(recurso)}
+                      disabled={vinculandoId === recurso.id}
+                      className={claseBotonSecundario}
+                    >
+                      {vinculandoId === recurso.id ? 'Vinculando...' : 'Vincular'}
+                    </button>
+                  </div>
+                )}
 
                 {recurso.descripcion && (
                   <p className="mt-2 text-xs text-slate-400">
@@ -361,13 +507,44 @@ export function InventarioPage({ organizacionId }: Props) {
                   >
                     Editar
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void borrar(recurso.id)}
-                    className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-red-500/50 hover:text-red-300"
-                  >
-                    Eliminar
-                  </button>
+                  {confirmacionesPendientes[recurso.id] === true ? (
+                    <div
+                      role="group"
+                      aria-label={`Confirmar eliminación del recurso ${recurso.tipo}`}
+                      className="flex flex-col gap-2 rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-3"
+                    >
+                      <p className="text-sm text-yellow-200">
+                        ¿Eliminar {recurso.tipo}? La acción no se puede deshacer.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void borrar(recurso.id)}
+                          disabled={eliminandoId !== null}
+                          className={`${claseBotonSecundario} text-sm`}
+                        >
+                          {eliminandoId === recurso.id ? 'Eliminando...' : 'Confirmar eliminación'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => cancelarConfirmacionBorrado(recurso.id)}
+                          disabled={eliminandoId !== null}
+                          className={`${claseBotonSecundario} text-sm`}
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => solicitarConfirmacionBorrado(recurso.id)}
+                      disabled={eliminandoId !== null}
+                      className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-red-500/50 hover:text-red-300"
+                    >
+                      Eliminar
+                    </button>
+                  )}
                 </div>
               </li>
             )

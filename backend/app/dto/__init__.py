@@ -1,11 +1,24 @@
-from .emergencias_dto import EmergenciaRespuesta, EmergenciasPaginadas
+from .emergencias_dto import (
+    EmergenciaRespuesta,
+    EmergenciasDashboard,
+    EmergenciasPaginadas,
+    DemandaOfertaRecurso,
+    EmergenciasPorEstadoGravedad,
+    EvolucionEmergencias,
+    ParticipacionConsorcios,
+    RecursoAdjudicadoPorMes,
+    RankingONG,
+)
 from .inventario_dto import RecursoInventarioRespuesta
 from .lotes_dto import LoteNecesidadRespuesta
 from .ofertas_dto import (
     AdjudicacionRespuesta,
+    EstadoFinalizacionOfertaRespuesta,
+    FinalizacionOfertaRespuesta,
     OfertaConsolidada,
     OfertaItemConsolidado,
     OfertaItemRespuesta,
+    AporteOrganizacionRespuesta,
     OfertaListadoRespuesta,
     OfertaRespuesta,
     OfertasConsolidadas,
@@ -20,13 +33,23 @@ from .usuarios_dto import (
 
 __all__ = [
     "AdjudicacionRespuesta",
+    "EstadoFinalizacionOfertaRespuesta",
+    "FinalizacionOfertaRespuesta",
     "AuthRespuesta",
     "EmergenciaRespuesta",
+    "EmergenciasDashboard",
     "EmergenciasPaginadas",
+    "DemandaOfertaRecurso",
+    "EmergenciasPorEstadoGravedad",
+    "EvolucionEmergencias",
+    "ParticipacionConsorcios",
+    "RecursoAdjudicadoPorMes",
+    "RankingONG",
     "LoteNecesidadRespuesta",
     "OfertaConsolidada",
     "OfertaItemConsolidado",
     "OfertaItemRespuesta",
+    "AporteOrganizacionRespuesta",
     "OfertaListadoRespuesta",
     "OfertaRespuesta",
     "OfertasConsolidadas",
